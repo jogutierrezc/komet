@@ -1,6 +1,8 @@
 import { 
   LayoutDashboard,
   School, 
+  Users,
+  UserCheck,
   ClipboardCheck, 
   BarChart3, 
   Settings,
@@ -38,6 +40,8 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
             <nav className="space-y-1">
               <SidebarItem collapsed={isCollapsed} icon={LayoutDashboard} label="Panel Control" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
               <SidebarItem collapsed={isCollapsed} icon={School} label="Convenios" active={activeTab === 'convenios'} onClick={() => setActiveTab('convenios')} />
+              <SidebarItem collapsed={isCollapsed} icon={Users} label="Estudiantes" active={activeTab === 'estudiantes'} onClick={() => setActiveTab('estudiantes')} />
+              <SidebarItem collapsed={isCollapsed} icon={UserCheck} label="Profesores" active={activeTab === 'profesores'} onClick={() => setActiveTab('profesores')} />
             </nav>
           </div>
 
@@ -83,6 +87,8 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
             <nav className="space-y-1">
               <SidebarItem icon={LayoutDashboard} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => {setActiveTab('dashboard'); toggleMobileMenu();}} />
               <SidebarItem icon={School} label="Convenios" active={activeTab === 'convenios'} onClick={() => {setActiveTab('convenios'); toggleMobileMenu();}} />
+              <SidebarItem icon={Users} label="Estudiantes" active={activeTab === 'estudiantes'} onClick={() => {setActiveTab('estudiantes'); toggleMobileMenu();}} />
+              <SidebarItem icon={UserCheck} label="Profesores" active={activeTab === 'profesores'} onClick={() => {setActiveTab('profesores'); toggleMobileMenu();}} />
               <SidebarItem icon={ClipboardCheck} label="Evaluaciones" active={activeTab === 'evaluaciones'} onClick={() => {setActiveTab('evaluaciones'); toggleMobileMenu();}} />
               <SidebarItem icon={BarChart3} label="Reportes" active={activeTab === 'reportes'} onClick={() => {setActiveTab('reportes'); toggleMobileMenu();}} />
               <button onClick={onLogout} className="w-full text-left text-gray-400 hover:text-red-400 px-4 py-3 text-sm font-medium">Salir</button>

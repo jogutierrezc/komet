@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import App from './App';
 import LoginPage from './pages/LoginPage';
+import PublicEvaluationPortal from './pages/PublicEvaluationPortal';
 import ProtectedRoute from './routes/ProtectedRoute';
 import { isAuthenticated, logout } from './auth/auth';
 
@@ -19,6 +20,7 @@ export default function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={isAuthenticated() ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/evaluacion-publica" element={<PublicEvaluationPortal />} />
       <Route
         path="/*"
         element={

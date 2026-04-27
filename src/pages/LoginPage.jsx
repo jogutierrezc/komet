@@ -86,6 +86,15 @@ export default function LoginPage() {
                 <ArrowRightCircle size={22} />
               </button>
             </form>
+            <div className="mt-6 text-center">
+              <button
+                type="button"
+                onClick={() => navigate('/evaluacion-publica')}
+                className="text-xs font-black text-blue-600 hover:text-blue-800 uppercase tracking-widest"
+              >
+                ¿Eres estudiante o docente? Accede al portal de evaluación pública
+              </button>
+            </div>
           </div>
 
           <div className="bg-slate-50/50 backdrop-blur-sm border-t border-slate-100/50 p-8 flex items-center justify-center gap-8">

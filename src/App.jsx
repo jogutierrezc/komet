@@ -3,6 +3,8 @@ import Sidebar from './components/shared/Sidebar';
 import Topbar from './components/shared/Topbar';
 import Dashboard from './components/Dashboard';
 import Convenios from './components/Convenios';
+import Estudiantes from './components/Estudiantes';
+import Profesores from './components/Profesores';
 import Evaluaciones from './components/Evaluaciones';
 import Reportes from './components/Reportes';
 import Sistema from './components/Sistema';
@@ -20,6 +22,10 @@ export default function App({ onLogout }) {
         return <Dashboard />;
       case 'convenios':
         return <Convenios />;
+      case 'estudiantes':
+        return <Estudiantes />;
+      case 'profesores':
+        return <Profesores />;
       case 'evaluaciones':
         return <Evaluaciones />;
       case 'reportes':

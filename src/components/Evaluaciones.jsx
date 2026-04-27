@@ -1,38 +1,92 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   ClipboardCheck, Rocket, Pencil, Plus, ChevronRight, Settings2, X, 
   CheckSquare, Type, ListTodo, Hash, Calendar, AlertCircle,
-  Star, Camera, PenTool, FileText, ArrowRightCircle, Trash2
+  Star, Camera, PenTool, FileText, ArrowRightCircle, Trash2, ArrowUp, ArrowDown
 } from 'lucide-react';
-import { MOCK_CENTERS } from '../constants/mockData';
+import { getCampuses, getSurveys, createSurvey, updateSurvey } from '../lib/data';
+import EvaluacionesFormPreview from './EvaluacionesFormPreview';
 
 export default function Evaluaciones() {
   const [view, setView] = useState('list');
   const [selectedQuestionId, setSelectedQuestionId] = useState(null);
   const [selectedSectionId, setSelectedSectionId] = useState(null);
-  const currentYear = new Date().getFullYear();
-
-  const [evaluations, setEvaluations] = useState([
-    {
-      id: 1,
-      titulo: "Evaluación de Desempeño Clínico",
-      campus: "Bucaramanga",
-      dirigidoA: "Estudiante",
-      responde: "Tutor",
-      preguntas: [],
-      estado: 'activo'
-    }
-  ]);
-
+  const [centers, setCenters] = useState([]);
+  const [loadingCenters, setLoadingCenters] = useState(false);
+  const [loadingEvaluations, setLoadingEvaluations] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [previewSurvey, setPreviewSurvey] = useState(null);
+  const [evaluations, setEvaluations] = useState([]);
+  const [editedEvaluation, setEditedEvaluation] = useState(null);
   const [newEval, setNewEval] = useState({
     titulo: 'Nueva Evaluación',
-    campus: 'Bucaramanga',
-    actor: 'Estudiante',
+    campus: '',
+    dirigidoA: 'Estudiante',
     tipoPrograma: 'Pregrado',
-    escenarioPractica: MOCK_CENTERS[0]?.name || '',
+    escenarioPractica: '',
     periodoCorte: 'A',
     preguntas: []
   });
+  const currentYear = new Date().getFullYear();
+
+  const getCampusName = (campusId) => {
+    if (!campusId) return 'Bucaramanga';
+    const campus = centers.find((center) => String(center.id) === String(campusId));
+    return campus?.name || campusId;
+  };
+
+  const getScenarioName = (scenarioId) => {
+    if (!scenarioId) return '';
+    const scenario = centers.find((center) => String(center.id) === String(scenarioId));
+    return scenario?.name || scenarioId;
+  };
+
+  const getScenarioIdByName = (scenarioName) => {
+    if (!scenarioName) return '';
+    const scenario = centers.find((center) => String(center.name).toLowerCase() === String(scenarioName).toLowerCase());
+    return scenario?.id || scenarioName;
+  };
+
+  useEffect(() => {
+    loadCampuses();
+    loadSurveys();
+  }, []);
+
+  useEffect(() => {
+    if (!newEval.escenarioPractica || !centers.length) return;
+    const match = centers.find((center) => String(center.name).toLowerCase() === String(newEval.escenarioPractica).toLowerCase());
+    if (match && String(match.id) !== String(newEval.escenarioPractica)) {
+      setNewEval((prev) => ({ ...prev, escenarioPractica: match.id }));
+    }
+  }, [centers, newEval.escenarioPractica]);
+
+  async function loadCampuses() {
+    setLoadingCenters(true);
+    try {
+      const data = await getCampuses();
+      setCenters(data);
+      if (data && data.length && !newEval.campus) {
+        setNewEval((prev) => ({ ...prev, campus: String(data[0].id) }));
+      }
+    } catch (error) {
+      console.error('Error cargando campuses:', error);
+      setCenters([]);
+    } finally {
+      setLoadingCenters(false);
+    }
+  }
+
+  async function loadSurveys() {
+    setLoadingEvaluations(true);
+    try {
+      const data = await getSurveys();
+      setEvaluations(data);
+    } catch (error) {
+      console.error('Error cargando encuestas:', error);
+    } finally {
+      setLoadingEvaluations(false);
+    }
+  }
 
   const createId = () => Math.random().toString(36).slice(2, 11);
 
@@ -127,8 +181,170 @@ export default function Evaluaciones() {
     }));
   };
 
+  const collectRemovalIds = (questions, target) => {
+    const idsToRemove = new Set([target.id]);
+
+    if (target.tipo === 'section') {
+      questions.forEach(q => {
+        if (q.sectionId === target.id) {
+          idsToRemove.add(q.id);
+        }
+      });
+    }
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      questions.forEach(q => {
+        if (!idsToRemove.has(q.id) && q.parentId && idsToRemove.has(q.parentId)) {
+          idsToRemove.add(q.id);
+          changed = true;
+        }
+      });
+    }
+
+    return idsToRemove;
+  };
+
+  const handleDeleteField = (id) => {
+    setSelectedQuestionId(prev => prev === id ? null : prev);
+    setNewEval(prev => {
+      const target = prev.preguntas.find(q => q.id === id);
+      if (!target) return prev;
+
+      const idsToRemove = collectRemovalIds(prev.preguntas, target);
+      return {
+        ...prev,
+        preguntas: prev.preguntas.filter(q => !idsToRemove.has(q.id))
+      };
+    });
+  };
+
+  const moveField = (id, direction) => {
+    setNewEval(prev => {
+      const questions = [...prev.preguntas];
+      const index = questions.findIndex(q => q.id === id);
+      if (index === -1) return prev;
+
+      const nextIndex = direction === 'up' ? index - 1 : index + 1;
+      if (nextIndex < 0 || nextIndex >= questions.length) return prev;
+
+      const current = questions[index];
+      const neighbor = questions[nextIndex];
+      const sameGroup = current.tipo === 'section'
+        ? neighbor.tipo === 'section'
+        : neighbor.sectionId === current.sectionId && neighbor.parentId === current.parentId;
+
+      if (!sameGroup) return prev;
+
+      [questions[index], questions[nextIndex]] = [questions[nextIndex], questions[index]];
+      return {
+        ...prev,
+        preguntas: questions
+      };
+    });
+  };
+
   const selectedQuestion = newEval.preguntas.find(q => q.id === selectedQuestionId);
   const sections = newEval.preguntas.filter(q => q.tipo === 'section');
+
+  const resetEvaluationForm = () => {
+    setEditedEvaluation(null);
+    setNewEval({
+      titulo: 'Nueva Evaluación',
+      campus: 'Bucaramanga',
+      dirigidoA: 'Estudiante',
+      tipoPrograma: 'Pregrado',
+      escenarioPractica: '',
+      periodoCorte: 'A',
+      preguntas: []
+    });
+  };
+
+  const handleSaveEvaluation = async () => {
+    const surveyObject = {
+      title: newEval.titulo,
+      description: `Programa: ${newEval.tipoPrograma} · Escenario: ${getScenarioName(newEval.escenarioPractica)} · Período: ${newEval.periodoCorte}`,
+      target_type: newEval.dirigidoA,
+      questions: newEval.preguntas,
+      campus_id: newEval.campus || null
+    };
+
+    try {
+      let savedData;
+      if (editedEvaluation) {
+        savedData = await updateSurvey(editedEvaluation.id, surveyObject);
+      } else {
+        savedData = await createSurvey(surveyObject);
+      }
+
+      const savedSurvey = Array.isArray(savedData) ? savedData[0] : savedData;
+
+      setEvaluations((prev) => {
+        if (editedEvaluation) {
+          return prev.map((item) => item.id === editedEvaluation.id ? savedSurvey : item);
+        }
+        return [savedSurvey, ...prev];
+      });
+
+      resetEvaluationForm();
+      setView('list');
+    } catch (error) {
+      console.error('Error guardando encuesta en la base de datos:', error);
+      alert('No se pudo guardar la encuesta. Revisa la consola para más detalles.');
+    }
+  };
+
+  const handleDeleteEvaluation = (id) => {
+    setEvaluations((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleEditEvaluation = (evaluation) => {
+    setEditedEvaluation(evaluation);
+
+    const description = evaluation.description || '';
+    const tipoProgramaMatch = description.match(/Programa:\s*([^·]+)/);
+    const escenarioPracticaMatch = description.match(/Escenario:\s*([^·]+)/);
+    const periodoCorteMatch = description.match(/Per[ií]odo:\s*(.+)$/);
+
+    setNewEval({
+      titulo: evaluation.title || evaluation.titulo || 'Nueva Evaluación',
+      campus: evaluation.campus_id || evaluation.campus || '',
+      dirigidoA: evaluation.target_type || evaluation.dirigidoA || 'Estudiante',
+      tipoPrograma: tipoProgramaMatch ? tipoProgramaMatch[1].trim() : evaluation.tipoPrograma || 'Pregrado',
+      escenarioPractica: escenarioPracticaMatch ? getScenarioIdByName(escenarioPracticaMatch[1].trim()) : evaluation.escenarioPractica || '',
+      periodoCorte: periodoCorteMatch ? periodoCorteMatch[1].trim() : evaluation.periodoCorte || 'A',
+      preguntas: evaluation.questions || evaluation.preguntas || []
+    });
+    setView('create');
+  };
+
+  const handlePreviewEvaluation = (survey = null) => {
+    setPreviewSurvey(survey);
+    setPreviewMode(true);
+  };
+
+  if (previewMode) {
+    const surveyToPreview = previewSurvey || {
+      title: newEval.titulo,
+      description: `Programa: ${newEval.tipoPrograma} · Escenario: ${newEval.escenarioPractica} · Período: ${newEval.periodoCorte}`,
+      target_type: newEval.dirigidoA,
+      questions: newEval.preguntas,
+      campus_id: newEval.campus || null
+    };
+
+    return (
+      <div className="min-h-screen">
+        <EvaluacionesFormPreview
+          survey={surveyToPreview}
+          onClose={() => {
+            setPreviewMode(false);
+            setPreviewSurvey(null);
+          }}
+        />
+      </div>
+    );
+  }
 
   if (view === 'list') {
     return (
@@ -151,19 +367,47 @@ export default function Evaluaciones() {
           {evaluations.map(e => (
             <div 
               key={e.id} 
-              onClick={() => setView('create')}
+              onClick={() => handleEditEvaluation(e)}
               className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer group"
             >
               <div className="flex justify-between mb-4">
                 <div className="bg-blue-100 text-blue-600 p-2 rounded-lg"><ClipboardCheck size={20}/></div>
                 <Pencil size={16} className="text-gray-300 group-hover:text-gray-600" />
               </div>
-              <h3 className="font-bold text-gray-800">{e.titulo}</h3>
-              <p className="text-xs text-gray-400 mt-1 uppercase tracking-tighter">Campus: {e.campus || 'Bucaramanga'}</p>
-              <p className="text-xs text-gray-400 mt-1 uppercase tracking-tighter">Dirigido a: {e.dirigidoA}</p>
+              <h3 className="font-bold text-gray-800">{e.title || e.titulo}</h3>
+              <p className="text-xs text-gray-400 mt-1 uppercase tracking-tighter">Campus: {getCampusName(e.campus_id || e.campus)}</p>
+              <p className="text-xs text-gray-400 mt-1 uppercase tracking-tighter">Dirigido a: {e.target_type || e.dirigidoA}</p>
               <div className="mt-4 pt-4 border-t flex justify-between items-center">
                 <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">ACTIVO</span>
-                <button className="text-blue-600 text-xs font-bold hover:underline">Editar</button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDeleteEvaluation(e.id);
+                    }}
+                    className="text-red-600 text-xs font-bold hover:underline"
+                  >
+                    Eliminar
+                  </button>
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handlePreviewEvaluation(e);
+                    }}
+                    className="text-slate-600 text-xs font-bold hover:underline"
+                  >
+                    Previsualizar
+                  </button>
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleEditEvaluation(e);
+                    }}
+                    className="text-blue-600 text-xs font-bold hover:underline"
+                  >
+                    Editar
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -187,9 +431,14 @@ export default function Evaluaciones() {
           <h2 className="font-bold text-sm tracking-wide text-gray-700">{newEval.titulo}</h2>
         </div>
         <div className="flex items-center gap-3">
-          <button className="bg-gray-200 hover:bg-gray-300 px-4 py-1.5 rounded text-xs font-bold transition-all text-gray-700">Previsualizar</button>
+          <button
+            onClick={handlePreviewEvaluation}
+            className="bg-gray-200 hover:bg-gray-300 px-4 py-1.5 rounded text-xs font-bold transition-all text-gray-700"
+          >
+            Previsualizar
+          </button>
           <button 
-            onClick={() => setView('list')}
+            onClick={handleSaveEvaluation}
             className="bg-blue-600 hover:bg-blue-700 px-6 py-1.5 rounded text-xs font-bold transition-all text-white shadow-lg shadow-blue-500/20"
           >
             Guardar
@@ -247,12 +496,39 @@ export default function Evaluaciones() {
 
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
                   <div className="grid grid-cols-12 border-b border-gray-200">
-                    <div className="col-span-3 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">Actor:</div>
+                    <div className="col-span-3 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">Campus:</div>
                     <div className="col-span-9 px-3 py-1.5">
                       <select
                         className="w-full text-sm bg-white text-gray-700 outline-none"
-                        value={newEval.actor}
-                        onChange={e => setNewEval({ ...newEval, actor: e.target.value })}
+                        value={newEval.campus}
+                        onChange={e => setNewEval({ ...newEval, campus: e.target.value })}
+                      >
+                        {loadingCenters ? (
+                          <option value="">Cargando campus...</option>
+                        ) : centers.length ? (
+                          centers.map((center) => {
+                            const optionValue = typeof center === 'string' ? center : center.id || center.name || '';
+                            const optionLabel = typeof center === 'string' ? center : center.name || String(center.id || center);
+                            return (
+                              <option key={optionValue} value={optionValue}>
+                                {optionLabel}
+                              </option>
+                            );
+                          })
+                        ) : (
+                          <option value="">No hay campus disponibles</option>
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-12 border-b border-gray-200">
+                    <div className="col-span-3 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">Dirigido a:</div>
+                    <div className="col-span-9 px-3 py-1.5">
+                      <select
+                        className="w-full text-sm bg-white text-gray-700 outline-none"
+                        value={newEval.dirigidoA}
+                        onChange={e => setNewEval({ ...newEval, dirigidoA: e.target.value })}
                       >
                         <option value="Estudiante">Estudiante</option>
                         <option value="Coordinador">Coordinador</option>
@@ -284,11 +560,21 @@ export default function Evaluaciones() {
                         value={newEval.escenarioPractica}
                         onChange={e => setNewEval({ ...newEval, escenarioPractica: e.target.value })}
                       >
-                        {MOCK_CENTERS.map((center) => (
-                          <option key={center.id} value={center.name}>
-                            {center.name}
-                          </option>
-                        ))}
+                        {loadingCenters ? (
+                          <option value="">Cargando centros...</option>
+                        ) : centers.length ? (
+                          centers.map((center) => {
+                            const optionValue = typeof center === 'string' ? center : center.id || center.name || '';
+                            const optionLabel = typeof center === 'string' ? center : center.name || String(center.id || center);
+                            return (
+                              <option key={optionValue} value={optionValue}>
+                                {optionLabel}
+                              </option>
+                            );
+                          })
+                        ) : (
+                          <option value="">No hay centros disponibles</option>
+                        )}
                       </select>
                     </div>
                   </div>
@@ -332,6 +618,9 @@ export default function Evaluaciones() {
                       setSelectedSectionId(section.id);
                       setSelectedQuestionId(section.id);
                     }}
+                    onMoveUp={() => moveField(section.id, 'up')}
+                    onMoveDown={() => moveField(section.id, 'down')}
+                    onDelete={() => handleDeleteField(section.id)}
                   />
 
                   {sectionQuestions.map((q, idx) => (
@@ -346,6 +635,9 @@ export default function Evaluaciones() {
                       }}
                       allQuestions={newEval.preguntas}
                       addDependent={(parentId) => addQuestion('yesno', parentId)}
+                      onMoveUp={() => moveField(q.id, 'up')}
+                      onMoveDown={() => moveField(q.id, 'down')}
+                      onDelete={() => handleDeleteField(q.id)}
                     />
                   ))}
 
@@ -452,6 +744,33 @@ export default function Evaluaciones() {
                   </div>
                 )}
               </div>
+
+              <div className="pt-4 border-t space-y-3">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Acciones</h4>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => moveField(selectedQuestionId, 'up')}
+                    className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-50"
+                  >
+                    Subir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveField(selectedQuestionId, 'down')}
+                    className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-50"
+                  >
+                    Bajar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteField(selectedQuestionId)}
+                    className="px-3 py-2 rounded-xl border border-red-200 bg-red-50 text-xs font-bold text-red-600 hover:bg-red-100"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-gray-300 text-center px-4">
@@ -479,19 +798,35 @@ const ToolBtn = ({ icon, label, onClick }) => (
   </button>
 );
 
-const SectionHeader = ({ section, selected, index, onClick }) => (
+const SectionHeader = ({ section, selected, index, onClick, onDelete, onMoveUp, onMoveDown }) => (
   <div
     onClick={onClick}
     className={`rounded-xl border cursor-pointer transition-all overflow-hidden ${selected ? 'border-blue-500 shadow-md' : 'border-gray-200 hover:border-blue-300'}`}
   >
-    <div className="bg-blue-600 text-white px-4 py-2 flex items-center justify-between">
+    <div className="bg-blue-600 text-white px-4 py-2 flex items-center justify-between gap-3">
       <h4 className="text-xs font-black uppercase tracking-wide">{index}. {section.label}</h4>
-      <div className="flex items-center gap-2 text-[11px] font-bold">
-        <span>5</span>
-        <span>4</span>
-        <span>3</span>
-        <span>2</span>
-        <span>1</span>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onMoveUp?.(); }}
+          className="p-1 rounded-full bg-white/10 hover:bg-white/20"
+        >
+          <ArrowUp size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onMoveDown?.(); }}
+          className="p-1 rounded-full bg-white/10 hover:bg-white/20"
+        >
+          <ArrowDown size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
+          className="p-1 rounded-full bg-white/10 hover:bg-white/20"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
     </div>
     {section.instrucciones && (
@@ -502,7 +837,7 @@ const SectionHeader = ({ section, selected, index, onClick }) => (
   </div>
 );
 
-const QuestionCard = ({ question, index, selected, onClick, allQuestions, addDependent }) => {
+const QuestionCard = ({ question, index, selected, onClick, allQuestions, addDependent, onDelete, onMoveUp, onMoveDown }) => {
   const children = allQuestions.filter(q => q.parentId === question.id);
 
   return (
@@ -512,7 +847,27 @@ const QuestionCard = ({ question, index, selected, onClick, allQuestions, addDep
         className={`bg-white rounded-2xl border-2 transition-all cursor-pointer p-6 relative group ${selected ? 'border-blue-500 shadow-lg' : 'border-gray-200 hover:border-gray-300'}`}
       >
         <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Trash2 size={14} className="text-gray-300 hover:text-red-500 cursor-pointer" />
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onMoveUp?.(); }}
+            className="p-1 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-300"
+          >
+            <ArrowUp size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onMoveDown?.(); }}
+            className="p-1 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-300"
+          >
+            <ArrowDown size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onDelete?.(); }}
+            className="p-1 rounded-full bg-white border border-gray-200 text-gray-300 hover:text-red-500 hover:border-red-200"
+          >
+            <Trash2 size={14} />
+          </button>
         </div>
         
         <div className="flex gap-4">
@@ -556,6 +911,9 @@ const QuestionCard = ({ question, index, selected, onClick, allQuestions, addDep
                     onClick={() => {}}
                     allQuestions={allQuestions}
                     addDependent={addDependent}
+                    onMoveUp={() => moveField(child.id, 'up')}
+                    onMoveDown={() => moveField(child.id, 'down')}
+                    onDelete={() => handleDeleteField(child.id)}
                   />
                 ))}
               </div>

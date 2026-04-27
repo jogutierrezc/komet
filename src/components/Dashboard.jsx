@@ -1,8 +1,38 @@
+import { useEffect, useState } from 'react';
 import { Clock, MoreVertical, TrendingUp, AlertCircle, School, GraduationCap, Rocket, FileText } from 'lucide-react';
 import StatusBadge from './shared/StatusBadge';
-import { MOCK_RECENT_EVALS } from '../constants/mockData';
+import { getRecentEvaluations, getActiveConveniosCount, getStudentsInPracticeCount, getEvaluationsCount } from '../lib/data';
 
 export default function Dashboard() {
+  const [recentEvals, setRecentEvals] = useState([]);
+  const [stats, setStats] = useState({ conveniosActive: 0, studentsInPractice: 0, totalEvaluations: 0 });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  async function loadDashboard() {
+    setLoading(true);
+    try {
+      const [evaluationsData, conveniosActive, studentsInPractice, totalEvaluations] = await Promise.all([
+        getRecentEvaluations(),
+        getActiveConveniosCount(),
+        getStudentsInPracticeCount(),
+        getEvaluationsCount()
+      ]);
+
+      setRecentEvals(evaluationsData);
+      setStats({ conveniosActive, studentsInPractice, totalEvaluations });
+    } catch (error) {
+      console.error('Error cargando métricas del dashboard:', error);
+      setRecentEvals([]);
+      setStats({ conveniosActive: 0, studentsInPractice: 0, totalEvaluations: 0 });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
       {/* Responsive Metrics Grid */}
@@ -14,7 +44,7 @@ export default function Dashboard() {
             <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full uppercase">Komet Insight</span>
           </div>
           <div>
-            <h3 className="text-3xl font-black">42</h3>
+            <h3 className="text-3xl font-black">{stats.conveniosActive}</h3>
             <p className="text-xs font-medium opacity-80 uppercase tracking-widest mt-1">Convenios Activos</p>
           </div>
         </div>
@@ -26,35 +56,17 @@ export default function Dashboard() {
             <TrendingUp size={16} className="text-emerald-500" />
           </div>
           <div>
-            <h3 className="text-3xl font-black text-gray-800">512</h3>
+            <h3 className="text-3xl font-black text-gray-800">{stats.studentsInPractice}</h3>
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Estudiantes en Práctica</p>
           </div>
         </div>
 
-        {/* Metric 3: Calificación Promedio */}
+        {/* Metric 3: Evaluaciones Registradas */}
         <div className="lg:col-span-6 bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex items-center space-x-8 overflow-hidden">
           <div className="flex-1">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Satisfacción Global</p>
-            <h3 className="text-4xl font-black text-blue-600">4.7 <span className="text-sm font-medium text-gray-400">/ 5.0</span></h3>
-            <div className="mt-3 flex space-x-1 items-end h-8">
-              {[30, 50, 40, 70, 60, 90, 85].map((v, i) => (
-                <div key={i} className="flex-1 bg-blue-100 rounded-t-sm" style={{height: `${v}%`}}></div>
-              ))}
-            </div>
-          </div>
-          <div className="hidden xl:flex flex-col space-y-2 border-l pl-8 border-gray-50">
-            <div className="flex items-center space-x-2 text-[10px] font-bold text-gray-500">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>Salud (4.9)</span>
-            </div>
-            <div className="flex items-center space-x-2 text-[10px] font-bold text-gray-500">
-              <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-              <span>Admin (4.2)</span>
-            </div>
-            <div className="flex items-center space-x-2 text-[10px] font-bold text-gray-500">
-              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-              <span>Derecho (4.5)</span>
-            </div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Evaluaciones registradas</p>
+            <h3 className="text-4xl font-black text-blue-600">{stats.totalEvaluations}</h3>
+            <p className="text-sm text-gray-500 mt-3">Datos actualizados desde Supabase y reflejados en tiempo real.</p>
           </div>
         </div>
       </div>
@@ -75,36 +87,46 @@ export default function Dashboard() {
               <thead className="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
                 <tr>
                   <th className="px-6 py-4">Estudiante</th>
-                  <th className="px-6 py-4 hidden md:table-cell">Centro</th>
+                  <th className="px-6 py-4 hidden md:table-cell">Campus</th>
                   <th className="px-6 py-4">Puntaje</th>
                   <th className="px-6 py-4">Estado</th>
                   <th className="px-6 py-4 text-center">...</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {MOCK_RECENT_EVALS.map((item) => (
-                  <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                          {item.name.charAt(0)}
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-gray-800">{item.name}</p>
-                          <p className="text-[10px] text-gray-400">{item.program}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-[11px] text-gray-500 font-medium hidden md:table-cell">{item.center}</td>
-                    <td className="px-6 py-4 text-xs font-bold text-gray-700">{item.score}</td>
-                    <td className="px-6 py-4">
-                      <StatusBadge status={item.status} />
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <button className="text-gray-300 hover:text-blue-600"><MoreVertical size={16} /></button>
-                    </td>
+                {loading ? (
+                  <tr>
+                    <td colSpan="5" className="px-6 py-8 text-center text-gray-500">Cargando evaluaciones...</td>
                   </tr>
-                ))}
+                ) : recentEvals.length ? (
+                  recentEvals.map((item) => (
+                    <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                            {item.name.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-gray-800">{item.name}</p>
+                            <p className="text-[10px] text-gray-400">{item.program}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-[11px] text-gray-500 font-medium hidden md:table-cell">{item.center}</td>
+                      <td className="px-6 py-4 text-xs font-bold text-gray-700">{item.score}</td>
+                      <td className="px-6 py-4">
+                        <StatusBadge status={item.status} />
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button className="text-gray-300 hover:text-blue-600"><MoreVertical size={16} /></button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="5" className="px-6 py-8 text-center text-gray-500">No hay evaluaciones recientes disponibles.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -119,20 +141,20 @@ export default function Dashboard() {
             </h3>
             <div className="space-y-3">
               {[
-                { title: 'Convenio Vencido', detail: 'Hospital San Juan', type: 'danger' },
-                { title: 'Evaluación Tutor', detail: 'Psicología - 12 pend.', type: 'warning' },
-                { title: 'Nueva Solicitud', detail: 'Clínica Portoazul', type: 'info' }
-              ].map((alert, i) => (
-                <div key={i} className={`p-3 rounded-2xl border flex items-start space-x-3 transition-transform hover:translate-x-1 cursor-pointer ${
-                  alert.type === 'danger' ? 'bg-red-50 border-red-100' : 
-                  alert.type === 'warning' ? 'bg-amber-50 border-amber-100' : 'bg-blue-50 border-blue-100'
+                { title: 'Convenios activos', detail: `${stats.conveniosActive}`, type: 'info' },
+                { title: 'Estudiantes en práctica', detail: `${stats.studentsInPractice}`, type: 'warning' },
+                { title: 'Evaluaciones registradas', detail: `${stats.totalEvaluations}`, type: 'success' }
+              ].map((item, i) => (
+                <div key={i} className={`p-3 rounded-2xl border flex items-start space-x-3 ${
+                  item.type === 'danger' ? 'bg-red-50 border-red-100' : 
+                  item.type === 'warning' ? 'bg-amber-50 border-amber-100' : item.type === 'success' ? 'bg-emerald-50 border-emerald-100' : 'bg-blue-50 border-blue-100'
                 }`}>
                   <div className={`mt-1 w-1.5 h-1.5 rounded-full ${
-                    alert.type === 'danger' ? 'bg-red-500' : alert.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
+                    item.type === 'danger' ? 'bg-red-500' : item.type === 'warning' ? 'bg-amber-500' : item.type === 'success' ? 'bg-emerald-500' : 'bg-blue-500'
                   }`}></div>
                   <div>
-                    <p className="text-[11px] font-bold text-gray-800">{alert.title}</p>
-                    <p className="text-[10px] text-gray-500 uppercase">{alert.detail}</p>
+                    <p className="text-[11px] font-bold text-gray-800">{item.title}</p>
+                    <p className="text-[10px] text-gray-500 uppercase">{item.detail}</p>
                   </div>
                 </div>
               ))}
