@@ -274,37 +274,29 @@ export async function getEvaluationsCount() {
 export async function getRecentEvaluations() {
   const { data, error } = await supabase
     .from('evaluations')
-    .select('id,status,created_at,student_id,campus_id')
+    .select('id,status,created_at,student:student_id(full_name, convenio:convenio_id(name)), tutor:tutor_id(full_name, convenio:convenio_id(name)), campus:campus_id(name), center:center_id(name)')
     .order('created_at', { ascending: false })
     .limit(10);
 
   if (error) {
-    const { data: nestedData, error: nestedError } = await supabase
-      .from('evaluations')
-      .select('id,status,created_at,student:student_id(full_name),campus:campus_id(name)')
-      .order('created_at', { ascending: false })
-      .limit(10);
+    throw error;
+  }
 
-    if (nestedError) throw error;
+  return (data || []).map((item) => {
+    const studentName = item.student?.full_name;
+    const tutorName = item.tutor?.full_name;
+    const personName = studentName || tutorName || 'Registro';
+    const personProgram = '';
+    const centerName = item.center?.name || item.student?.convenio?.name || item.tutor?.convenio?.name || item.campus?.name || '-';
 
-    return (nestedData || []).map((item) => ({
+    return {
       id: item.id,
-      name: item.student?.full_name || 'Registro',
-      program: '',
-      center: item.campus?.name || '-',
+      name: personName,
+      program: personProgram,
+      center: centerName,
       status: item.status || 'Pendiente',
       score: '-',
       date: item.created_at || ''
-    }));
-  }
-
-  return (data || []).map((item) => ({
-    id: item.id,
-    name: item.student_id ? String(item.student_id) : 'Registro',
-    program: '',
-    center: item.campus_id ? String(item.campus_id) : '-',
-    status: item.status || 'Pendiente',
-    score: '-',
-    date: item.created_at || ''
-  }));
+    };
+  });
 }
