@@ -87,7 +87,7 @@ export default function Convenios() {
           name: formData.name,
           type: formData.type,
           address: formData.address,
-          photo: formData.photo || "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150",
+          photo_url: formData.photo || "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150",
           campus_id: formData.campus_id,
           status: editedConvenio.status || 'activo'
         });
@@ -98,7 +98,7 @@ export default function Convenios() {
           name: formData.name,
           type: formData.type,
           address: formData.address,
-          photo: formData.photo || "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150",
+          photo_url: formData.photo || "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150",
           campus_id: formData.campus_id,
           status: 'activo'
         });
@@ -120,7 +120,7 @@ export default function Convenios() {
       name: site.name || '',
       type: site.type || 'IPS',
       address: site.address || '',
-      photo: site.photo || '',
+      photo: site.photo_url || '',
       campus_id: site.campus_id || ''
     });
     setView('create');
@@ -429,7 +429,7 @@ export default function Convenios() {
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-4">
                     <img 
-                      src={site.photo || 'https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150'} 
+                      src={site.photo_url || 'https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150'} 
                       alt={site.name}
                       className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm"
                     />

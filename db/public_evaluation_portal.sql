@@ -89,7 +89,7 @@ $$;
 
 -- Función que entrega los formularios disponibles para un usuario del portal.
 -- Excluye formularios ya respondidos por ese usuario.
-create or replace function public.portal_active_surveys_by_code(user_code text)
+create or replace function public.portal_active_surveys_by_code(user_code text, practice_center_id uuid default null)
 returns table(
   survey_id uuid,
   title text,
@@ -111,7 +111,8 @@ select
   c.name as campus_name
 from public.get_portal_user_by_code(user_code) u
 join public.active_surveys s on (
-       (u.role = 'student' and lower(s.target_type) = 'estudiante')
+       lower(s.target_type) = 'todos'
+    or (u.role = 'student' and lower(s.target_type) = 'estudiante')
     or (u.role = 'professor' and lower(s.target_type) in ('profesor', 'docente'))
     or (u.role not in ('student','professor') and lower(s.target_type) = lower(u.role))
 )
@@ -119,7 +120,7 @@ left join public.campuses c on c.id = s.campus_id
 where not exists (
   select 1
   from public.evaluations ev
-  where ev.survey_id = s.id
+  where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
     and (
       (u.role = 'student' and ev.student_id = u.user_id)
       or (u.role = 'professor' and ev.tutor_id = u.user_id)
@@ -128,7 +129,7 @@ where not exists (
 $portal_active_surveys$;
 
 -- Función auxiliar para verificar si el usuario ya respondió un formulario específico.
-create or replace function public.portal_user_has_completed(user_code text, survey_id uuid)
+create or replace function public.portal_user_has_completed(user_code text, survey_id uuid, practice_center_id uuid default null)
 returns boolean
 language sql stable
 as $portal_user_has_completed$
@@ -136,9 +137,10 @@ select exists(
   select 1
   from public.get_portal_user_by_code(user_code) u
   join public.evaluations ev on ev.survey_id = survey_id
-  where (
-    (u.role = 'student' and ev.student_id = u.user_id)
-    or (u.role = 'professor' and ev.tutor_id = u.user_id)
-  )
+  where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
+    and (
+      (u.role = 'student' and ev.student_id = u.user_id)
+      or (u.role = 'professor' and ev.tutor_id = u.user_id)
+    )
 );
 $portal_user_has_completed$;

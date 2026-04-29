@@ -1,5 +1,94 @@
 import { supabase } from './supabaseClient';
 
+const SYSTEM_SETTINGS_KEY = 'komet_system';
+
+const DEFAULT_SYSTEM_SETTINGS = {
+  resend_api_key: '',
+  resend_sender_email: '',
+  email_templates: {
+    student_completed_subject: 'Tu encuesta ha sido registrada',
+    student_completed_body: 'Hola {{name}},\n\nTu evaluación ha sido recibida correctamente. Gracias por tu colaboración.',
+    student_access_subject: 'Accede a tu evaluación',
+    student_access_body: 'Hola {{name}},\n\nHaz clic en el siguiente enlace para completar tu evaluación: {{evaluation_link}}',
+    professor_access_subject: 'Nueva evaluación disponible',
+    professor_access_body: 'Hola {{name}},\n\nTienes acceso a una evaluación en el sistema. Utiliza este enlace: {{evaluation_link}}',
+    coordinator_access_subject: 'Acceso a evaluación de práctica',
+    coordinator_access_body: 'Hola {{name}},\n\nYa puedes acceder a la evaluación de práctica desde el sistema: {{evaluation_link}}'
+  },
+  openrouter_api_key: '',
+  openrouter_model: 'gpt-4o-mini',
+  openrouter_system_prompt: 'Eres un asistente administrativo para el sistema Komet, ayudas a generar mensajes de email y notificaciones operativas.'
+};
+
+export async function getSystemSettings(configKey = SYSTEM_SETTINGS_KEY) {
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('config_value')
+    .eq('config_key', configKey)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.config_value || DEFAULT_SYSTEM_SETTINGS;
+}
+
+export async function saveSystemSettings(settings, configKey = SYSTEM_SETTINGS_KEY) {
+  const { data, error } = await supabase
+    .from('system_settings')
+    .upsert({ config_key: configKey, config_value: settings }, { onConflict: 'config_key' })
+    .select('config_value')
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.config_value || settings;
+}
+
+export async function getDbStatus() {
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('id')
+    .limit(1);
+  if (error) throw error;
+  return data;
+}
+
+export async function getEmailTemplates() {
+  const { data, error } = await supabase
+    .from('email_templates')
+    .select('*')
+    .order('template_key');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function saveEmailTemplate(template) {
+  const { data, error } = await supabase
+    .from('email_templates')
+    .upsert(template, { onConflict: 'template_key' })
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function getApiIntegrations() {
+  const { data, error } = await supabase
+    .from('api_integrations')
+    .select('*')
+    .order('name');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function saveApiIntegration(integration) {
+  const { data, error } = await supabase
+    .from('api_integrations')
+    .upsert(integration, { onConflict: 'name' })
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function getStudents() {
   const { data, error } = await supabase
     .from('students')
@@ -86,6 +175,40 @@ export async function importProfessors(professors) {
   return data;
 }
 
+export async function getSystemUsers() {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .order('full_name');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createSystemUser(user) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .insert([user])
+    .select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function updateSystemUser(id, user) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(user)
+    .eq('id', id)
+    .select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteSystemUser(id) {
+  const { error } = await supabase.from('profiles').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
 export async function getCampuses() {
   const { data, error } = await supabase.from('campuses').select('id,name').order('name');
   if (error) throw error;
@@ -99,13 +222,27 @@ export async function getConvenios() {
 }
 
 export async function createConvenio(convenio) {
-  const { data, error } = await supabase.from('convenios').insert([convenio]).select('*, campus:campus_id(name)');
+  const payload = {
+    ...convenio,
+    photo_url: convenio.photo || convenio.photo_url || null,
+    campus_id: convenio.campus_id || null
+  };
+  delete payload.photo;
+
+  const { data, error } = await supabase.from('convenios').insert([payload]).select('*');
   if (error) throw error;
   return data;
 }
 
 export async function updateConvenio(id, convenio) {
-  const { data, error } = await supabase.from('convenios').update(convenio).eq('id', id).select('*, campus:campus_id(name)');
+  const payload = {
+    ...convenio,
+    photo_url: convenio.photo || convenio.photo_url || null,
+    campus_id: convenio.campus_id || null
+  };
+  delete payload.photo;
+
+  const { data, error } = await supabase.from('convenios').update(payload).eq('id', id).select('*');
   if (error) throw error;
   return data;
 }
@@ -131,8 +268,11 @@ export async function getPortalUserByCode(userCode) {
   return data?.[0] || null;
 }
 
-export async function getPortalActiveSurveysByCode(userCode) {
-  const { data, error } = await supabase.rpc('portal_active_surveys_by_code', { user_code: userCode });
+export async function getPortalActiveSurveysByCode(userCode, practiceCenterId = null) {
+  const { data, error } = await supabase.rpc('portal_active_surveys_by_code', {
+    user_code: userCode,
+    practice_center_id: practiceCenterId || null
+  });
   if (error) throw error;
   return (data || []).map((survey) => ({
     ...survey,
@@ -178,9 +318,132 @@ export async function createEvaluation(evaluation) {
   const { data, error } = await supabase
     .from('evaluations')
     .insert([evaluation])
-    .select('*');
+    .select('*')
+    .single();
   if (error) throw error;
   return data;
+}
+
+export async function createEvaluationWithResponses(evaluation, responses = []) {
+  const createdEvaluation = await createEvaluation(evaluation);
+  if (!createdEvaluation?.id || !Array.isArray(responses) || responses.length === 0) {
+    return createdEvaluation;
+  }
+
+  const responseRows = responses.map((response) => ({
+    evaluation_id: createdEvaluation.id,
+    answers: response.answers ?? response,
+    submitted_at: response.submitted_at || new Date().toISOString(),
+    ip_address: response.ip_address || null
+  }));
+
+  const { error: responseError } = await supabase
+    .from('evaluation_responses')
+    .insert(responseRows);
+
+  if (responseError) throw responseError;
+
+  return createdEvaluation;
+}
+
+function normalizeSurveySections(items = []) {
+  const sections = [];
+  let currentSection = null;
+
+  const mapQuestion = (question) => {
+    const base = {
+      id: question.id || String(Math.random()).slice(2),
+      label: question.label || question.instrucciones || question.titulo || question.name || '',
+      tipo: question.tipo || question.type || 'text',
+      sectionId: question.sectionId || question.section_id || null
+    };
+
+    if (question.tipo === 'section' || question.type === 'section') {
+      return null;
+    }
+
+    return base;
+  };
+
+  items.forEach((item) => {
+    if (item.tipo === 'section' || item.type === 'section') {
+      currentSection = {
+        id: item.id || String(Math.random()).slice(2),
+        title: item.label || item.name || 'Sección',
+        type: 'section',
+        questions: []
+      };
+      sections.push(currentSection);
+      return;
+    }
+
+    const question = mapQuestion(item);
+    if (!question) return;
+
+    if (!currentSection) {
+      currentSection = {
+        id: 'default-section',
+        title: 'General',
+        type: 'section',
+        questions: []
+      };
+      sections.push(currentSection);
+    }
+
+    currentSection.questions.push(question);
+  });
+
+  return sections;
+}
+
+function parseNumericAnswer(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number(value);
+  if (typeof value === 'string') {
+    const numeric = Number(value.trim());
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
+}
+
+function getSectionScore(section, answers) {
+  const numericValues = section.questions
+    .map((q) => parseNumericAnswer(answers[q.id]))
+    .filter((value) => value !== null && !Number.isNaN(value));
+
+  if (!numericValues.length) return null;
+  const total = numericValues.reduce((sum, value) => sum + value, 0);
+  return Number((total / numericValues.length).toFixed(2));
+}
+
+export function calculateSurveyScoreSummary({ survey = {}, answers = {} }) {
+  const questions = Array.isArray(survey.questions)
+    ? survey.questions
+    : Array.isArray(survey.preguntas)
+    ? survey.preguntas
+    : [];
+
+  const sections = normalizeSurveySections(questions);
+  const sectionScores = sections.map((section) => ({
+    sectionId: section.id,
+    title: section.title,
+    score: getSectionScore(section, answers),
+    questionCount: section.questions.length
+  }));
+
+  const allNumericAnswers = sections
+    .flatMap((section) => section.questions.map((q) => parseNumericAnswer(answers[q.id])))
+    .filter((value) => value !== null && !Number.isNaN(value));
+
+  const globalScore = allNumericAnswers.length
+    ? Number((allNumericAnswers.reduce((sum, value) => sum + value, 0) / allNumericAnswers.length).toFixed(2))
+    : null;
+
+  return {
+    sectionScores,
+    globalScore,
+    answeredQuestions: allNumericAnswers.length
+  };
 }
 
 export async function updateEvaluation(id, evaluation) {
@@ -194,38 +457,30 @@ export async function updateEvaluation(id, evaluation) {
 }
 
 export async function getEvaluationSummaryByConvenio(convenioId) {
-  const students = await getStudentsByConvenio(convenioId);
-  const professors = await getProfessorsByConvenio(convenioId);
-
-  const studentIds = students.map((item) => item.id).filter(Boolean);
-  const professorIds = professors.map((item) => item.id).filter(Boolean);
-
   const summary = { student: 0, professor: 0, coordinator: 0 };
 
   try {
-    if (studentIds.length) {
-      const { count, error } = await supabase
-        .from('evaluations')
-        .select('id', { head: true, count: 'exact' })
-        .in('student_id', studentIds);
-      if (!error) summary.student = count || 0;
-    }
-
-    if (professorIds.length) {
-      const { count, error } = await supabase
-        .from('evaluations')
-        .select('id', { head: true, count: 'exact' })
-        .in('professor_id', professorIds);
-      if (!error) summary.professor = count || 0;
-    }
-
-    const { count: coordinatorCount, error: coordinatorError } = await supabase
+    const { data, error } = await supabase
       .from('evaluations')
-      .select('id', { head: true, count: 'exact' })
-      .not('coordinator_id', 'is', null)
-      .eq('convenio_id', convenioId);
+      .select('id, student_id, tutor_id, center_id, dirigidoA, estado, tipoPrograma')
+      .eq('center_id', convenioId);
 
-    if (!coordinatorError) summary.coordinator = coordinatorCount || 0;
+    if (error) throw error;
+    if (!Array.isArray(data)) return summary;
+
+    data.forEach((item) => {
+      if (item.student_id) {
+        summary.student += 1;
+        return;
+      }
+      if (item.tutor_id) {
+        summary.professor += 1;
+        return;
+      }
+
+      const role = normalizeRole(item.dirigidoA || item.estado || item.tipoPrograma);
+      if (role === 'Coordinadores') summary.coordinator += 1;
+    });
   } catch (error) {
     console.warn('No se pudo generar resumen de evaluaciones para convenio', error);
   }
@@ -274,29 +529,279 @@ export async function getEvaluationsCount() {
 export async function getRecentEvaluations() {
   const { data, error } = await supabase
     .from('evaluations')
-    .select('id,status,created_at,student:student_id(full_name, convenio:convenio_id(name)), tutor:tutor_id(full_name, convenio:convenio_id(name)), campus:campus_id(name), center:center_id(name)')
+    .select(`id,status,created_at,student_id,tutor_id,campus_id,center_id, student:student_id(full_name,program), tutor:tutor_id(full_name,specialty), center:center_id(name), campus:campus_id(name)`)
     .order('created_at', { ascending: false })
     .limit(10);
 
-  if (error) {
-    throw error;
+  if (!error && data) {
+    return data.map((item) => {
+      const studentName = item.student?.full_name;
+      const tutorName = item.tutor?.full_name;
+      const personName = studentName || tutorName || (item.student_id ? 'Estudiante' : item.tutor_id ? 'Profesor' : 'Evaluación');
+      const programName = item.student?.program || item.tutor?.specialty || '';
+      const centerName = item.center?.name || item.center_id || item.campus?.name || item.campus_id || '-';
+
+      return {
+        id: item.id,
+        name: personName,
+        program: programName,
+        center: centerName,
+        status: item.status || 'Pendiente',
+        score: '-',
+        date: item.created_at || ''
+      };
+    });
   }
 
-  return (data || []).map((item) => {
-    const studentName = item.student?.full_name;
-    const tutorName = item.tutor?.full_name;
-    const personName = studentName || tutorName || 'Registro';
-    const personProgram = '';
-    const centerName = item.center?.name || item.student?.convenio?.name || item.tutor?.convenio?.name || item.campus?.name || '-';
+  if (error) {
+    console.warn('Could not join evaluation relations, falling back to simple fetch:', error.message || error);
+  }
+
+  const fallback = await supabase
+    .from('evaluations')
+    .select('id,status,created_at,student_id,tutor_id,campus_id,center_id')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (fallback.error) {
+    throw fallback.error;
+  }
+
+  return (fallback.data || []).map((item) => {
+    const personName = item.student_id ? 'Estudiante' : item.tutor_id ? 'Profesor' : 'Evaluación';
+    const centerName = item.center_id || item.campus_id || '-';
 
     return {
       id: item.id,
       name: personName,
-      program: personProgram,
+      program: '',
       center: centerName,
       status: item.status || 'Pendiente',
       score: '-',
       date: item.created_at || ''
+    };
+  });
+}
+
+function normalizeRole(value) {
+  if (!value) return 'Sin definir';
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized.includes('todos')) return 'Todos';
+  if (normalized.includes('estudiante')) return 'Estudiantes';
+  if (normalized.includes('profesor') || normalized.includes('tutor')) return 'Profesores';
+  if (normalized.includes('coordinador')) return 'Coordinadores';
+  return String(value).trim();
+}
+
+function normalizeProgram(value) {
+  return String(value || 'Sin programa').trim();
+}
+
+function normalizeCenter(item) {
+  return (
+    item.center?.name ||
+    item.center_id ||
+    item.campus?.name ||
+    item.campus_id ||
+    'Sin sitio'
+  ).toString();
+}
+
+function normalizeStatus(value) {
+  const status = String(value || 'Pendiente').trim().toLowerCase();
+  if (status.includes('pend')) return 'Pendiente';
+  if (status.includes('complete') || status.includes('complet')) return 'Completada';
+  if (status.includes('cancel')) return 'Cancelada';
+  if (status.includes('hold')) return 'En espera';
+  return String(value || 'Pendiente').trim();
+}
+
+function mapEvaluationItem(item) {
+  const role = normalizeRole(item.dirigidoA || item.estado || item.tipoPrograma);
+  const program = normalizeProgram(item.tipoPrograma || item.student?.program || item.tutor?.specialty);
+  const center = normalizeCenter(item);
+  const status = normalizeStatus(item.status || 'Pendiente');
+  const person = item.student?.full_name || item.tutor?.full_name || item.titulo || 'Evaluación';
+  const surveyTitle = item.survey?.title || item.titulo || 'Evaluación';
+  const questions = Array.isArray(item.preguntas)
+    ? item.preguntas
+    : Array.isArray(item.survey?.questions)
+    ? item.survey.questions
+    : [];
+
+  const scoreSummary = calculateSurveyScoreSummary({
+    survey: item.survey || {},
+    answers: item.preguntas || {}
+  });
+
+  return {
+    id: item.id,
+    role,
+    program,
+    center,
+    campus: item.campus?.name || item.campus_id || 'Sin campus',
+    survey: surveyTitle,
+    status,
+    created_at: item.created_at,
+    completed_at: item.completed_at,
+    period: item.periodoCorte || 'No definido',
+    target: item.dirigidoA || item.tipoPrograma || item.estado || 'Sin definir',
+    person,
+    questions,
+    questionCount: questions.length,
+    scoreSummary,
+    surveyDetails: {
+      title: item.survey?.title || item.titulo || 'Evaluación',
+      description: item.survey?.description || '',
+      target_type: item.survey?.target_type || item.dirigidoA || '',
+      questions: Array.isArray(item.survey?.questions) ? item.survey.questions : []
+    }
+  };
+}
+
+function aggregateByKey(items, key, countKey = 'total') {
+  return items.reduce((acc, item) => {
+    const value = item[key] || 'Sin definir';
+    const entry = acc[value] || { [key]: value, total: 0, completadas: 0, pendientes: 0, roles: {}, programs: {}, sites: {} };
+    entry.total += 1;
+    if (item.status === 'Completada') entry.completadas += 1;
+    if (item.status === 'Pendiente') entry.pendientes += 1;
+    if (item.role) entry.roles[item.role] = (entry.roles[item.role] || 0) + 1;
+    if (item.program) entry.programs[item.program] = (entry.programs[item.program] || 0) + 1;
+    if (item.center) entry.sites[item.center] = (entry.sites[item.center] || 0) + 1;
+    acc[value] = entry;
+    return acc;
+  }, {});
+}
+
+export async function getEvaluationReportMetrics(filters = {}) {
+  const { role, program, center } = filters;
+
+  const { data, error } = await supabase
+    .from('evaluations')
+    .select(`
+      id,
+      status,
+      created_at,
+      completed_at,
+      dirigidoA,
+      estado,
+      periodoCorte,
+      tipoPrograma,
+      titulo,
+      preguntas,
+      survey:survey_id(title,questions,description,target_type),
+      campus:campus_id(name),
+      center:center_id(name),
+      student:student_id(full_name,program),
+      tutor:tutor_id(full_name,specialty)
+    `)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (data || []).map(mapEvaluationItem);
+  const filteredRows = rows.filter((item) => {
+    if (role && role !== 'all' && item.role !== role) return false;
+    if (program && program !== 'all' && item.program !== program) return false;
+    if (center && center !== 'all' && item.center !== center) return false;
+    return true;
+  });
+
+  const totals = filteredRows.reduce(
+    (acc, item) => {
+      acc.total += 1;
+      acc.completed += item.status === 'Completada' ? 1 : 0;
+      acc.pending += item.status === 'Pendiente' ? 1 : 0;
+      acc.roles[item.role] = (acc.roles[item.role] || 0) + 1;
+      acc.programs[item.program] = (acc.programs[item.program] || 0) + 1;
+      acc.centers[item.center] = (acc.centers[item.center] || 0) + 1;
+      return acc;
+    },
+    { total: 0, completed: 0, pending: 0, roles: {}, programs: {}, centers: {} }
+  );
+
+  const siteSummary = Object.values(aggregateByKey(filteredRows, 'center'));
+  const programSummary = Object.values(aggregateByKey(filteredRows, 'program'));
+  const roleSummary = Object.values(aggregateByKey(filteredRows, 'role'));
+
+  const matrix = filteredRows.reduce((acc, item) => {
+    const key = `${item.center}||${item.program}`;
+    const entry = acc[key] || {
+      center: item.center,
+      program: item.program,
+      total: 0,
+      completadas: 0,
+      pendientes: 0,
+      roles: {}
+    };
+    entry.total += 1;
+    if (item.status === 'Completada') entry.completadas += 1;
+    if (item.status === 'Pendiente') entry.pendientes += 1;
+    entry.roles[item.role] = (entry.roles[item.role] || 0) + 1;
+    acc[key] = entry;
+    return acc;
+  }, {});
+
+  return {
+    totals,
+    siteSummary,
+    programSummary,
+    roleSummary,
+    siteProgramMatrix: Object.values(matrix),
+    rows: filteredRows,
+    filters: {
+      role: role || 'all',
+      program: program || 'all',
+      center: center || 'all'
+    }
+  };
+}
+
+export async function getEvaluationReports() {
+  const { data, error } = await supabase
+    .from('evaluations')
+    .select(`
+      id,
+      status,
+      created_at,
+      completed_at,
+      dirigidoA,
+      estado,
+      periodoCorte,
+      tipoPrograma,
+      titulo,
+      preguntas,
+      survey:survey_id(title,questions,description,target_type),
+      campus:campus_id(name),
+      center:center_id(name),
+      student:student_id(full_name,program),
+      tutor:tutor_id(full_name,specialty)
+    `)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+
+  return (data || []).map((item) => {
+    const target = item.dirigidoA || item.tipoPrograma || item.estado || 'Sin definir';
+    const program = item.student?.program || item.tutor?.specialty || item.tipoPrograma || '-';
+    const person = item.student?.full_name || item.tutor?.full_name || 'Evaluación';
+    const centerName = item.center?.name || item.center_id || 'Sin centro';
+    const campusName = item.campus?.name || item.campus_id || 'Sin campus';
+    const surveyTitle = item.survey?.title || item.titulo || 'Evaluación';
+
+    return {
+      id: item.id,
+      status: item.status || 'Pendiente',
+      created_at: item.created_at,
+      completed_at: item.completed_at,
+      target,
+      period: item.periodoCorte || 'No definido',
+      program,
+      person,
+      center: centerName,
+      campus: campusName,
+      survey: surveyTitle
     };
   });
 }

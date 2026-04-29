@@ -91,6 +91,7 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
               <SidebarItem icon={UserCheck} label="Profesores" active={activeTab === 'profesores'} onClick={() => {setActiveTab('profesores'); toggleMobileMenu();}} />
               <SidebarItem icon={ClipboardCheck} label="Evaluaciones" active={activeTab === 'evaluaciones'} onClick={() => {setActiveTab('evaluaciones'); toggleMobileMenu();}} />
               <SidebarItem icon={BarChart3} label="Reportes" active={activeTab === 'reportes'} onClick={() => {setActiveTab('reportes'); toggleMobileMenu();}} />
+              <SidebarItem icon={Settings} label="Sistema" active={activeTab === 'sistema'} onClick={() => {setActiveTab('sistema'); toggleMobileMenu();}} />
               <button onClick={onLogout} className="w-full text-left text-gray-400 hover:text-red-400 px-4 py-3 text-sm font-medium">Salir</button>
             </nav>
           </div>

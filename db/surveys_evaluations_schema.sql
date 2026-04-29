@@ -33,9 +33,9 @@ create table if not exists public.evaluations (
   id uuid not null default uuid_generate_v4(),
   survey_id uuid null references public.surveys(id) on delete cascade,
   campus_id uuid null references public.campuses(id) on delete cascade,
-  student_id uuid null,
-  tutor_id uuid null,
-  center_id uuid null,
+  student_id uuid null references public.students(id) on delete set null,
+  tutor_id uuid null references public.tutors(id) on delete set null,
+  center_id uuid null references public.convenios(id) on delete set null,
   status text not null default 'pending',
   share_token uuid not null default uuid_generate_v4(),
   expires_at timestamptz null,
@@ -51,6 +51,8 @@ create table if not exists public.evaluations (
   constraint evaluations_pkey primary key (id),
   constraint evaluations_share_token_key unique (share_token)
 );
+create unique index if not exists evaluations_student_center_unique on public.evaluations (student_id, center_id) where student_id is not null and center_id is not null;
+create unique index if not exists evaluations_tutor_center_unique on public.evaluations (tutor_id, center_id) where tutor_id is not null and center_id is not null;
 
 drop trigger if exists evaluations_updated_at on public.evaluations;
 create trigger evaluations_updated_at

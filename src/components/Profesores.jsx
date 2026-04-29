@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Search, UserCheck, ClipboardCheck, ShieldCheck, Plus, Upload, CheckCircle, X, Pencil, Trash2 } from 'lucide-react';
 import { getProfessors, getConvenios, getCampuses, createProfessor, updateProfessor, deleteProfessor, importProfessors } from '../lib/data';
+import { parseFile, downloadTemplate } from '../lib/importHelpers';
 
 export default function Profesores() {
   const [professors, setProfessors] = useState([]);
@@ -135,11 +136,23 @@ export default function Profesores() {
       return;
     }
 
-    const text = await file.text();
-    const rows = parseCsv(text);
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (extension !== 'csv') {
+      setErrorMessage('Selecciona sólo archivos CSV para importar.');
+      return;
+    }
+
+    let rows = [];
+    try {
+      rows = await parseFile(file);
+    } catch (error) {
+      setErrorMessage('No se pudo leer el archivo. Usa un CSV o un Excel válido.');
+      console.error(error);
+      return;
+    }
 
     if (!rows.length) {
-      setErrorMessage('El CSV no contiene filas válidas.');
+      setErrorMessage('El archivo no contiene filas válidas.');
       return;
     }
 
@@ -148,7 +161,7 @@ export default function Profesores() {
       email: row.email || row.correo || null,
       document_number: row.document_number || row.numero_documento || row.documento || null,
       specialty: row.specialty || row.especialidad || '',
-      campus_id: findCampusId(row.campus || row.centro || ''),
+      campus_id: findCampusId(row.campus || row.centro || row.campus_name || ''),
       convenio_id: findConvenioId(row.convenio || row.convenio_id || row.convenio_nombre || ''),
       status: row.status || row.estado || 'Activo'
     }));
@@ -394,13 +407,20 @@ export default function Profesores() {
               <X size={16} /> Cancelar
             </button>
           </div>
-          <p className="text-sm text-gray-500 mb-4">Selecciona un CSV con columnas: <span className="font-semibold">full_name, email, specialty, campus, convenio, status</span>.</p>
+          <p className="text-sm text-gray-500 mb-4">Selecciona un archivo CSV con columnas: <span className="font-semibold">full_name, email, document_number, specialty, campus, convenio, status</span>.</p>
           <label className="w-full cursor-pointer rounded-3xl border border-dashed border-blue-300 bg-blue-50 px-6 py-8 text-center text-sm text-blue-700 transition hover:bg-blue-100">
             <Upload size={24} className="mx-auto mb-2" />
             <span>{importFile ? `Archivo seleccionado: ${importFile.name}` : 'Selecciona un archivo CSV'}</span>
             <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
           </label>
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-between">
+            <button
+              type="button"
+              onClick={() => downloadTemplate('plantilla-profesores.csv', ['full_name','email','document_number','specialty','campus','convenio','status'])}
+              className="rounded-2xl border border-blue-600 px-5 py-3 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition"
+            >
+              Descargar plantilla
+            </button>
             <button
               type="button"
               disabled={loading || !importFile}
@@ -507,17 +527,4 @@ function Alert({ type, message }) {
       {message}
     </div>
   );
-}
-
-function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  if (lines.length <= 1) return [];
-  const headers = lines[0].split(',').map((header) => header.trim().toLowerCase());
-  return lines.slice(1).map((line) => {
-    const values = line.split(',').map((value) => value.trim());
-    return headers.reduce((obj, header, index) => {
-      obj[header] = values[index] || '';
-      return obj;
-    }, {});
-  });
 }

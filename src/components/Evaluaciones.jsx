@@ -23,7 +23,7 @@ export default function Evaluaciones() {
     campus: '',
     dirigidoA: 'Estudiante',
     tipoPrograma: 'Pregrado',
-    escenarioPractica: '',
+    escenarioPractica: 'Todos',
     periodoCorte: 'A',
     preguntas: []
   });
@@ -255,7 +255,7 @@ export default function Evaluaciones() {
       campus: 'Bucaramanga',
       dirigidoA: 'Estudiante',
       tipoPrograma: 'Pregrado',
-      escenarioPractica: '',
+      escenarioPractica: 'Todos',
       periodoCorte: 'A',
       preguntas: []
     });
@@ -530,6 +530,7 @@ export default function Evaluaciones() {
                         value={newEval.dirigidoA}
                         onChange={e => setNewEval({ ...newEval, dirigidoA: e.target.value })}
                       >
+                        <option value="Todos">Todos</option>
                         <option value="Estudiante">Estudiante</option>
                         <option value="Coordinador">Coordinador</option>
                         <option value="Profesor">Profesor</option>
@@ -560,6 +561,7 @@ export default function Evaluaciones() {
                         value={newEval.escenarioPractica}
                         onChange={e => setNewEval({ ...newEval, escenarioPractica: e.target.value })}
                       >
+                        <option value="Todos">Todos</option>
                         {loadingCenters ? (
                           <option value="">Cargando centros...</option>
                         ) : centers.length ? (
@@ -572,9 +574,7 @@ export default function Evaluaciones() {
                               </option>
                             );
                           })
-                        ) : (
-                          <option value="">No hay centros disponibles</option>
-                        )}
+                        ) : null}
                       </select>
                     </div>
                   </div>

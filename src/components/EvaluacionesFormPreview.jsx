@@ -262,9 +262,10 @@ export const buildEvaluationPreviewHtml = ({ studentInfo, sections, currentYear 
   `;
 };
 
-export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleStudentInfo, survey = null }) {
+export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleStudentInfo, survey = null, onSubmit, isSubmitting = false }) {
   const sections = survey ? normalizeSurveySections(survey.questions || survey.preguntas || []) : defaultSections;
   const surveyMeta = survey ? parseSurveyMeta(survey.description || '') : {};
+  const [submissionError, setSubmissionError] = useState('');
   const previewStudentInfo = {
     ...studentInfo,
     periodo: surveyMeta.periodo || studentInfo.periodo,
@@ -296,7 +297,18 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
     }, 200);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (onSubmit) {
+      setSubmissionError('');
+      try {
+        await onSubmit(formData);
+      } catch (error) {
+        console.error('Error guardando evaluación:', error);
+        setSubmissionError(error?.message || 'No se pudo registrar la evaluación. Intenta nuevamente.');
+        return;
+      }
+    }
+
     setIsSubmitted(true);
   };
 
@@ -393,7 +405,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
               <User className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-0.5">Estudiante</p>
+              <p className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-0.5">Nombre</p>
               <p className="text-sm font-bold text-slate-800 leading-tight">{previewStudentInfo.nombre}</p>
             </div>
           </div>
@@ -407,6 +419,18 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
               <p className="text-sm font-bold text-slate-800 leading-tight">{previewStudentInfo.programaOrigen}</p>
             </div>
           </div>
+
+          {previewStudentInfo.role ? (
+            <div className="flex items-start gap-3">
+              <div className="bg-violet-50 p-2.5 rounded-2xl text-violet-600">
+                <Layout className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-0.5">Rol del evaluador</p>
+                <p className="text-sm font-bold text-slate-800 leading-tight">{previewStudentInfo.role}</p>
+              </div>
+            </div>
+          ) : null}
 
           <div className="flex items-start gap-3">
             <div className="bg-emerald-50 p-2.5 rounded-2xl text-emerald-600">
@@ -582,6 +606,11 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
           </div>
         </div>
 
+        {submissionError ? (
+          <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 mb-4">
+            {submissionError}
+          </div>
+        ) : null}
         <div className="flex items-center justify-between mt-12 gap-8">
           <button
             onClick={handleBack}
@@ -595,9 +624,10 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
           {step === sections.length - 1 ? (
             <button
               onClick={handleSubmit}
-              className="flex items-center gap-4 px-12 py-5 bg-blue-600 text-white rounded-2xl font-black hover:bg-blue-700 transition-all shadow-2xl shadow-blue-200 hover:shadow-blue-400 active:scale-95 uppercase tracking-widest"
+              disabled={isSubmitting}
+              className={`flex items-center gap-4 px-12 py-5 rounded-2xl font-black transition-all shadow-2xl uppercase tracking-widest ${isSubmitting ? 'bg-slate-400 text-white cursor-wait shadow-slate-200' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-200 hover:shadow-blue-400 active:scale-95'}`}
             >
-              Finalizar Envío
+              {isSubmitting ? 'Guardando...' : 'Finalizar Envío'}
               <Send className="w-6 h-6" />
             </button>
           ) : (

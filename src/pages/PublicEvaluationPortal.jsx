@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getPortalUserByCode, getPortalActiveSurveysByCode } from '../lib/data';
+import { getConvenios, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
   const [view, setView] = useState('login');
@@ -11,6 +11,14 @@ export default function PublicEvaluationPortal() {
   const [isLoading, setIsLoading] = useState(false);
   const [surveys, setSurveys] = useState([]);
   const [selectedSurvey, setSelectedSurvey] = useState(null);
+  const [centers, setCenters] = useState([]);
+  const [selectedCenterId, setSelectedCenterId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const capitalize = (value = '') => String(value)
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
 
   const formatSurveyDescription = (description, scenarioName) => {
     if (!description) return '';
@@ -22,14 +30,22 @@ export default function PublicEvaluationPortal() {
     if (!userData) return;
 
     async function loadActiveSurveys() {
+      if (!selectedCenterId) {
+        setError('Selecciona un centro de práctica para cargar los formularios.');
+        return;
+      }
+
       try {
         setError('');
-        const activeSurveys = await getPortalActiveSurveysByCode(userId.trim());
+        setSurveys([]);
+        setSelectedSurvey(null);
+
+        const activeSurveys = await getPortalActiveSurveysByCode(userId.trim(), selectedCenterId);
         setSurveys(activeSurveys);
         setSelectedSurvey(activeSurveys?.[0] || null);
 
         if (!activeSurveys?.length) {
-          setError('No hay formularios activos disponibles para este usuario.');
+          setError('No hay formularios activos disponibles para este centro.');
         }
       } catch (error) {
         console.error('Error al cargar encuestas activas:', error);
@@ -38,12 +54,15 @@ export default function PublicEvaluationPortal() {
     }
 
     loadActiveSurveys();
-  }, [userData, userId]);
+  }, [userData, userId, selectedCenterId]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setSurveys([]);
+    setSelectedSurvey(null);
+    setSelectedCenterId('');
 
     try {
       const portalUser = await getPortalUserByCode(userId.trim());
@@ -53,6 +72,7 @@ export default function PublicEvaluationPortal() {
         setUserData(null);
       } else {
         setUserData(portalUser);
+        setSelectedCenterId(portalUser.practice_center_id || '');
         setView('verification');
       }
     } catch (error) {
@@ -62,6 +82,27 @@ export default function PublicEvaluationPortal() {
 
     setIsLoading(false);
   };
+
+  useEffect(() => {
+    loadAvailableCenters();
+  }, []);
+
+  useEffect(() => {
+    if (!userData || !centers.length) return;
+    if (!selectedCenterId) {
+      setSelectedCenterId(userData.practice_center_id || centers[0]?.id || '');
+    }
+  }, [userData, centers]);
+
+  async function loadAvailableCenters() {
+    try {
+      const data = await getConvenios();
+      setCenters(data);
+    } catch (error) {
+      console.error('Error cargando centros de práctica:', error);
+      setCenters([]);
+    }
+  }
 
   const portalStyles = `
     @keyframes moveLava {
@@ -91,10 +132,46 @@ export default function PublicEvaluationPortal() {
           studentInfo={{
             nombre: userData.full_name,
             programaOrigen: userData.program,
-            escenario: userData.practice_center_name || userData.campus_name,
+            role: userData.role === 'student' ? 'Estudiante' : userData.role === 'professor' ? 'Profesor' : capitalize(userData.role || ''),
+            escenario: centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name,
             periodo: userData.started || userData.status || 'N/A'
           }}
           onClose={() => setView('ready')}
+          onSubmit={async (answers) => {
+            if (!selectedSurvey) return;
+            setIsSubmitting(true);
+            try {
+              const createdEvaluation = await createEvaluationWithResponses(
+                {
+                  survey_id: selectedSurvey.id,
+                  campus_id: selectedSurvey.campus_id || userData.campus_id || null,
+                  center_id: selectedCenterId || userData.practice_center_id || null,
+                  student_id: userData.role === 'student' ? userData.user_id : null,
+                  tutor_id: userData.role === 'professor' ? userData.user_id : null,
+                  status: 'Completada',
+                  completed_at: new Date().toISOString(),
+                  dirigidoA: selectedSurvey.target_type || 'Todos',
+                  estado: userData.role || null,
+                  periodoCorte: userData.started || userData.status || null,
+                  preguntas: answers || {},
+                  tipoPrograma: selectedSurvey.target_type || null,
+                  titulo: selectedSurvey.title || null
+                },
+                [{ answers: answers || {} }]
+              );
+
+              const scoreSummary = calculateSurveyScoreSummary({
+                survey: selectedSurvey,
+                answers: answers || {}
+              });
+              console.log('Puntajes calculados desde respuestas:', scoreSummary, createdEvaluation);
+            } catch (error) {
+              console.error('Error guardando la evaluación:', error);
+            } finally {
+              setIsSubmitting(false);
+            }
+          }}
+          isSubmitting={isSubmitting}
         />
       </div>
     ) : (
@@ -225,7 +302,7 @@ export default function PublicEvaluationPortal() {
                 {[
                   { icon: User, label: 'Nombre', val: userData.full_name },
                   { icon: GraduationCap, label: 'Programa', val: userData.program },
-                  { icon: Building2, label: 'Escenario de Práctica', val: userData.practice_center_name || userData.campus_name },
+                  { icon: Building2, label: 'Escenario de Práctica', val: centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name },
                   { icon: Calendar, label: 'Periodo', val: userData.started || userData.status || 'N/A' }
                 ].map((item, i) => (
                   <div key={i} className="flex items-center gap-6 p-6 rounded-[2rem] border-2 border-slate-50 bg-slate-50/50 hover:bg-white hover:border-blue-100 hover:shadow-lg hover:shadow-slate-100 transition-all group">
@@ -238,6 +315,26 @@ export default function PublicEvaluationPortal() {
                     </div>
                   </div>
                 ))}
+              <div className="col-span-full">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Centro de práctica a evaluar</label>
+                <div className="relative">
+                  <select
+                    value={selectedCenterId}
+                    onChange={(e) => setSelectedCenterId(e.target.value)}
+                    className="w-full border border-slate-200 rounded-[2rem] bg-white px-5 py-4 text-sm font-bold text-slate-700 outline-none focus:border-blue-500"
+                  >
+                    {centers.length ? (
+                      centers.map((center) => (
+                        <option key={center.id} value={center.id}>
+                          {center.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No hay centros disponibles</option>
+                    )}
+                  </select>
+                </div>
+              </div>
               </div>
 
               <div className="mt-6 p-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 text-left">
@@ -287,7 +384,7 @@ export default function PublicEvaluationPortal() {
                         className={`w-full text-left p-6 rounded-[2rem] border transition-all ${selectedSurvey?.id === survey.id ? 'border-blue-600 bg-blue-50 shadow-lg shadow-blue-100' : 'border-slate-100 bg-slate-50 hover:border-blue-100 hover:bg-white'}`}
                       >
                         <p className="text-sm uppercase tracking-[0.2em] font-bold text-slate-400 mb-2">{survey.title || 'Evaluación disponible'}</p>
-                        <p className="text-lg font-black text-slate-900">{formatSurveyDescription(survey.description, userData.practice_center_name || userData.campus_name) || 'Completa esta evaluación institucional'}</p>
+                        <p className="text-lg font-black text-slate-900">{formatSurveyDescription(survey.description, centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name) || 'Completa esta evaluación institucional'}</p>
                       </button>
                     ))}
                   </div>
