@@ -1,88 +1,71 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, BookOpen, LayoutDashboard, MapPin, PieChart as PieIcon, Sparkles, TrendingUp, Users } from 'lucide-react';
 import {
-  Area,
-  AreaChart,
-  Bar,
+  LayoutDashboard,
+  Building,
+  GraduationCap,
+  ArrowLeftRight,
+  Lightbulb,
+  Download,
+  TrendingUp,
+  AlertCircle,
+  Users,
+  ChevronRight,
+  MapPin
+} from 'lucide-react';
+import {
   BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
+  Bar,
   XAxis,
-  YAxis
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+  ComposedChart,
+  Line,
+  Cell
 } from 'recharts';
 import { getEvaluationReportMetrics } from '../lib/data';
 
-const STATUS_COLORS = {
-  Completada: '#22c55e',
-  Pendiente: '#f59e0b',
-  Cancelada: '#ef4444',
-  'En espera': '#f97316',
-  default: '#64748b'
-};
+function average(values = []) {
+  if (!values.length) return null;
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+}
 
-const VIEW_OPTIONS = [
-  { key: 'global', label: 'Global' },
-  { key: 'role', label: 'Por rol' },
-  { key: 'program', label: 'Por programa' },
-  { key: 'site', label: 'Por sitio' }
-];
+function uniqueValues(items = []) {
+  return [...new Set(items.filter(Boolean))];
+}
 
-function StatCard({ title, value, subtitle, icon }) {
+function scoreColor(score) {
+  if (score >= 4.5) return 'text-emerald-600 bg-emerald-50';
+  if (score >= 4) return 'text-indigo-600 bg-indigo-50';
+  return 'text-amber-600 bg-amber-50';
+}
+
+function ProgressBar({ value }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-slate-500">{title}</p>
-          <p className="mt-3 text-3xl font-semibold text-slate-900">{value}</p>
-        </div>
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
-          {icon}
-        </div>
-      </div>
-      {subtitle ? <p className="mt-4 text-sm text-slate-500">{subtitle}</p> : null}
+    <div className="w-24 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+      <div className="h-full bg-indigo-500" style={{ width: `${Math.max(0, Math.min(100, (value / 5) * 100))}%` }} />
     </div>
   );
 }
 
-function formatDate(value) {
-  if (!value) return '-';
-  try {
-    return new Date(value).toLocaleDateString('es-CO', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric'
-    });
-  } catch {
-    return String(value);
-  }
-}
-
-function capitalize(value) {
-  return String(value || '')
-    .split(/\s+/)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-}
-
-function formatQuestionLabel(question) {
-  if (!question) return 'Pregunta sin datos';
-  if (typeof question === 'string') return question;
-  return question.label || question.instrucciones || question.titulo || question.name || JSON.stringify(question).slice(0, 120);
-}
-
 export default function Reportes() {
-  const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [view, setView] = useState('global');
-  const [roleFilter, setRoleFilter] = useState('all');
-  const [programFilter, setProgramFilter] = useState('all');
-  const [siteFilter, setSiteFilter] = useState('all');
-  const [selectedEvaluationId, setSelectedEvaluationId] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [filters, setFilters] = useState({
+    campus: 'Todos',
+    convenio: 'Todos',
+    program: 'Todos',
+    actor: 'Todos'
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -90,16 +73,11 @@ export default function Reportes() {
     async function loadMetrics() {
       setLoading(true);
       setError('');
-
       try {
-        const data = await getEvaluationReportMetrics({
-          role: roleFilter === 'all' ? null : roleFilter,
-          program: programFilter === 'all' ? null : programFilter,
-          center: siteFilter === 'all' ? null : siteFilter
-        });
-        if (!cancelled) setMetrics(data);
+        const metrics = await getEvaluationReportMetrics({});
+        if (!cancelled) setRows(metrics?.rows || []);
       } catch (err) {
-        if (!cancelled) setError(err?.message || 'No se pudo cargar el reporte central.');
+        if (!cancelled) setError(err?.message || 'No se pudo cargar el modulo de reportes.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -109,105 +87,155 @@ export default function Reportes() {
     return () => {
       cancelled = true;
     };
-  }, [roleFilter, programFilter, siteFilter]);
+  }, []);
 
-  useEffect(() => {
-    if (!metrics || !metrics.rows) {
-      setSelectedEvaluationId(null);
-      return;
-    }
+  const campuses = useMemo(() => uniqueValues(rows.map((item) => item.campus)).sort(), [rows]);
+  const convenios = useMemo(() => uniqueValues(rows.map((item) => item.center)).sort(), [rows]);
+  const programs = useMemo(() => uniqueValues(rows.map((item) => item.program)).sort(), [rows]);
+  const actors = useMemo(() => uniqueValues(rows.map((item) => item.role)).sort(), [rows]);
 
-    if (metrics.rows.length === 0) {
-      setSelectedEvaluationId(null);
-      return;
-    }
+  const filteredRows = useMemo(() => {
+    return rows.filter((item) => {
+      if (filters.campus !== 'Todos' && item.campus !== filters.campus) return false;
+      if (filters.convenio !== 'Todos' && item.center !== filters.convenio) return false;
+      if (filters.program !== 'Todos' && item.program !== filters.program) return false;
+      if (filters.actor !== 'Todos' && item.role !== filters.actor) return false;
+      return true;
+    });
+  }, [rows, filters]);
 
-    if (!selectedEvaluationId || !metrics.rows.some((row) => row.id === selectedEvaluationId)) {
-      setSelectedEvaluationId(metrics.rows[0].id);
-    }
-  }, [metrics, selectedEvaluationId]);
+  const globalScore = useMemo(() => {
+    const values = filteredRows
+      .map((item) => item.scoreSummary?.globalScore)
+      .filter((score) => typeof score === 'number');
+    return average(values);
+  }, [filteredRows]);
 
-  const roleOptions = useMemo(() => {
-    if (!metrics) return [{ key: 'all', label: 'Todos' }];
-    return [
-      { key: 'all', label: 'Todos' },
-      ...metrics.roleSummary.map((item) => ({ key: item.role, label: item.role }))
-    ];
-  }, [metrics]);
+  const centerComparisonData = useMemo(() => {
+    const map = {};
+    filteredRows.forEach((item) => {
+      const key = item.center || 'Sin convenio';
+      const score = item.scoreSummary?.globalScore;
+      if (!map[key]) {
+        map[key] = { name: key, campus: item.campus || '-', total: 0, count: 0, scored: 0 };
+      }
+      map[key].count += 1;
+      if (typeof score === 'number') {
+        map[key].total += score;
+        map[key].scored += 1;
+      }
+    });
 
-  const programOptions = useMemo(() => {
-    if (!metrics) return [{ key: 'all', label: 'Todos' }];
-    return [
-      { key: 'all', label: 'Todos' },
-      ...metrics.programSummary.map((item) => ({ key: item.program, label: item.program }))
-    ];
-  }, [metrics]);
+    return Object.values(map)
+      .map((entry) => ({
+        ...entry,
+        score: entry.scored ? Number((entry.total / entry.scored).toFixed(2)) : 0
+      }))
+      .sort((a, b) => b.score - a.score);
+  }, [filteredRows]);
 
-  const siteOptions = useMemo(() => {
-    if (!metrics) return [{ key: 'all', label: 'Todos' }];
-    return [
-      { key: 'all', label: 'Todos' },
-      ...metrics.siteSummary.map((item) => ({ key: item.center, label: item.center }))
-    ];
-  }, [metrics]);
+  const programComparisonData = useMemo(() => {
+    const map = {};
+    filteredRows.forEach((item) => {
+      const key = item.program || 'Sin programa';
+      const score = item.scoreSummary?.globalScore;
+      if (!map[key]) {
+        map[key] = { name: key, total: 0, scored: 0, centers: new Set() };
+      }
+      map[key].centers.add(item.center || 'Sin convenio');
+      if (typeof score === 'number') {
+        map[key].total += score;
+        map[key].scored += 1;
+      }
+    });
 
-  const roleTotal = metrics?.totals.roles || {};
+    return Object.values(map)
+      .map((entry) => ({
+        name: entry.name,
+        score: entry.scored ? Number((entry.total / entry.scored).toFixed(2)) : 0,
+        convenios: entry.centers.size
+      }))
+      .sort((a, b) => b.score - a.score);
+  }, [filteredRows]);
 
-  const globalTiles = useMemo(() => {
-    if (!metrics) return [];
-    return [
-      { title: 'Total de evaluaciones', value: metrics.totals.total, icon: <Sparkles size={22} /> },
-      { title: 'Completadas', value: metrics.totals.completed, icon: <Users size={22} /> },
-      { title: 'Pendientes', value: metrics.totals.pending, icon: <TrendingUp size={22} /> },
-      { title: 'Sitios activos', value: metrics.siteSummary.length, icon: <LayoutDashboard size={22} /> }
-    ];
-  }, [metrics]);
+  const sectionLabels = useMemo(() => {
+    const map = {};
+    filteredRows.forEach((item) => {
+      (item.scoreSummary?.sectionScores || []).forEach((section) => {
+        if (typeof section.score !== 'number') return;
+        map[section.title] = (map[section.title] || 0) + 1;
+      });
+    });
 
-  const topSites = useMemo(() => {
-    if (!metrics) return [];
-    return [...metrics.siteSummary].sort((a, b) => b.total - a.total).slice(0, 6);
-  }, [metrics]);
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([title]) => title);
+  }, [filteredRows]);
 
-  const topPrograms = useMemo(() => {
-    if (!metrics) return [];
-    return [...metrics.programSummary].sort((a, b) => b.total - a.total).slice(0, 6);
-  }, [metrics]);
+  const actorTriangulation = useMemo(() => {
+    const categories = sectionLabels;
+    return categories.map((category) => {
+      const item = { category };
+      actors.forEach((actor) => {
+        const values = filteredRows
+          .filter((row) => row.role === actor)
+          .map((row) => row.scoreSummary?.sectionScores?.find((section) => section.title === category)?.score)
+          .filter((value) => typeof value === 'number');
+        item[actor] = average(values) || 0;
+      });
+      return item;
+    });
+  }, [actors, filteredRows, sectionLabels]);
 
-  const rows = metrics?.rows || [];
-  const selectedEvaluation = useMemo(
-    () => rows.find((item) => item.id === selectedEvaluationId) || rows[0] || null,
-    [rows, selectedEvaluationId]
-  );
+  const topProgram = programComparisonData[0] || null;
+  const alertCenters = centerComparisonData.filter((item) => item.score > 0 && item.score < 3.5);
 
-  const selectedQuestions = selectedEvaluation?.questions || selectedEvaluation?.surveyDetails?.questions || [];
+  const radarData = useMemo(() => {
+    if (!topProgram) return [];
+    return sectionLabels.slice(0, 8).map((label) => {
+      const programValues = filteredRows
+        .filter((row) => row.program === topProgram.name)
+        .map((row) => row.scoreSummary?.sectionScores?.find((section) => section.title === label)?.score)
+        .filter((value) => typeof value === 'number');
 
-  const siteProgramMatrix = metrics?.siteProgramMatrix || [];
+      const globalValues = filteredRows
+        .map((row) => row.scoreSummary?.sectionScores?.find((section) => section.title === label)?.score)
+        .filter((value) => typeof value === 'number');
 
-  const roleTotals = useMemo(() => {
-    return Object.entries(roleTotal).map(([role, value]) => ({ role, total: value }));
-  }, [roleTotal]);
+      return {
+        subject: label,
+        Programa: average(programValues) || 0,
+        Global: average(globalValues) || 0
+      };
+    });
+  }, [filteredRows, sectionLabels, topProgram]);
 
-  const filteredRoles = roleTotals;
+  const insights = useMemo(() => {
+    const bestCenter = centerComparisonData[0];
+    const weakestCenter = centerComparisonData.find((item) => item.score > 0 && item.score < 3.5);
 
-  const viewSummary = useMemo(() => {
-    if (!metrics) return [];
-    if (view === 'role') return metrics.roleSummary;
-    if (view === 'program') return metrics.programSummary;
-    if (view === 'site') return metrics.siteSummary;
-    return [];
-  }, [metrics, view]);
+    const actorGap = actorTriangulation
+      .map((category) => {
+        const values = actors.map((actor) => category[actor] || 0);
+        return {
+          category: category.category,
+          gap: Number((Math.max(...values) - Math.min(...values)).toFixed(2))
+        };
+      })
+      .sort((a, b) => b.gap - a.gap)[0];
 
-  const viewTitle = useMemo(() => {
-    if (view === 'role') return 'Rol';
-    if (view === 'program') return 'Programa';
-    if (view === 'site') return 'Sitio';
-    return 'Global';
-  }, [view]);
+    return {
+      bestCenter,
+      weakestCenter,
+      actorGap
+    };
+  }, [actorTriangulation, actors, centerComparisonData]);
 
   if (loading) {
     return (
       <div className="flex min-h-[320px] items-center justify-center rounded-3xl border border-slate-200 bg-white p-8 text-slate-500">
-        Cargando dashboard de reportes...
+        Cargando modulo de informes...
       </div>
     );
   }
@@ -222,381 +250,387 @@ export default function Reportes() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-600">Panel de reportes</p>
-          <h1 className="text-3xl font-semibold text-slate-900">Visión global y por dimensión</h1>
-          <p className="mt-2 text-sm text-slate-600 max-w-2xl">
-            Revisa la salud de evaluaciones por sitio, programa y rol, o desglosa la información en detalle.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {VIEW_OPTIONS.map((option) => (
-            <button
-              key={option.key}
-              onClick={() => setView(option.key)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${view === option.key ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-4">
-        {globalTiles.map((tile) => (
-          <StatCard key={tile.title} title={tile.title} value={tile.value} subtitle={tile.subtitle} icon={tile.icon} />
-        ))}
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-3">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-2">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-slate-700">Sitios con más evaluaciones</p>
-              <p className="text-sm text-slate-500">Comparativa de volumen por sitio.</p>
-            </div>
-          </div>
-          <div className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topSites} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="center" tick={{ fill: '#64748b', fontSize: 12 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#64748b', fontSize: 12 }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(value) => [`${value}`, 'Evaluaciones']} />
-                <Bar dataKey="total" fill="#2563eb" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <p className="text-sm font-semibold text-slate-700">Distribución por rol</p>
-            <p className="text-sm text-slate-500">Estudiantes, Profesores y Coordinadores.</p>
-          </div>
-          <div className="space-y-3">
-            {filteredRoles.map((item) => (
-              <div key={item.role} className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-4 text-sm">
-                  <div>
-                    <p className="font-medium text-slate-900">{item.role}</p>
-                    <p className="text-xs text-slate-500">Evaluaciones</p>
-                  </div>
-                  <p className="text-lg font-semibold text-slate-900">{item.total}</p>
-                </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
-                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, (item.total / (filteredRoles[0]?.total || 1)) * 100)}%` }} />
-                </div>
+    <div className="bg-slate-50 min-h-screen text-slate-900 font-sans rounded-3xl overflow-hidden">
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-[1600px] mx-auto px-6 py-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center space-x-4">
+              <div className="bg-indigo-600 p-2.5 rounded-xl shadow-lg shadow-indigo-100">
+                <TrendingUp className="text-white w-6 h-6" />
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="grid gap-4 xl:grid-cols-4">
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Rol</span>
-            <select
-              className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-              value={roleFilter}
-              onChange={(event) => setRoleFilter(event.target.value)}
-            >
-              {roleOptions.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Programa</span>
-            <select
-              className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-              value={programFilter}
-              onChange={(event) => setProgramFilter(event.target.value)}
-            >
-              {programOptions.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Sitio</span>
-            <select
-              className="mt-2 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-              value={siteFilter}
-              onChange={(event) => setSiteFilter(event.target.value)}
-            >
-              {siteOptions.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
-
-      {view !== 'global' ? (
-        <div className="grid gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-semibold text-slate-700">Vista específica por {viewTitle.toLowerCase()}</p>
-                <p className="text-sm text-slate-500">Desglose de evaluaciones agrupado por {viewTitle.toLowerCase()}.</p>
-              </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-slate-600">{viewSummary.length} {viewTitle}</span>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {viewSummary.slice(0, 9).map((item) => (
-                <div key={item[view === 'role' ? 'role' : view === 'program' ? 'program' : 'center']} className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-sm font-semibold text-slate-900">{item[view === 'role' ? 'role' : view === 'program' ? 'program' : 'center']}</p>
-                  <p className="mt-1 text-xs text-slate-500">Evaluaciones: {item.total}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="grid gap-4 xl:grid-cols-3">
-        <div className="xl:col-span-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-slate-700">Matriz Sitio × Programa</p>
-              <p className="text-sm text-slate-500">Resumen combinado de sitio y programa.</p>
-            </div>
-            <span className="text-xs uppercase tracking-[0.24em] text-slate-400">{siteProgramMatrix.length} combinaciones</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Sitio</th>
-                  <th className="px-4 py-3 font-semibold">Programa</th>
-                  <th className="px-4 py-3 font-semibold">Total</th>
-                  <th className="px-4 py-3 font-semibold">Completadas</th>
-                  <th className="px-4 py-3 font-semibold">Pendientes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {siteProgramMatrix.map((item) => (
-                  <tr key={`${item.center}-${item.program}`} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 text-slate-700">{item.center}</td>
-                    <td className="px-4 py-3 text-slate-700">{item.program}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-900">{item.total}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.completadas}</td>
-                    <td className="px-4 py-3 text-slate-600">{item.pendientes}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-6">
-            <p className="text-sm font-semibold text-slate-700">Top programas</p>
-            <p className="text-sm text-slate-500">Los programas con mayor número de evaluaciones.</p>
-          </div>
-          <div className="space-y-3">
-            {topPrograms.map((item) => (
-              <div key={item.program} className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="font-medium text-slate-900">{item.program}</p>
-                    <p className="text-xs text-slate-500">Evaluaciones</p>
-                  </div>
-                  <p className="text-lg font-semibold text-slate-900">{item.total}</p>
+                <h1 className="text-xl font-black text-slate-800 tracking-tight">Analitica Docencia-Servicio</h1>
+                <div className="flex items-center text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <span className="text-indigo-600">Komet</span>
+                  <ChevronRight className="w-3 h-3 mx-1" />
+                  <span>Modulo de Informes Integrado</span>
                 </div>
               </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center bg-slate-100 rounded-xl px-3 py-2 border border-slate-200">
+                <MapPin className="w-4 h-4 text-slate-400 mr-2" />
+                <select
+                  className="bg-transparent text-sm font-bold focus:outline-none cursor-pointer"
+                  value={filters.campus}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, campus: event.target.value }))}
+                >
+                  <option value="Todos">Todos los Campus</option>
+                  {campuses.map((campus) => (
+                    <option key={campus} value={campus}>{campus}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center bg-slate-100 rounded-xl px-3 py-2 border border-slate-200">
+                <Building className="w-4 h-4 text-slate-400 mr-2" />
+                <select
+                  className="bg-transparent text-sm font-bold focus:outline-none cursor-pointer"
+                  value={filters.convenio}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, convenio: event.target.value }))}
+                >
+                  <option value="Todos">Todos los Convenios</option>
+                  {convenios.map((convenio) => (
+                    <option key={convenio} value={convenio}>{convenio}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center bg-slate-100 rounded-xl px-3 py-2 border border-slate-200">
+                <GraduationCap className="w-4 h-4 text-slate-400 mr-2" />
+                <select
+                  className="bg-transparent text-sm font-bold focus:outline-none cursor-pointer"
+                  value={filters.program}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, program: event.target.value }))}
+                >
+                  <option value="Todos">Todos los Programas</option>
+                  {programs.map((program) => (
+                    <option key={program} value={program}>{program}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center bg-slate-100 rounded-xl px-3 py-2 border border-slate-200">
+                <Users className="w-4 h-4 text-slate-400 mr-2" />
+                <select
+                  className="bg-transparent text-sm font-bold focus:outline-none cursor-pointer"
+                  value={filters.actor}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, actor: event.target.value }))}
+                >
+                  <option value="Todos">Todos los Actores</option>
+                  {actors.map((actor) => (
+                    <option key={actor} value={actor}>{actor}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button className="bg-slate-800 text-white p-2.5 rounded-xl hover:bg-slate-700 transition-all shadow-md" type="button" title="Exportar (pendiente)">
+                <Download className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex space-x-8 mt-6 overflow-x-auto no-scrollbar">
+            {[
+              { id: 'overview', label: 'Dashboard General', icon: LayoutDashboard },
+              { id: 'centers', label: 'Comparativa de Convenios', icon: Building },
+              { id: 'programs', label: 'Benchmarking de Programas', icon: GraduationCap },
+              { id: 'triangulation', label: 'Triangulacion de Actores', icon: ArrowLeftRight },
+              { id: 'insights', label: 'Recomendaciones IA', icon: Lightbulb }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center space-x-2 pb-3 px-1 border-b-2 transition-all font-bold text-sm whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                <tab.icon className="w-4 h-4" />
+                <span>{tab.label}</span>
+              </button>
             ))}
           </div>
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-900">Vistas de detalle</h2>
-            <p className="mt-2 text-sm text-slate-500">Explora los datos según la dimensión seleccionada.</p>
-          </div>
-          <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm text-slate-600">
-            {rows.length} evaluaciones en el conjunto actual
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-6 py-4 font-semibold">Evaluación</th>
-                  <th className="px-6 py-4 font-semibold">Rol</th>
-                  <th className="px-6 py-4 font-semibold">Programa</th>
-                  <th className="px-6 py-4 font-semibold">Sitio</th>
-                  <th className="px-6 py-4 font-semibold">Preguntas</th>
-                  <th className="px-6 py-4 font-semibold">Estado</th>
-                  <th className="px-6 py-4 font-semibold">Fecha</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {rows.slice(0, 12).map((item) => {
-                  const isSelected = selectedEvaluation?.id === item.id;
-                  return (
-                    <tr
-                      key={item.id}
-                      onClick={() => setSelectedEvaluationId(item.id)}
-                      className={`cursor-pointer transition-colors duration-150 ${isSelected ? 'bg-slate-50' : 'hover:bg-slate-50'}`}
-                    >
-                      <td className="px-6 py-4 text-slate-900">{item.survey}</td>
-                      <td className="px-6 py-4 text-slate-700">{item.role}</td>
-                      <td className="px-6 py-4 text-slate-700">{item.program}</td>
-                      <td className="px-6 py-4 text-slate-700">{item.center}</td>
-                      <td className="px-6 py-4 text-slate-700">{item.questionCount}</td>
-                      <td className="px-6 py-4">
-                        <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-slate-700">{formatDate(item.created_at)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {rows.length === 0 ? (
-            <div className="p-6 text-center text-sm text-slate-500">No hay evaluaciones para los filtros actuales.</div>
-          ) : null}
-        </div>
-
-        {selectedEvaluation ? (
-          <div className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-              <div className="p-6">
-                <div className="mb-4 flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700">Detalle de la plantilla seleccionada</p>
-                    <p className="text-sm text-slate-500">Selecciona una evaluación de la tabla para ver los detalles de la plantilla y sus preguntas.</p>
-                  </div>
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-slate-600">
-                    {selectedEvaluation.questionCount} preguntas
-                  </span>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Plantilla</p>
-                    <p className="mt-2 text-base font-semibold text-slate-900">{selectedEvaluation.surveyDetails.title}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Dirigido a</p>
-                    <p className="mt-2 text-base font-semibold text-slate-900">{capitalize(selectedEvaluation.target)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Programa</p>
-                    <p className="mt-2 text-base font-semibold text-slate-900">{selectedEvaluation.program}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Sitio</p>
-                    <p className="mt-2 text-base font-semibold text-slate-900">{selectedEvaluation.center}</p>
-                  </div>
-                </div>
-
-                <div className="mt-6 rounded-3xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-600">
-                  {selectedEvaluation.surveyDetails.description || 'No hay descripción de plantilla disponible.'}
-                </div>
-
-                {selectedEvaluation.scoreSummary ? (
-                  <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 text-sm">
-                    <div className="mb-4 flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-700">Puntaje calculado</p>
-                        <p className="text-sm text-slate-500">Basado en las respuestas registradas para esta evaluación.</p>
-                      </div>
-                      <span className="text-xs uppercase tracking-[0.24em] text-slate-400">{selectedEvaluation.scoreSummary.answeredQuestions} respuestas numéricas</span>
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="rounded-3xl bg-slate-50 p-4 text-slate-800">
-                        <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Puntaje global</p>
-                        <p className="mt-2 text-3xl font-semibold">{selectedEvaluation.scoreSummary.globalScore ?? '-'}</p>
-                      </div>
-                      {selectedEvaluation.scoreSummary.sectionScores.map((section) => (
-                        <div key={section.sectionId} className="rounded-3xl bg-slate-50 p-4 text-slate-800">
-                          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{section.title}</p>
-                          <p className="mt-2 text-2xl font-semibold">{section.score ?? '-'}</p>
-                          <p className="mt-2 text-xs text-slate-500">{section.questionCount} preguntas</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="mt-6 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-700">Preguntas de la plantilla</p>
-                      <p className="text-sm text-slate-500">Vista previa de las preguntas y secciones asociadas.</p>
-                    </div>
-                    <span className="text-sm font-semibold text-slate-500">Mostrando {selectedQuestions.length} elementos</span>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {selectedQuestions.length > 0 ? (
-                      selectedQuestions.slice(0, 10).map((question, index) => (
-                        <div key={`${selectedEvaluation.id}-${index}`} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Pregunta {index + 1}</p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">{formatQuestionLabel(question)}</p>
-                          {question.tipo ? (
-                            <p className="mt-2 text-xs uppercase tracking-[0.24em] text-slate-400">Tipo: {question.tipo}</p>
-                          ) : null}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-                        Esta evaluación no cuenta con preguntas visibles en el registro.
-                      </div>
-                    )}
-                  </div>
+      <main className="max-w-[1600px] mx-auto p-6">
+        {activeTab === 'overview' ? (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Puntaje Global</p>
+                <h3 className="text-3xl font-black mt-2">{globalScore ?? '-'}</h3>
+                <p className="text-xs text-slate-400 mt-2 font-medium">Promedio de evaluaciones filtradas</p>
+              </div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Total Evaluaciones</p>
+                <h3 className="text-3xl font-black mt-2">{filteredRows.length}</h3>
+                <p className="text-xs text-slate-400 mt-2 font-medium">Registros del filtro actual</p>
+              </div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-4 border-l-amber-500">
+                <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Alertas Activas</p>
+                <h3 className="text-3xl font-black mt-2">{alertCenters.length}</h3>
+                <p className="text-xs text-slate-400 mt-2 font-medium">Convenios por debajo de 3.5</p>
+              </div>
+              <div className="bg-slate-900 p-6 rounded-2xl shadow-xl text-white">
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Top Programa</p>
+                <h3 className="text-xl font-bold mt-2 truncate">{topProgram?.name || 'Sin datos'}</h3>
+                <div className="mt-2 h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500" style={{ width: `${Math.max(0, Math.min(100, ((topProgram?.score || 0) / 5) * 100))}%` }} />
                 </div>
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="mb-4">
-                <p className="text-sm font-semibold text-slate-700">Información de la evaluación</p>
-                <p className="text-sm text-slate-500">Detalles y contexto directo desde el registro.</p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-lg font-bold text-slate-800 mb-6">Desempeno de los 10 Mejores Convenios</h3>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={centerComparisonData.slice(0, 10)}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="name" hide />
+                      <YAxis domain={[0, 5]} hide />
+                      <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} cursor={{ fill: '#f8fafc' }} />
+                      <Bar dataKey="score" fill="#4f46e5" radius={[6, 6, 0, 0]} barSize={38}>
+                        {centerComparisonData.slice(0, 10).map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.score >= 4.5 ? '#10b981' : '#4f46e5'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-              <dl className="space-y-4 text-sm text-slate-600">
-                <div>
-                  <dt className="font-semibold text-slate-900">Nombre</dt>
-                  <dd>{selectedEvaluation.survey}</dd>
+
+              <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-lg font-bold text-slate-800 mb-6">Triangulacion: Categorias por Actor</h3>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={actorTriangulation} layout="vertical" margin={{ top: 20, right: 16, left: 0, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                      <XAxis type="number" domain={[0, 5]} tick={{ fill: '#64748b', fontWeight: 'bold' }} axisLine={false} tickLine={false} />
+                      <YAxis dataKey="category" type="category" width={220} tick={{ fill: '#1f2937', fontWeight: 'bold' }} axisLine={false} tickLine={false} />
+                      <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 16px 40px rgba(15, 23, 42, 0.08)' }} />
+                      <Legend verticalAlign="top" wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingBottom: '12px' }} />
+                      {actors.map((actor, index) => (
+                        <Bar
+                          key={actor}
+                          dataKey={actor}
+                          fill={['#6366f1', '#10b981', '#f59e0b', '#0ea5e9', '#a855f7'][index % 5]}
+                          radius={[0, 8, 8, 0]}
+                          barSize={18}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-                <div>
-                  <dt className="font-semibold text-slate-900">Estado</dt>
-                  <dd>{selectedEvaluation.status}</dd>
-                </div>
-                <div>
-                  <dt className="font-semibold text-slate-900">Fecha de creación</dt>
-                  <dd>{formatDate(selectedEvaluation.created_at)}</dd>
-                </div>
-                <div>
-                  <dt className="font-semibold text-slate-900">Periodo</dt>
-                  <dd>{selectedEvaluation.period || 'No definido'}</dd>
-                </div>
-              </dl>
+              </div>
             </div>
           </div>
         ) : null}
-      </div>
+
+        {activeTab === 'centers' ? (
+          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden animate-in slide-in-from-bottom duration-500">
+            <div className="p-8 border-b border-slate-50">
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">Comparativa de Centros de Practica</h2>
+              <p className="text-sm font-medium text-slate-500">Analisis detallado por convenio y cumplimiento de calidad</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-8 py-4 text-xs font-black text-slate-500 uppercase tracking-widest">Escenario / Convenio</th>
+                    <th className="px-8 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-center">Campus</th>
+                    <th className="px-8 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-center">Evals</th>
+                    <th className="px-8 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-center">Progreso Calidad</th>
+                    <th className="px-8 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Puntaje Final</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {centerComparisonData.map((item) => (
+                    <tr key={item.name} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-8 py-5">
+                        <p className="font-bold text-slate-800 text-sm">{item.name}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Convenio Docencia-Servicio</p>
+                      </td>
+                      <td className="px-8 py-5 text-center text-xs font-bold text-slate-600">{item.campus}</td>
+                      <td className="px-8 py-5 text-center text-xs font-bold text-slate-600">{item.count}</td>
+                      <td className="px-8 py-5">
+                        <div className="flex items-center justify-center space-x-2">
+                          <ProgressBar value={item.score} />
+                          <span className="text-[10px] font-black text-indigo-600">{(item.score * 20).toFixed(0)}%</span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-5 text-right">
+                        <span className={`px-3 py-1 rounded-lg text-sm font-black ${scoreColor(item.score)}`}>
+                          {item.score}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'programs' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in zoom-in duration-500">
+            <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+              <h3 className="text-xl font-black text-slate-900 mb-8">Puntaje por Programa Academico</h3>
+              <div className="h-[500px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={programComparisonData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" horizontal vertical={false} stroke="#f1f5f9" />
+                    <XAxis type="number" domain={[0, 5]} />
+                    <YAxis dataKey="name" type="category" width={180} fontSize={11} tick={{ fill: '#475569', fontWeight: 'bold' }} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="score" name="Puntaje" fill="#6366f1" radius={[0, 6, 6, 0]} barSize={22} />
+                    <Line dataKey="convenios" name="Convenios vinculados" stroke="#10b981" strokeWidth={2} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+                <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 text-center">Perfil de Competencias</h4>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>
+                      <PolarGrid stroke="#e2e8f0" />
+                      <PolarAngleAxis dataKey="subject" fontSize={9} tick={{ fill: '#64748b', fontWeight: 'bold' }} />
+                      <PolarRadiusAxis angle={30} domain={[0, 5]} />
+                      <Radar name={topProgram?.name || 'Programa'} dataKey="Programa" stroke="#6366f1" fill="#6366f1" fillOpacity={0.5} />
+                      <Radar name="Promedio General" dataKey="Global" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.2} />
+                      <Tooltip />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-indigo-600 p-8 rounded-3xl shadow-xl text-white">
+                <h4 className="font-bold text-lg mb-4 flex items-center">
+                  <Lightbulb className="w-5 h-5 mr-2 text-indigo-300" /> Insight del Programa
+                </h4>
+                <p className="text-sm opacity-90 leading-relaxed mb-6">
+                  {topProgram
+                    ? `${topProgram.name} lidera con ${topProgram.score}. Tiene relacion activa con ${topProgram.convenios} convenios en el filtro actual.`
+                    : 'No hay datos suficientes para generar insight de programas.'}
+                </p>
+                <button className="w-full py-3 bg-white text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-50 transition-all" type="button">
+                  Ver Plan de Replicacion
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'triangulation' ? (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100">
+              <div className="text-center max-w-2xl mx-auto mb-12">
+                <h2 className="text-3xl font-black text-slate-900 tracking-tight">Triangulacion de Opinion</h2>
+                <p className="text-slate-500 font-medium mt-2">Medicion de brechas de percepcion entre los estamentos evaluadores.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8">
+                {actorTriangulation.map((category) => (
+                  <div key={category.category} className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                    <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6">{category.category}</h4>
+                    <div className="space-y-6">
+                      {actors.map((actor, index) => {
+                        const value = category[actor] || 0;
+                        return (
+                          <div key={`${category.category}-${actor}`}>
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-xs font-bold text-slate-600">{actor}</span>
+                              <span className="text-xs font-black text-indigo-600">{value}</span>
+                            </div>
+                            <div className="w-full h-2 bg-white rounded-full overflow-hidden border border-slate-100">
+                              <div
+                                className={['bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-cyan-500'][index % 4]}
+                                style={{ width: `${Math.max(0, Math.min(100, (value / 5) * 100))}%`, height: '100%' }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-8 pt-4 border-t border-slate-200">
+                      <div className="flex items-center space-x-2 text-amber-600">
+                        <AlertCircle className="w-4 h-4" />
+                        <span className="text-[10px] font-black uppercase">Brecha de Percepcion Detectada</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'insights' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in zoom-in duration-500">
+            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm border-t-4 border-t-indigo-500">
+              <div className="bg-indigo-50 w-12 h-12 rounded-2xl flex items-center justify-center text-indigo-600 mb-6">
+                <TrendingUp className="w-6 h-6" />
+              </div>
+              <h4 className="font-bold text-lg mb-2">Estrategia de Convenios</h4>
+              <p className="text-sm text-slate-500 leading-relaxed mb-6">
+                {insights.bestCenter
+                  ? `${insights.bestCenter.name} lidera el desempeno con ${insights.bestCenter.score}. Puede funcionar como referencia para planes de mejora.`
+                  : 'Sin datos suficientes para estrategia por convenios.'}
+              </p>
+              <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-indigo-600 cursor-pointer">
+                <span>Accion Recomendada</span>
+                <ChevronRight className="w-4 h-4" />
+              </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm border-t-4 border-t-emerald-500">
+              <div className="bg-emerald-50 w-12 h-12 rounded-2xl flex items-center justify-center text-emerald-600 mb-6">
+                <Users className="w-6 h-6" />
+              </div>
+              <h4 className="font-bold text-lg mb-2">Refuerzo por Actores</h4>
+              <p className="text-sm text-slate-500 leading-relaxed mb-6">
+                {insights.actorGap
+                  ? `La categoria con mayor brecha es ${insights.actorGap.category} (brecha ${insights.actorGap.gap}). Priorizar alineacion entre actores.`
+                  : 'No hay suficientes datos para calcular brechas por actor.'}
+              </p>
+              <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-emerald-600 cursor-pointer">
+                <span>Plan de Capacitacion</span>
+                <ChevronRight className="w-4 h-4" />
+              </div>
+            </div>
+
+            <div className="bg-slate-900 p-8 rounded-3xl shadow-xl text-white relative overflow-hidden group">
+              <div className="relative z-10">
+                <h4 className="font-bold text-lg mb-4 flex items-center">
+                  <Lightbulb className="w-5 h-5 mr-2 text-indigo-400" /> Recomendaciones del Modelo
+                </h4>
+                <div className="space-y-4">
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-xs">
+                    <span className="text-indigo-400 font-bold">PROYECCION:</span> Seccion de recomendaciones IA pendiente de construccion.
+                  </div>
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-xs">
+                    <span className="text-amber-400 font-bold">ALERTA:</span> {insights.weakestCenter ? `${insights.weakestCenter.name} requiere plan de mejora por puntaje ${insights.weakestCenter.score}.` : 'No se detectaron convenios criticos en el filtro actual.'}
+                  </div>
+                </div>
+              </div>
+              <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-700" />
+            </div>
+          </div>
+        ) : null}
+      </main>
+
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </div>
   );
 }

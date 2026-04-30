@@ -659,6 +659,82 @@ function mapEvaluationItem(item) {
   };
 }
 
+function average(values) {
+  if (!values.length) return null;
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+}
+
+function aggregateAverageScores(items, key, labelKey) {
+  const aggregated = items.reduce((acc, item) => {
+    const label = item[key] || 'Sin definir';
+    const score = item.scoreSummary?.globalScore;
+    const entry = acc[label] || { [labelKey]: label, total: 0, scoreTotal: 0, scoredCount: 0 };
+
+    entry.total += 1;
+    if (typeof score === 'number') {
+      entry.scoreTotal += score;
+      entry.scoredCount += 1;
+    }
+
+    acc[label] = entry;
+    return acc;
+  }, {});
+
+  return Object.values(aggregated).map((entry) => ({
+    [labelKey]: entry[labelKey],
+    total: entry.total,
+    averageScore: entry.scoredCount ? Number((entry.scoreTotal / entry.scoredCount).toFixed(2)) : null,
+    scoredCount: entry.scoredCount
+  }));
+}
+
+function buildScoreDistribution(rows) {
+  const buckets = [
+    { label: '0-2', min: 0, max: 2 },
+    { label: '2-3', min: 2, max: 3 },
+    { label: '3-4', min: 3, max: 4 },
+    { label: '4-5', min: 4, max: 5 }
+  ];
+
+  const distribution = buckets.map((bucket) => ({ label: bucket.label, count: 0 }));
+
+  rows.forEach((item) => {
+    const score = item.scoreSummary?.globalScore;
+    if (typeof score !== 'number') return;
+    const bucket = distribution.find((bucketItem, index) => {
+      const range = buckets[index];
+      return score >= range.min && (score < range.max || (range.max === 5 && score <= range.max));
+    });
+    if (bucket) bucket.count += 1;
+  });
+
+  return distribution;
+}
+
+function aggregateSurveyScores(rows) {
+  const aggregated = rows.reduce((acc, item) => {
+    const surveyKey = item.survey || 'Sin encuesta';
+    const score = item.scoreSummary?.globalScore;
+    const entry = acc[surveyKey] || { survey: surveyKey, total: 0, scoreTotal: 0, scoredCount: 0 };
+
+    entry.total += 1;
+    if (typeof score === 'number') {
+      entry.scoreTotal += score;
+      entry.scoredCount += 1;
+    }
+
+    acc[surveyKey] = entry;
+    return acc;
+  }, {});
+
+  return Object.values(aggregated).map((entry) => ({
+    survey: entry.survey,
+    total: entry.total,
+    averageScore: entry.scoredCount ? Number((entry.scoreTotal / entry.scoredCount).toFixed(2)) : null,
+    scoredCount: entry.scoredCount
+  }));
+}
+
 function aggregateByKey(items, key, countKey = 'total') {
   return items.reduce((acc, item) => {
     const value = item[key] || 'Sin definir';
@@ -743,6 +819,14 @@ export async function getEvaluationReportMetrics(filters = {}) {
     return acc;
   }, {});
 
+  const scoredRows = filteredRows.filter((item) => typeof item.scoreSummary?.globalScore === 'number');
+  const averageScore = average(scoredRows.map((item) => item.scoreSummary.globalScore));
+  const scoreDistribution = buildScoreDistribution(filteredRows);
+  const averageByRole = aggregateAverageScores(filteredRows, 'role', 'role');
+  const averageByProgram = aggregateAverageScores(filteredRows, 'program', 'program');
+  const averageBySite = aggregateAverageScores(filteredRows, 'center', 'center');
+  const surveySummary = aggregateSurveyScores(filteredRows);
+
   return {
     totals,
     siteSummary,
@@ -750,6 +834,12 @@ export async function getEvaluationReportMetrics(filters = {}) {
     roleSummary,
     siteProgramMatrix: Object.values(matrix),
     rows: filteredRows,
+    averageScore,
+    scoreDistribution,
+    averageByRole,
+    averageByProgram,
+    averageBySite,
+    surveySummary,
     filters: {
       role: role || 'all',
       program: program || 'all',
