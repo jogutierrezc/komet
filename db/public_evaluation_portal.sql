@@ -15,6 +15,27 @@ alter table if exists public.tutors
 alter table if exists public.surveys
   add column if not exists estado text default 'activo';
 
+alter table if exists public.evaluations
+  add column if not exists evaluator_user_id uuid,
+  add column if not exists evaluator_role text;
+
+update public.evaluations
+set
+  evaluator_user_id = coalesce(evaluator_user_id, student_id, tutor_id),
+  evaluator_role = coalesce(
+    nullif(lower(evaluator_role), ''),
+    case
+      when student_id is not null then 'student'
+      when tutor_id is not null then 'professor'
+      else nullif(lower(coalesce(estado, dirigidoA, tipoPrograma)), '')
+    end
+  )
+where evaluator_user_id is null or evaluator_role is null or evaluator_role = '';
+
+create unique index if not exists evaluations_evaluator_role_center_unique
+  on public.evaluations (evaluator_user_id, lower(evaluator_role), center_id)
+  where evaluator_user_id is not null and evaluator_role is not null and center_id is not null;
+
 -- Vista consolidada de usuarios habilitados para el portal público
 drop view if exists public.portal_users cascade;
 create view public.portal_users as
@@ -122,7 +143,8 @@ where not exists (
   from public.evaluations ev
   where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
     and (
-      (u.role = 'student' and ev.student_id = u.user_id)
+      ev.evaluator_user_id = u.user_id
+      or (u.role = 'student' and ev.student_id = u.user_id)
       or (u.role = 'professor' and ev.tutor_id = u.user_id)
     )
 );
@@ -139,7 +161,8 @@ select exists(
   join public.evaluations ev on ev.survey_id = survey_id
   where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
     and (
-      (u.role = 'student' and ev.student_id = u.user_id)
+      ev.evaluator_user_id = u.user_id
+      or (u.role = 'student' and ev.student_id = u.user_id)
       or (u.role = 'professor' and ev.tutor_id = u.user_id)
     )
 );

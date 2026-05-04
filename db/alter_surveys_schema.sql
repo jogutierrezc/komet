@@ -50,6 +50,10 @@ EXECUTE PROCEDURE public.set_updated_at();
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'evaluations') THEN
+    ALTER TABLE public.evaluations
+      ADD COLUMN IF NOT EXISTS evaluator_user_id uuid,
+      ADD COLUMN IF NOT EXISTS evaluator_role text;
+
     IF NOT EXISTS (
       SELECT 1
       FROM pg_constraint
@@ -94,6 +98,29 @@ BEGIN
       WHERE relname = 'evaluations_tutor_center_unique'
     ) THEN
       CREATE UNIQUE INDEX evaluations_tutor_center_unique ON public.evaluations (tutor_id, center_id) WHERE tutor_id IS NOT NULL AND center_id IS NOT NULL;
+    END IF;
+
+    UPDATE public.evaluations
+    SET
+      evaluator_user_id = COALESCE(evaluator_user_id, student_id, tutor_id),
+      evaluator_role = COALESCE(
+        NULLIF(lower(evaluator_role), ''),
+        CASE
+          WHEN student_id IS NOT NULL THEN 'student'
+          WHEN tutor_id IS NOT NULL THEN 'professor'
+          ELSE NULLIF(lower(coalesce(estado, dirigidoA, tipoPrograma)), '')
+        END
+      )
+    WHERE evaluator_user_id IS NULL OR evaluator_role IS NULL OR evaluator_role = '';
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_class
+      WHERE relname = 'evaluations_evaluator_role_center_unique'
+    ) THEN
+      CREATE UNIQUE INDEX evaluations_evaluator_role_center_unique
+        ON public.evaluations (evaluator_user_id, lower(evaluator_role), center_id)
+        WHERE evaluator_user_id IS NOT NULL AND evaluator_role IS NOT NULL AND center_id IS NOT NULL;
     END IF;
   END IF;
 END

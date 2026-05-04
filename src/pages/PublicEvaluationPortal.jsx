@@ -148,6 +148,8 @@ export default function PublicEvaluationPortal() {
                   center_id: selectedCenterId || userData.practice_center_id || null,
                   student_id: userData.role === 'student' ? userData.user_id : null,
                   tutor_id: userData.role === 'professor' ? userData.user_id : null,
+                  evaluator_user_id: userData.user_id || null,
+                  evaluator_role: userData.role || null,
                   status: 'Completada',
                   completed_at: new Date().toISOString(),
                   dirigidoA: selectedSurvey.target_type || 'Todos',
@@ -165,8 +167,20 @@ export default function PublicEvaluationPortal() {
                 answers: answers || {}
               });
               console.log('Puntajes calculados desde respuestas:', scoreSummary, createdEvaluation);
+
+              const activeSurveys = await getPortalActiveSurveysByCode(userId.trim(), selectedCenterId);
+              setSurveys(activeSurveys);
+              setSelectedSurvey(activeSurveys?.[0] || null);
+              setError('');
+              setView('ready');
             } catch (error) {
               console.error('Error guardando la evaluación:', error);
+              if (error?.code === 'already_evaluated_center' || error?.code === '23505') {
+                setError('Ya registraste una evaluación para este sitio de práctica. Solo se permite una evaluación por sitio y por rol.');
+                setView('ready');
+              } else {
+                setError('No fue posible registrar la evaluación. Intenta nuevamente.');
+              }
             } finally {
               setIsSubmitting(false);
             }

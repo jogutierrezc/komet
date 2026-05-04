@@ -33,6 +33,26 @@ BEGIN
   ) THEN
     ALTER TABLE public.evaluations ADD COLUMN center_id uuid NULL;
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'evaluations'
+      AND column_name = 'evaluator_user_id'
+  ) THEN
+    ALTER TABLE public.evaluations ADD COLUMN evaluator_user_id uuid NULL;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'evaluations'
+      AND column_name = 'evaluator_role'
+  ) THEN
+    ALTER TABLE public.evaluations ADD COLUMN evaluator_role text NULL;
+  END IF;
 END
 $$;
 
@@ -93,6 +113,29 @@ BEGIN
       ON public.evaluations (tutor_id, center_id)
       WHERE tutor_id IS NOT NULL AND center_id IS NOT NULL;
   END IF;
+
+  UPDATE public.evaluations
+  SET
+    evaluator_user_id = COALESCE(evaluator_user_id, student_id, tutor_id),
+    evaluator_role = COALESCE(
+      NULLIF(lower(evaluator_role), ''),
+      CASE
+        WHEN student_id IS NOT NULL THEN 'student'
+        WHEN tutor_id IS NOT NULL THEN 'professor'
+        ELSE NULLIF(lower(coalesce(estado, dirigidoA, tipoPrograma)), '')
+      END
+    )
+  WHERE evaluator_user_id IS NULL OR evaluator_role IS NULL OR evaluator_role = '';
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_class
+    WHERE relname = 'evaluations_evaluator_role_center_unique'
+  ) THEN
+    CREATE UNIQUE INDEX evaluations_evaluator_role_center_unique
+      ON public.evaluations (evaluator_user_id, lower(evaluator_role), center_id)
+      WHERE evaluator_user_id IS NOT NULL AND evaluator_role IS NOT NULL AND center_id IS NOT NULL;
+  END IF;
 END
 $$;
 
@@ -130,7 +173,8 @@ where not exists (
   from public.evaluations ev
   where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
     and (
-      (u.role = 'student' and ev.student_id = u.user_id)
+      ev.evaluator_user_id = u.user_id
+      or (u.role = 'student' and ev.student_id = u.user_id)
       or (u.role = 'professor' and ev.tutor_id = u.user_id)
     )
 );
@@ -146,7 +190,8 @@ select exists(
   join public.evaluations ev on ev.survey_id = survey_id
   where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
     and (
-      (u.role = 'student' and ev.student_id = u.user_id)
+      ev.evaluator_user_id = u.user_id
+      or (u.role = 'student' and ev.student_id = u.user_id)
       or (u.role = 'professor' and ev.tutor_id = u.user_id)
     )
 );

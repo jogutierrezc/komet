@@ -2,6 +2,27 @@
     -- Incluye el filtro que permite que cualquier evaluador acceda a encuestas marcadas como "Todos".
     -- Además, solo se mostrarán encuestas del mismo campus del evaluador.
 
+        alter table if exists public.evaluations
+            add column if not exists evaluator_user_id uuid,
+            add column if not exists evaluator_role text;
+
+        update public.evaluations
+        set
+            evaluator_user_id = coalesce(evaluator_user_id, student_id, tutor_id),
+            evaluator_role = coalesce(
+                nullif(lower(evaluator_role), ''),
+                case
+                    when student_id is not null then 'student'
+                    when tutor_id is not null then 'professor'
+                    else nullif(lower(coalesce(estado, dirigidoA, tipoPrograma)), '')
+                end
+            )
+        where evaluator_user_id is null or evaluator_role is null or evaluator_role = '';
+
+        create unique index if not exists evaluations_evaluator_role_center_unique
+            on public.evaluations (evaluator_user_id, lower(evaluator_role), center_id)
+            where evaluator_user_id is not null and evaluator_role is not null and center_id is not null;
+
     create or replace function public.portal_active_surveys_by_code(user_code text, practice_center_id uuid default null)
     returns table(
     survey_id uuid,
@@ -36,8 +57,9 @@
     from public.evaluations ev
     where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
         and (
-        (u.role = 'student' and ev.student_id = u.user_id)
-        or (u.role = 'professor' and ev.tutor_id = u.user_id)
+                ev.evaluator_user_id = u.user_id
+                or (u.role = 'student' and ev.student_id = u.user_id)
+                or (u.role = 'professor' and ev.tutor_id = u.user_id)
         )
     );
     $portal_active_surveys$;

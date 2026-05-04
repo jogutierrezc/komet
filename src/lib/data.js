@@ -320,7 +320,15 @@ export async function createEvaluation(evaluation) {
     .insert([evaluation])
     .select('*')
     .single();
-  if (error) throw error;
+  if (error) {
+    if (error.code === '23505') {
+      const duplicateError = new Error('already_evaluated_center');
+      duplicateError.code = 'already_evaluated_center';
+      duplicateError.cause = error;
+      throw duplicateError;
+    }
+    throw error;
+  }
   return data;
 }
 
