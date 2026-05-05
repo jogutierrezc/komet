@@ -5,6 +5,7 @@ import {
   calcularResumenPorPrograma,
   detectarPreguntasCriticas
 } from './metricasEngine';
+import { PREGUNTAS_INSTRUMENTO } from './instrumento';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -25,20 +26,99 @@ function mapTipoPrograma(value) {
   return 'Pregrado';
 }
 
+function normalizeComparableText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractInstrumentCode(value) {
+  const match = String(value || '').toUpperCase().match(/\b(AG|CI|SPB|OA|PF|CMC)\s*-?\s*(\d{1,2})\b/);
+  if (!match) return null;
+  return `${match[1]}${match[2]}`;
+}
+
+function toLikertScore(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 1 && value <= 5) return value;
+    return null;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 5) return parsed;
+    return null;
+  }
+  if (typeof value === 'object') {
+    const nested = toLikertScore(value.value ?? value.score ?? value.valor ?? value.answer);
+    return nested;
+  }
+  return null;
+}
+
+function buildQuestionMappings(questions = []) {
+  const byQuestionId = new Map();
+  const byNormalizedText = new Map(
+    PREGUNTAS_INSTRUMENTO.map((item) => [normalizeComparableText(item.texto), item.id])
+  );
+
+  questions.forEach((question) => {
+    const questionId = String(question?.id || '').trim();
+    if (!questionId) return;
+
+    const fromCode =
+      extractInstrumentCode(question?.id) ||
+      extractInstrumentCode(question?.codigo) ||
+      extractInstrumentCode(question?.code) ||
+      extractInstrumentCode(question?.label) ||
+      extractInstrumentCode(question?.texto) ||
+      extractInstrumentCode(question?.name) ||
+      null;
+
+    if (fromCode) {
+      byQuestionId.set(questionId, fromCode);
+      return;
+    }
+
+    const questionText = normalizeComparableText(
+      question?.label || question?.texto || question?.name || question?.title || ''
+    );
+
+    if (questionText && byNormalizedText.has(questionText)) {
+      byQuestionId.set(questionId, byNormalizedText.get(questionText));
+    }
+  });
+
+  return byQuestionId;
+}
+
 function mapAnswers(rawAnswers = {}, surveyDetails = {}) {
   const questions = Array.isArray(surveyDetails.questions) ? surveyDetails.questions : [];
-  const knownIds = new Set(questions.map((q) => q.id).filter(Boolean));
+  const instrumentIds = new Set(PREGUNTAS_INSTRUMENTO.map((item) => item.id));
+  const byQuestionId = buildQuestionMappings(questions);
+  const merged = new Map();
 
-  const numericEntries = Object.entries(rawAnswers)
-    .filter(([key, val]) => {
-      if (String(key).startsWith('_')) return false;
-      const num = Number(val);
-      if (!Number.isFinite(num) || num < 1 || num > 5) return false;
-      return knownIds.size ? knownIds.has(key) : true;
-    })
-    .map(([preguntaId, valor]) => ({ preguntaId, valor: Number(valor) }));
+  Object.entries(rawAnswers).forEach(([key, val]) => {
+    if (String(key).startsWith('_')) return;
 
-  return numericEntries;
+    const score = toLikertScore(val);
+    if (score === null) return;
+
+    const directCode = extractInstrumentCode(key);
+    const mappedCode = directCode || byQuestionId.get(key) || null;
+    if (!mappedCode || !instrumentIds.has(mappedCode)) return;
+
+    // Keep the first value per instrument code to avoid duplicate counting.
+    if (!merged.has(mappedCode)) {
+      merged.set(mappedCode, score);
+    }
+  });
+
+  return [...merged.entries()].map(([preguntaId, valor]) => ({ preguntaId, valor }));
 }
 
 function collectInsights(evaluaciones) {

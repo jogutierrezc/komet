@@ -840,16 +840,34 @@ function normalizeStatus(value) {
   return String(value || 'Pendiente').trim();
 }
 
+function getLatestResponseAnswers(item) {
+  const responses = Array.isArray(item?.evaluation_responses) ? item.evaluation_responses : [];
+  const withAnswers = responses.filter((response) => response && typeof response.answers === 'object' && response.answers !== null);
+
+  if (!withAnswers.length) return null;
+
+  const sorted = [...withAnswers].sort((a, b) => {
+    const aTime = new Date(a?.submitted_at || 0).getTime();
+    const bTime = new Date(b?.submitted_at || 0).getTime();
+    return bTime - aTime;
+  });
+
+  return sorted[0]?.answers || null;
+}
+
 function mapEvaluationItem(item) {
+  const persistedAnswers = getLatestResponseAnswers(item);
+  const effectiveAnswers = persistedAnswers || item?.preguntas || {};
+
   const respondentRole =
-    item?.preguntas?._publicRespondent?.role ||
-    item?.preguntas?.role ||
+    effectiveAnswers?._publicRespondent?.role ||
+    effectiveAnswers?.role ||
     null;
 
   const respondentProgram =
-    item?.preguntas?._publicRespondent?.program ||
-    item?.preguntas?.program ||
-    item?.preguntas?.programa ||
+    effectiveAnswers?._publicRespondent?.program ||
+    effectiveAnswers?.program ||
+    effectiveAnswers?.programa ||
     null;
 
   const role = normalizeRole(item.evaluator_role || respondentRole || item.estado || item.dirigidoA || item.tipoPrograma);
@@ -866,7 +884,7 @@ function mapEvaluationItem(item) {
 
   const scoreSummary = calculateSurveyScoreSummary({
     survey: item.survey || {},
-    answers: item.preguntas || {}
+    answers: effectiveAnswers
   });
 
   return {
@@ -883,7 +901,8 @@ function mapEvaluationItem(item) {
     target: item.dirigidoA || item.tipoPrograma || item.estado || 'Sin definir',
     person,
     questions,
-    rawAnswers: item.preguntas || {},
+    rawAnswers: effectiveAnswers,
+    answersSource: persistedAnswers ? 'evaluation_responses' : 'evaluations.preguntas',
     questionCount: questions.length,
     scoreSummary,
     surveyDetails: {
@@ -1002,6 +1021,7 @@ export async function getEvaluationReportMetrics(filters = {}) {
       tipoPrograma,
       titulo,
       preguntas,
+      evaluation_responses(answers,submitted_at),
       survey:survey_id(title,questions,description,target_type),
       campus:campus_id(name),
       center:center_id(name),
@@ -1098,6 +1118,7 @@ export async function getEvaluationReports() {
       tipoPrograma,
       titulo,
       preguntas,
+      evaluation_responses(answers,submitted_at),
       survey:survey_id(title,questions,description,target_type),
       campus:campus_id(name),
       center:center_id(name),

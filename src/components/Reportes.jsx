@@ -150,6 +150,14 @@ function scoreToText(value) {
   return value.toFixed(2);
 }
 
+function getAlertLevel(score) {
+  if (typeof score !== 'number') return { key: 'amarillo', label: 'Sin dato' };
+  if (score >= 4.0) return { key: 'verde', label: 'Verde' };
+  if (score >= 3.5) return { key: 'amarillo', label: 'Amarillo' };
+  if (score >= 2.5) return { key: 'naranja', label: 'Naranja' };
+  return { key: 'rojo', label: 'Rojo' };
+}
+
 function parseNarrativeJson(rawText = '') {
   try {
     const parsed = JSON.parse(rawText);
@@ -241,14 +249,18 @@ function composeReportHtml({
 
   const sectionRowsHtml = (metricasGlobales.promediosPorSeccion || [])
     .map(
-      (section) => `
+      (section) => {
+        const alert = getAlertLevel(section.promedio);
+        return `
       <tr>
         <td>${escapeHtml(section.seccion)}</td>
         <td class="num">${scoreToText(section.promedio)}</td>
+        <td><span class="alert-badge alert-${alert.key}">${alert.label}</span></td>
         <td class="num">${section.totalRespuestas || 0}</td>
         <td>${escapeHtml(section.interpretacion || '')}</td>
       </tr>
-    `
+    `;
+      }
     )
     .join('');
 
@@ -371,6 +383,11 @@ function composeReportHtml({
     .chart-block { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin: 8px 0 18px; }
     .bar-track { width: 100%; background: #e2e8f0; border-radius: 999px; height: 12px; overflow: hidden; }
     .bar-fill { height: 100%; background: linear-gradient(90deg,#2563eb,#14b8a6); }
+    .alert-badge { display: inline-block; border-radius: 999px; padding: 4px 10px; font-size: 11px; font-weight: 700; }
+    .alert-verde { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .alert-amarillo { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
+    .alert-naranja { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
+    .alert-rojo { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
     .page-break { page-break-before: always; }
     .footer { margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px; font-size: 11px; color: #64748b; }
     @media print { .no-print { display:none !important; } }
@@ -409,10 +426,10 @@ function composeReportHtml({
     <h3>2.1 Metricas globales del instrumento</h3>
     <table>
       <thead>
-        <tr><th>Seccion</th><th>Promedio</th><th>Respuestas</th><th>Interpretacion</th></tr>
+        <tr><th>Seccion</th><th>Promedio</th><th>Semaforo</th><th>Respuestas</th><th>Interpretacion</th></tr>
       </thead>
       <tbody>
-        ${sectionRowsHtml || '<tr><td colspan="4">Sin datos de secciones para el filtro seleccionado.</td></tr>'}
+        ${sectionRowsHtml || '<tr><td colspan="5">Sin datos de secciones para el filtro seleccionado.</td></tr>'}
       </tbody>
     </table>
 
@@ -628,7 +645,7 @@ export default function Reportes() {
     return Number(((completed / filteredRows.length) * 100).toFixed(1));
   }, [filteredRows]);
 
-  async function generateHtmlReport() {
+  async function generateHtmlReport({ autoPrint = false } = {}) {
     if (!filteredRows.length) {
       setAiError('No hay datos disponibles para generar el informe con el filtro actual.');
       return;
@@ -747,6 +764,11 @@ ${JSON.stringify(compactDataset)}
 
     localStorage.setItem(LOCAL_REPORT_KEY, html);
     setReportHtml(html);
+
+    if (autoPrint) {
+      printHtml(html);
+    }
+
     setIsGenerating(false);
   }
 
@@ -763,15 +785,19 @@ ${JSON.stringify(compactDataset)}
     URL.revokeObjectURL(url);
   }
 
-  function printReport() {
-    if (!reportHtml) return;
+  function printHtml(html) {
+    if (!html) return;
     const popup = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
     if (!popup) return;
     popup.document.open();
-    popup.document.write(reportHtml);
+    popup.document.write(html);
     popup.document.close();
     popup.focus();
     setTimeout(() => popup.print(), 350);
+  }
+
+  function printReport() {
+    printHtml(reportHtml);
   }
 
   if (loading) {
@@ -800,11 +826,19 @@ ${JSON.stringify(compactDataset)}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={generateHtmlReport}
+              onClick={() => generateHtmlReport()}
               disabled={isGenerating}
               className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
             >
               <Sparkles size={15} /> {isGenerating ? 'Generando...' : 'Generar Informe'}
+            </button>
+            <button
+              type="button"
+              onClick={() => generateHtmlReport({ autoPrint: true })}
+              disabled={isGenerating}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              <Printer size={15} /> {isGenerating ? 'Generando...' : 'Generar e imprimir'}
             </button>
             <button type="button" onClick={downloadHtml} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
               <Download size={15} /> Guardar HTML
