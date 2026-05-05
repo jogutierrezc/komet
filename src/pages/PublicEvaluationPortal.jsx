@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById } from '../lib/data';
+import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
   const [searchParams] = useSearchParams();
@@ -13,6 +13,7 @@ export default function PublicEvaluationPortal() {
   const [sharedSurvey, setSharedSurvey] = useState(null);
   const [publicRespondent, setPublicRespondent] = useState({
     full_name: '',
+    email: '',
     academic_code: '',
     document_number: '',
     program_level: 'Pregrado',
@@ -28,6 +29,7 @@ export default function PublicEvaluationPortal() {
   const [selectedCenterId, setSelectedCenterId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [programOptions, setProgramOptions] = useState([]);
+  const [allProgramOptions, setAllProgramOptions] = useState([]);
 
   const normalizeProgramLevel = (value = '') => {
     const normalized = String(value || '')
@@ -43,11 +45,19 @@ export default function PublicEvaluationPortal() {
 
   const selectedCampusId = sharedSurveyId ? sharedSurvey?.campus_id || null : userData?.campus_id || null;
 
-  const filteredProgramOptions = programOptions.filter((item) => {
+  const campusLevelPrograms = programOptions.filter((item) => {
     const level = normalizeProgramLevel(item.level);
     const selectedLevel = normalizeProgramLevel(publicRespondent.program_level);
     return !selectedLevel || level === selectedLevel;
   });
+
+  const globalLevelPrograms = allProgramOptions.filter((item) => {
+    const level = normalizeProgramLevel(item.level);
+    const selectedLevel = normalizeProgramLevel(publicRespondent.program_level);
+    return !selectedLevel || level === selectedLevel;
+  });
+
+  const filteredProgramOptions = campusLevelPrograms.length ? campusLevelPrograms : globalLevelPrograms;
 
   const capitalize = (value = '') => String(value)
     .split(/\s+/)
@@ -138,6 +148,7 @@ export default function PublicEvaluationPortal() {
   useEffect(() => {
     if (!selectedCampusId) {
       setProgramOptions([]);
+      setAllProgramOptions([]);
       return;
     }
 
@@ -145,11 +156,20 @@ export default function PublicEvaluationPortal() {
 
     async function loadPrograms() {
       try {
-        const list = await getProgramsByCampus(selectedCampusId);
-        if (!cancelled) setProgramOptions(list);
+        const [campusList, allList] = await Promise.all([
+          getProgramsByCampus(selectedCampusId),
+          getProgramsByCampus(null)
+        ]);
+        if (!cancelled) {
+          setProgramOptions(campusList || []);
+          setAllProgramOptions(allList || []);
+        }
       } catch (programError) {
         console.error('Error cargando programas del campus:', programError);
-        if (!cancelled) setProgramOptions([]);
+        if (!cancelled) {
+          setProgramOptions([]);
+          setAllProgramOptions([]);
+        }
       }
     }
 
@@ -170,7 +190,7 @@ export default function PublicEvaluationPortal() {
         program: nextProgram
       }));
     }
-  }, [publicRespondent.program_level, filteredProgramOptions]);
+  }, [publicRespondent.program_level, filteredProgramOptions, publicRespondent.program]);
 
   useEffect(() => {
     if (sharedSurveyId) return;
@@ -351,6 +371,35 @@ export default function PublicEvaluationPortal() {
               });
               console.log('Puntajes calculados desde respuestas:', scoreSummary, createdEvaluation);
 
+              const recipientEmail = sharedSurveyId ? publicRespondent.email : userData?.email;
+              if (recipientEmail) {
+                try {
+                  await sendPublicSurveyConfirmationEmail({
+                    to: recipientEmail,
+                    templateKey: 'student_completed',
+                    respondent: {
+                      name: sharedSurveyId ? publicRespondent.full_name : userData?.full_name || 'Participante',
+                      public_role: roleLabel(sharedSurveyId ? selectedPublicRole : userData?.role || ''),
+                      program_level: sharedSurveyId ? publicRespondent.program_level : userData?.program_level || '',
+                      program: sharedSurveyId ? publicRespondent.program : userData?.program || '',
+                      practice_center_name: centers.find((center) => center.id === selectedCenterId)?.name || null,
+                      period: getCurrentAcademicPeriod(),
+                      id_type: sharedSurveyId ? (selectedPublicRole === 'student' ? 'Código académico' : 'Documento') : 'Código de usuario',
+                      id_value: sharedSurveyId
+                        ? (selectedPublicRole === 'student' ? publicRespondent.academic_code : publicRespondent.document_number)
+                        : userId,
+                      survey_title: selectedSurvey.title || 'Encuesta de prácticas formativas',
+                      evaluation_link: `${window.location.origin}/evaluacion-publica?survey=${selectedSurvey.id}`
+                    },
+                    evaluationId: createdEvaluation?.id || null,
+                    surveyId: selectedSurvey?.id || null,
+                    source: sharedSurveyId ? 'public_link' : 'authenticated_portal'
+                  });
+                } catch (emailError) {
+                  console.warn('No se pudo enviar correo de confirmación:', emailError);
+                }
+              }
+
               if (sharedSurveyId) {
                 setView('public-success');
                 setError('');
@@ -410,6 +459,7 @@ export default function PublicEvaluationPortal() {
               setSelectedPublicRole('');
               setPublicRespondent({
                 full_name: '',
+                email: '',
                 academic_code: '',
                 document_number: '',
                 program_level: 'Pregrado',
@@ -479,6 +529,17 @@ export default function PublicEvaluationPortal() {
                 />
               </div>
 
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Correo electrónico</label>
+                <input
+                  type="email"
+                  value={publicRespondent.email}
+                  onChange={(e) => setPublicRespondent((prev) => ({ ...prev, email: e.target.value }))}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                  placeholder="correo@dominio.com"
+                />
+              </div>
+
               {selectedPublicRole === 'student' ? (
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Código Académico</label>
@@ -522,7 +583,10 @@ export default function PublicEvaluationPortal() {
                 >
                   <option value="">Selecciona un programa</option>
                   {filteredProgramOptions.map((program) => (
-                    <option key={program.id} value={program.name}>{program.name}</option>
+                    <option key={program.id} value={program.name}>
+                      {program.name}
+                      {!campusLevelPrograms.length && program.campus?.name ? ` (${program.campus.name})` : ''}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -574,10 +638,12 @@ export default function PublicEvaluationPortal() {
                 const needsAcademicCode = selectedPublicRole === 'student';
                 const idFieldOk = needsAcademicCode ? Boolean(publicRespondent.academic_code) : Boolean(publicRespondent.document_number);
 
-                if (!publicRespondent.full_name || !publicRespondent.program || !idFieldOk) {
+                const hasValidEmail = /.+@.+\..+/.test(String(publicRespondent.email || '').trim());
+
+                if (!publicRespondent.full_name || !publicRespondent.program || !idFieldOk || !hasValidEmail) {
                   setError(needsAcademicCode
-                    ? 'Debes completar nombre, código académico, nivel y programa para continuar.'
-                    : 'Debes completar nombre, número de documento, nivel y programa para continuar.');
+                    ? 'Debes completar nombre, correo, código académico, nivel y programa para continuar.'
+                    : 'Debes completar nombre, correo, número de documento, nivel y programa para continuar.');
                   return;
                 }
                 if (!selectedCenterId) {

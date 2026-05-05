@@ -14,14 +14,42 @@ export const DEFAULT_SYSTEM_SETTINGS = {
   resend_api_key: '',
   resend_sender_email: '',
   email_templates: {
-    student_completed_subject: 'Tu encuesta ha sido registrada',
-    student_completed_body: 'Hola {{name}},\n\nTu evaluación ha sido recibida correctamente. Gracias por tu colaboración.',
-    student_access_subject: 'Accede a tu evaluación',
-    student_access_body: 'Hola {{name}},\n\nHaz clic en el siguiente enlace para completar tu evaluación: {{evaluation_link}}',
-    professor_access_subject: 'Nueva evaluación disponible',
-    professor_access_body: 'Hola {{name}},\n\nTienes acceso a una evaluación en el sistema. Utiliza este enlace: {{evaluation_link}}',
-    coordinator_access_subject: 'Acceso a evaluación de práctica',
-    coordinator_access_body: 'Hola {{name}},\n\nYa puedes acceder a la evaluación de práctica desde el sistema: {{evaluation_link}}'
+    student_completed_subject: 'Confirmación de recepción | {{survey_title}}',
+    student_completed_body:
+      '<p>Hola {{name}},</p>' +
+      '<p>Hemos recibido satisfactoriamente tu encuesta de <strong>{{survey_title}}</strong>.</p>' +
+      '<p><strong>Resumen de tu registro:</strong></p>' +
+      '<ul>' +
+      '<li>Rol de evaluación: {{public_role}}</li>' +
+      '<li>Nivel de formación: {{program_level}}</li>' +
+      '<li>Programa: {{program}}</li>' +
+      '<li>Escenario de práctica: {{practice_center_name}}</li>' +
+      '<li>Periodo académico: {{period}}</li>' +
+      '<li>Identificación registrada: {{id_type}} {{id_value}}</li>' +
+      '</ul>' +
+      '<p>Gracias por tu participación en el proceso de mejora continua Docencia-Servicio.</p>' +
+      '<p>Equipo KOMET</p>',
+    student_access_subject: 'Accede a tu encuesta | {{survey_title}}',
+    student_access_body:
+      '<p>Hola {{name}},</p>' +
+      '<p>Ya puedes diligenciar la encuesta <strong>{{survey_title}}</strong>.</p>' +
+      '<p><strong>Periodo:</strong> {{period}}<br/><strong>Escenario:</strong> {{practice_center_name}}</p>' +
+      '<p>Ingresa aquí: <a href="{{evaluation_link}}">{{evaluation_link}}</a></p>' +
+      '<p>Equipo KOMET</p>',
+    professor_access_subject: 'Nueva encuesta disponible | {{survey_title}}',
+    professor_access_body:
+      '<p>Hola {{name}},</p>' +
+      '<p>Tienes una encuesta disponible para el escenario <strong>{{practice_center_name}}</strong>.</p>' +
+      '<p><strong>Rol:</strong> {{public_role}}<br/><strong>Periodo:</strong> {{period}}</p>' +
+      '<p>Completar encuesta: <a href="{{evaluation_link}}">{{evaluation_link}}</a></p>' +
+      '<p>Equipo KOMET</p>',
+    coordinator_access_subject: 'Acceso a encuesta de práctica | {{survey_title}}',
+    coordinator_access_body:
+      '<p>Hola {{name}},</p>' +
+      '<p>Se habilitó el acceso a la encuesta <strong>{{survey_title}}</strong>.</p>' +
+      '<p><strong>Escenario:</strong> {{practice_center_name}}<br/><strong>Periodo:</strong> {{period}}</p>' +
+      '<p>Ingresar: <a href="{{evaluation_link}}">{{evaluation_link}}</a></p>' +
+      '<p>Equipo KOMET</p>'
   },
   openrouter_api_key: '',
   openrouter_model: OPENROUTER_FREE_MODELS[0],
@@ -610,6 +638,15 @@ export async function createEvaluationWithResponses(evaluation, responses = []) 
   if (responseError) throw responseError;
 
   return createdEvaluation;
+}
+
+export async function sendPublicSurveyConfirmationEmail(payload = {}) {
+  const { data, error } = await supabase.functions.invoke('send-public-survey-confirmation', {
+    body: payload
+  });
+
+  if (error) throw error;
+  return data;
 }
 
 function normalizeSurveySections(items = []) {

@@ -447,7 +447,28 @@ function PlantillasView({ emailTemplates, onChange, onSave, loading }) {
   const previewData = {
     name: 'María Pérez',
     evaluation_link: 'https://komet.app/evaluacion/abc123',
+    survey_title: 'Evaluación de Prácticas Formativas - Edición Valledupar',
+    public_role: 'Estudiante',
+    program_level: 'Posgrado',
+    program: 'Especialización Medicina Familiar',
+    practice_center_name: 'Arepas La Leyenda',
+    period: '2026-A',
+    id_type: 'Código académico',
+    id_value: 'A0123456'
   };
+
+  const availableVariables = [
+    '{{name}}',
+    '{{evaluation_link}}',
+    '{{survey_title}}',
+    '{{public_role}}',
+    '{{program_level}}',
+    '{{program}}',
+    '{{practice_center_name}}',
+    '{{period}}',
+    '{{id_type}}',
+    '{{id_value}}'
+  ];
 
   const templateRows = [
     {
@@ -494,9 +515,11 @@ function PlantillasView({ emailTemplates, onChange, onSave, loading }) {
 
   const getPreviewHtml = (html) => {
     if (!html) return '<div class="text-sm text-slate-500">Sin contenido para vista previa.</div>';
-    return html
-      .replace(/{{name}}/g, previewData.name)
-      .replace(/{{evaluation_link}}/g, previewData.evaluation_link);
+
+    return Object.entries(previewData).reduce((acc, [key, value]) => {
+      const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'gi');
+      return acc.replace(regex, value);
+    }, html);
   };
 
   return (
@@ -513,6 +536,17 @@ function PlantillasView({ emailTemplates, onChange, onSave, loading }) {
         >
           {loading ? 'Guardando...' : 'Guardar plantillas'}
         </button>
+      </div>
+
+      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700 mb-2">Variables disponibles para personalizar</p>
+        <div className="flex flex-wrap gap-2">
+          {availableVariables.map((variable) => (
+            <span key={variable} className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-mono text-blue-700">
+              {variable}
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-6">
