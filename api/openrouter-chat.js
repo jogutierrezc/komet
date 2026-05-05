@@ -5,20 +5,18 @@ export default async function handler(req, res) {
   }
 
   const body = req.body || {};
-  const apiKey = String(body.apiKey || '').trim();
+  const apiKey = String(body.apiKey || process.env.OPENROUTER_API_KEY || '').trim();
   const model = String(body.model || '').trim();
+  const models = Array.isArray(body.models) ? body.models.filter(Boolean) : [];
   const temperature = Number.isFinite(Number(body.temperature)) ? Number(body.temperature) : 0.7;
   const messages = Array.isArray(body.messages) ? body.messages : [];
 
   if (!apiKey) {
-    res.status(400).json({ error: { message: 'missing_openrouter_api_key' } });
+    res.status(400).json({ error: { message: 'missing_openrouter_api_key (body.apiKey or OPENROUTER_API_KEY env)' } });
     return;
   }
 
-  if (!model) {
-    res.status(400).json({ error: { message: 'missing_model' } });
-    return;
-  }
+  const resolvedModel = model || (models.length ? 'openrouter/auto' : 'openrouter/auto');
 
   if (!messages.length) {
     res.status(400).json({ error: { message: 'missing_messages' } });
@@ -35,7 +33,8 @@ export default async function handler(req, res) {
         'X-Title': 'Komet'
       },
       body: JSON.stringify({
-        model,
+        model: resolvedModel,
+        models: models.length ? models : undefined,
         temperature,
         messages
       })

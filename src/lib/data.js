@@ -81,6 +81,7 @@ export async function runOpenRouterPrompt({
   }
 
   async function fetchDynamicFreeModels(trimmedKey) {
+    if (!trimmedKey) return [];
     try {
       const modelsResponse = await fetch('https://openrouter.ai/api/v1/models', {
         headers: {
@@ -104,6 +105,15 @@ export async function runOpenRouterPrompt({
     const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
 
     const callDirectOpenRouter = async () => {
+      if (!trimmedKey) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: { message: 'missing_openrouter_api_key_for_direct_fallback' } }),
+          text: async () => 'missing_openrouter_api_key_for_direct_fallback'
+        };
+      }
+
       return fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -141,13 +151,25 @@ export async function runOpenRouterPrompt({
     return proxyResponse;
   }
 
-  const trimmedKey = (apiKey || '').trim();
-  if (!trimmedKey) {
-    const authError = new Error('missing_openrouter_api_key');
-    authError.code = 'missing_openrouter_api_key';
-    throw authError;
+  async function requestOpenRouterAutoCompletion({ trimmedKey, freeModels, requestTemperature, messages }) {
+    const proxyResponse = await fetch('/api/openrouter-chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        apiKey: trimmedKey || undefined,
+        model: 'openrouter/auto',
+        models: freeModels,
+        temperature: requestTemperature,
+        messages
+      })
+    });
+
+    return proxyResponse;
   }
 
+  const trimmedKey = (apiKey || '').trim();
   const dynamicFreeModels = await fetchDynamicFreeModels(trimmedKey);
   const candidateModels = [...new Set([model, ...dynamicFreeModels, ...OPENROUTER_FREE_MODELS].filter(Boolean))];
 
@@ -163,6 +185,28 @@ export async function runOpenRouterPrompt({
       content: prompt || 'Responde: conexión OpenRouter verificada para Komet.'
     }
   ];
+
+  if (!candidateModels.length) {
+    const authError = new Error('No hay modelos gratuitos configurados para OpenRouter.');
+    authError.code = 'openrouter_free_models_not_configured';
+    throw authError;
+  }
+
+  // Prefer OpenRouter auto-routing constrained to free models.
+  const autoResponse = await requestOpenRouterAutoCompletion({
+    trimmedKey,
+    freeModels: candidateModels,
+    requestTemperature,
+    messages
+  });
+
+  if (autoResponse.ok) {
+    const autoPayload = await autoResponse.json();
+    return autoPayload?.choices?.[0]?.message?.content || '';
+  }
+
+  const autoErrorMessage = await extractErrorBody(autoResponse);
+  lastErrorMessage = autoErrorMessage || lastErrorMessage;
 
   for (const candidateModel of candidateModels) {
     const response = await requestOpenRouterCompletion({
