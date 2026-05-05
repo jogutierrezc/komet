@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:vercel": "vercel dev --listen 3001",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext .jsx --ext .js"
