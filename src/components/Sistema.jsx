@@ -24,7 +24,18 @@ import {
   Bot,
   Sliders,
 } from 'lucide-react';
-import { getSystemUsers, createSystemUser, updateSystemUser, deleteSystemUser, getSystemSettings, saveSystemSettings, getDbStatus } from '../lib/data';
+import {
+  getSystemUsers,
+  createSystemUser,
+  updateSystemUser,
+  deleteSystemUser,
+  getSystemSettings,
+  saveSystemSettings,
+  getDbStatus,
+  OPENROUTER_FREE_MODELS,
+  DEFAULT_SYSTEM_SETTINGS,
+  runOpenRouterPrompt
+} from '../lib/data';
 
 const initialUser = {
   full_name: '',
@@ -53,23 +64,7 @@ export default function Sistema() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [showUserForm, setShowUserForm] = useState(false);
   const [formUser, setFormUser] = useState(initialUser);
-  const [settings, setSettings] = useState({
-    resend_api_key: '',
-    resend_sender_email: '',
-    email_templates: {
-      student_completed_subject: '',
-      student_completed_body: '',
-      student_access_subject: '',
-      student_access_body: '',
-      professor_access_subject: '',
-      professor_access_body: '',
-      coordinator_access_subject: '',
-      coordinator_access_body: ''
-    },
-    openrouter_api_key: '',
-    openrouter_model: 'gpt-4o-mini',
-    openrouter_system_prompt: 'Eres un asistente administrativo para el sistema Komet, ayudas a generar mensajes de email y notificaciones operativas.'
-  });
+  const [settings, setSettings] = useState(DEFAULT_SYSTEM_SETTINGS);
 
   useEffect(() => {
     loadUsers();
@@ -139,7 +134,9 @@ export default function Sistema() {
   }
 
   async function handleSaveSettings(e) {
-    e.preventDefault();
+    if (e?.preventDefault) {
+      e.preventDefault();
+    }
     setErrorMessage('');
     setStatusMessage('');
     setConfigLoading(true);
@@ -258,7 +255,7 @@ export default function Sistema() {
       case 'api':
         return <ApiView />;
       case 'ia':
-        return <IaView settings={settings} onChange={handleConfigChange} />;
+        return <IaView settings={settings} onChange={handleConfigChange} onSave={handleSaveSettings} loading={configLoading} />;
       default:
         return (
           <div className="space-y-8 animate-in fade-in duration-700">
@@ -645,65 +642,143 @@ const ApiView = () => (
   </div>
 );
 
-const IaView = ({ settings, onChange }) => (
-  <div className="space-y-6 animate-in fade-in duration-500 max-w-4xl">
-    <div className="flex items-center gap-2">
-      <Bot className="text-indigo-600" size={28}/>
-      <h2 className="text-2xl font-bold text-gray-800">Configuración de Inteligencia Artificial</h2>
-    </div>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-gray-700">Modelo Principal</label>
-          <select
-            value={settings.openrouter_model}
-            onChange={(e) => onChange('openrouter_model', e.target.value)}
-            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option>gpt-4o-mini</option>
-            <option>gpt-4o</option>
-            <option>claude-3.5</option>
-            <option>gemini-1.5</option>
-          </select>
-        </div>
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-gray-700 flex items-center gap-2"><Sliders size={16}/> Creatividad (Temperature)</label>
-            <span className="text-indigo-600 font-bold">0.7</span>
+const IaView = ({ settings, onChange, onSave, loading }) => {
+  const [testLoading, setTestLoading] = useState(false);
+  const [testResult, setTestResult] = useState('');
+  const [testError, setTestError] = useState('');
+
+  async function handleTestConnection() {
+    setTestResult('');
+    setTestError('');
+    setTestLoading(true);
+    try {
+      const output = await runOpenRouterPrompt({
+        apiKey: settings.openrouter_api_key,
+        model: settings.openrouter_model,
+        systemPrompt: settings.openrouter_system_prompt,
+        temperature: settings.openrouter_temperature,
+        prompt: 'Genera una línea de confirmación indicando que OpenRouter está conectado para Komet.'
+      });
+      setTestResult(output || 'Conexión exitosa con OpenRouter.');
+    } catch (error) {
+      setTestError(error?.message || 'No se pudo validar la conexión con OpenRouter.');
+      console.error(error);
+    } finally {
+      setTestLoading(false);
+    }
+  }
+
+  const currentTemperature = Number(settings.openrouter_temperature ?? 0.7);
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500 max-w-5xl">
+      <div className="flex items-center gap-2">
+        <Bot className="text-indigo-600" size={28} />
+        <h2 className="text-2xl font-bold text-gray-800">Configuración de OpenRouter</h2>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Key size={16} /> API Key OpenRouter
+            </label>
+            <input
+              type="password"
+              value={settings.openrouter_api_key || ''}
+              onChange={(e) => onChange('openrouter_api_key', e.target.value)}
+              placeholder="sk-or-v1-..."
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-slate-500">Guarda aquí la API key para usar modelos gratuitos de OpenRouter (terminación :free).</p>
           </div>
-          <input type="range" className="w-full accent-indigo-600" />
+
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-gray-700">Modelo Gratuito</label>
+            <select
+              value={settings.openrouter_model || OPENROUTER_FREE_MODELS[0]}
+              onChange={(e) => onChange('openrouter_model', e.target.value)}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              {OPENROUTER_FREE_MODELS.map((modelName) => (
+                <option key={modelName} value={modelName}>{modelName}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-semibold text-gray-700 flex items-center gap-2"><Sliders size={16} /> Creatividad (Temperature)</label>
+              <span className="text-indigo-600 font-bold">{currentTemperature.toFixed(1)}</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={Number.isFinite(currentTemperature) ? currentTemperature : 0.7}
+              onChange={(e) => onChange('openrouter_temperature', Number(e.target.value))}
+              className="w-full accent-indigo-600"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-gray-700">System Prompt Base</label>
+            <textarea
+              value={settings.openrouter_system_prompt || ''}
+              onChange={(e) => onChange('openrouter_system_prompt', e.target.value)}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 h-32 text-sm"
+              placeholder="Eres un asistente experto en la plataforma KOMET..."
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={testLoading}
+              className="w-full border border-indigo-200 text-indigo-700 py-3 rounded-xl font-semibold hover:bg-indigo-50 transition-colors disabled:opacity-60"
+            >
+              {testLoading ? 'Probando...' : 'Probar conexión'}
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={loading}
+              className="w-full bg-slate-900 text-white py-3 rounded-xl font-semibold hover:bg-slate-800 transition-colors disabled:opacity-60"
+            >
+              {loading ? 'Guardando...' : 'Guardar configuración'}
+            </button>
+          </div>
         </div>
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-gray-700">System Prompt Base</label>
-          <textarea
-            value={settings.openrouter_system_prompt}
-            onChange={(e) => onChange('openrouter_system_prompt', e.target.value)}
-            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 h-32 text-sm"
-            placeholder="Eres un asistente experto en la plataforma KOMET..."
-          />
+
+        <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-8 rounded-2xl text-white flex flex-col gap-4 shadow-lg">
+          <div>
+            <h3 className="text-xl font-bold mb-2">Estado del Motor IA</h3>
+            <p className="text-indigo-100 text-sm opacity-90">Configura OpenRouter para centralizar el uso de IA en plantillas, notificaciones y automatizaciones futuras.</p>
+          </div>
+          <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 text-sm">
+            <p className="font-semibold mb-2">Modelos recomendados gratuitos</p>
+            <ul className="space-y-1 text-indigo-100">
+              {OPENROUTER_FREE_MODELS.slice(0, 3).map((modelName) => (
+                <li key={modelName}>{modelName}</li>
+              ))}
+            </ul>
+          </div>
+          {testResult && (
+            <div className="rounded-xl bg-emerald-100/95 text-emerald-900 p-4 text-sm">
+              {testResult}
+            </div>
+          )}
+          {testError && (
+            <div className="rounded-xl bg-rose-100/95 text-rose-900 p-4 text-sm break-words">
+              {testError}
+            </div>
+          )}
         </div>
       </div>
-      <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-8 rounded-2xl text-white flex flex-col justify-between shadow-lg">
-        <div>
-          <h3 className="text-xl font-bold mb-2">Estado del Motor IA</h3>
-          <p className="text-indigo-100 text-sm opacity-90">El motor de IA está optimizado y listo para procesar solicitudes de estudiantes y profesores.</p>
-        </div>
-        <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-xs uppercase tracking-wider font-bold">Consumo de Tokens</span>
-            <span className="text-xs">82% mensual</span>
-          </div>
-          <div className="w-full bg-white/20 h-2 rounded-full overflow-hidden">
-            <div className="bg-white h-full w-[82%]"></div>
-          </div>
-        </div>
-        <button className="bg-white text-indigo-700 font-bold py-3 rounded-xl hover:bg-indigo-50 transition-colors shadow-sm">
-          Recargar Créditos
-        </button>
-      </div>
     </div>
-  </div>
-);
+  );
+};
 
 function SidebarItem({ icon, label, active = false, onClick }) {
   return (

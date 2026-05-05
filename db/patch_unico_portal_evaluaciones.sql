@@ -244,16 +244,19 @@ as $portal_active_surveys$
       or (u.role not in ('student', 'professor') and lower(s.target_type) = lower(u.role))
   )
   left join public.campuses c on c.id = s.campus_id
-  where not exists (
-    select 1
-    from public.evaluations ev
-    where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
-      and (
-        ev.evaluator_user_id = u.user_id
-        or (u.role = 'student' and ev.student_id = u.user_id)
-        or (u.role = 'professor' and ev.tutor_id = u.user_id)
-      )
-  );
+  where
+    -- Solo encuestas del campus del usuario (o sin campus asignado = globales)
+    (s.campus_id = u.campus_id or s.campus_id is null)
+    and not exists (
+      select 1
+      from public.evaluations ev
+      where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
+        and (
+          ev.evaluator_user_id = u.user_id
+          or (u.role = 'student' and ev.student_id = u.user_id)
+          or (u.role = 'professor' and ev.tutor_id = u.user_id)
+        )
+    );
 $portal_active_surveys$;
 
 create or replace function public.portal_user_has_completed(user_code text, survey_id uuid, practice_center_id uuid default null)

@@ -2,7 +2,15 @@ import { supabase } from './supabaseClient';
 
 const SYSTEM_SETTINGS_KEY = 'komet_system';
 
-const DEFAULT_SYSTEM_SETTINGS = {
+export const OPENROUTER_FREE_MODELS = [
+  'google/gemma-2-9b-it:free',
+  'qwen/qwen-2.5-7b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
+  'deepseek/deepseek-r1-distill-qwen-7b:free',
+  'meta-llama/llama-3.3-8b-instruct:free'
+];
+
+export const DEFAULT_SYSTEM_SETTINGS = {
   resend_api_key: '',
   resend_sender_email: '',
   email_templates: {
@@ -16,9 +24,21 @@ const DEFAULT_SYSTEM_SETTINGS = {
     coordinator_access_body: 'Hola {{name}},\n\nYa puedes acceder a la evaluación de práctica desde el sistema: {{evaluation_link}}'
   },
   openrouter_api_key: '',
-  openrouter_model: 'gpt-4o-mini',
+  openrouter_model: OPENROUTER_FREE_MODELS[0],
+  openrouter_temperature: 0.7,
   openrouter_system_prompt: 'Eres un asistente administrativo para el sistema Komet, ayudas a generar mensajes de email y notificaciones operativas.'
 };
+
+function mergeSystemSettings(config = {}) {
+  return {
+    ...DEFAULT_SYSTEM_SETTINGS,
+    ...config,
+    email_templates: {
+      ...DEFAULT_SYSTEM_SETTINGS.email_templates,
+      ...(config?.email_templates || {})
+    }
+  };
+}
 
 export async function getSystemSettings(configKey = SYSTEM_SETTINGS_KEY) {
   const { data, error } = await supabase
@@ -28,18 +48,157 @@ export async function getSystemSettings(configKey = SYSTEM_SETTINGS_KEY) {
     .maybeSingle();
 
   if (error) throw error;
-  return data?.config_value || DEFAULT_SYSTEM_SETTINGS;
+  return mergeSystemSettings(data?.config_value || {});
 }
 
 export async function saveSystemSettings(settings, configKey = SYSTEM_SETTINGS_KEY) {
+  const normalizedSettings = mergeSystemSettings(settings);
   const { data, error } = await supabase
     .from('system_settings')
-    .upsert({ config_key: configKey, config_value: settings }, { onConflict: 'config_key' })
+    .upsert({ config_key: configKey, config_value: normalizedSettings }, { onConflict: 'config_key' })
     .select('config_value')
     .maybeSingle();
 
   if (error) throw error;
-  return data?.config_value || settings;
+  return mergeSystemSettings(data?.config_value || normalizedSettings);
+}
+
+export async function runOpenRouterPrompt({
+  apiKey,
+  model,
+  systemPrompt,
+  prompt,
+  temperature = 0.7
+}) {
+  async function extractErrorBody(response) {
+    try {
+      const payload = await response.json();
+      if (payload?.error?.message) return payload.error.message;
+      return JSON.stringify(payload || {});
+    } catch {
+      return await response.text();
+    }
+  }
+
+  async function fetchDynamicFreeModels(trimmedKey) {
+    try {
+      const modelsResponse = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: {
+          Authorization: `Bearer ${trimmedKey}`
+        }
+      });
+
+      if (!modelsResponse.ok) {
+        return [];
+      }
+
+      const payload = await modelsResponse.json();
+      const ids = Array.isArray(payload?.data) ? payload.data.map((item) => item?.id).filter(Boolean) : [];
+      return ids.filter((id) => String(id).includes(':free'));
+    } catch {
+      return [];
+    }
+  }
+
+  async function requestOpenRouterCompletion({ trimmedKey, candidateModel, requestTemperature, messages }) {
+    const proxyResponse = await fetch('/api/openrouter-chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        apiKey: trimmedKey,
+        model: candidateModel,
+        temperature: requestTemperature,
+        messages
+      })
+    });
+
+    // Vite dev server may return HTML 404 if /api is not served; fallback to direct OpenRouter.
+    if (proxyResponse.status === 404) {
+      const text = await proxyResponse.text();
+      const looksLikeHtml = String(text || '').toLowerCase().includes('<!doctype html>');
+
+      if (looksLikeHtml) {
+        const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
+
+        const directResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${trimmedKey}`,
+            'HTTP-Referer': browserOrigin,
+            'X-Title': 'Komet'
+          },
+          body: JSON.stringify({
+            model: candidateModel,
+            temperature: requestTemperature,
+            messages
+          })
+        });
+
+        return directResponse;
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ error: { message: text || 'openrouter_proxy_not_found' } }),
+        text: async () => text
+      };
+    }
+
+    return proxyResponse;
+  }
+
+  const trimmedKey = (apiKey || '').trim();
+  if (!trimmedKey) {
+    const authError = new Error('missing_openrouter_api_key');
+    authError.code = 'missing_openrouter_api_key';
+    throw authError;
+  }
+
+  const dynamicFreeModels = await fetchDynamicFreeModels(trimmedKey);
+  const candidateModels = [...new Set([model, ...dynamicFreeModels, ...OPENROUTER_FREE_MODELS].filter(Boolean))];
+
+  let lastErrorMessage = 'openrouter_request_failed';
+  const requestTemperature = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.7;
+  const messages = [
+    {
+      role: 'system',
+      content: systemPrompt || DEFAULT_SYSTEM_SETTINGS.openrouter_system_prompt
+    },
+    {
+      role: 'user',
+      content: prompt || 'Responde: conexión OpenRouter verificada para Komet.'
+    }
+  ];
+
+  for (const candidateModel of candidateModels) {
+    const response = await requestOpenRouterCompletion({
+      trimmedKey,
+      candidateModel,
+      requestTemperature,
+      messages
+    });
+
+    if (response.ok) {
+      const payload = await response.json();
+      return payload?.choices?.[0]?.message?.content || '';
+    }
+
+    const errorMessage = await extractErrorBody(response);
+    lastErrorMessage = errorMessage || lastErrorMessage;
+
+    const noEndpointError = response.status === 404 && String(errorMessage).toLowerCase().includes('no endpoints found');
+    if (!noEndpointError) {
+      break;
+    }
+  }
+
+  const requestError = new Error(lastErrorMessage || 'openrouter_request_failed');
+  requestError.code = 'openrouter_request_failed';
+  throw requestError;
 }
 
 export async function getDbStatus() {
@@ -217,6 +376,17 @@ export async function getCampuses() {
 
 export async function getConvenios() {
   const { data, error } = await supabase.from('convenios').select('*, campus:campus_id(name)').order('name');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getConveniosByCampus(campusId) {
+  if (!campusId) return getConvenios();
+  const { data, error } = await supabase
+    .from('convenios')
+    .select('*, campus:campus_id(name)')
+    .eq('campus_id', campusId)
+    .order('name');
   if (error) throw error;
   return data || [];
 }
@@ -656,6 +826,7 @@ function mapEvaluationItem(item) {
     target: item.dirigidoA || item.tipoPrograma || item.estado || 'Sin definir',
     person,
     questions,
+    rawAnswers: item.preguntas || {},
     questionCount: questions.length,
     scoreSummary,
     surveyDetails: {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getConvenios, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary } from '../lib/data';
+import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
   const [view, setView] = useState('login');
@@ -83,9 +83,12 @@ export default function PublicEvaluationPortal() {
     setIsLoading(false);
   };
 
+  // Carga centros solo cuando ya conocemos el campus del usuario
   useEffect(() => {
-    loadAvailableCenters();
-  }, []);
+    if (userData) {
+      loadAvailableCenters(userData.campus_id || null);
+    }
+  }, [userData]);
 
   useEffect(() => {
     if (!userData || !centers.length) return;
@@ -94,9 +97,9 @@ export default function PublicEvaluationPortal() {
     }
   }, [userData, centers]);
 
-  async function loadAvailableCenters() {
+  async function loadAvailableCenters(campusId) {
     try {
-      const data = await getConvenios();
+      const data = await getConveniosByCampus(campusId);
       setCenters(data);
     } catch (error) {
       console.error('Error cargando centros de práctica:', error);
