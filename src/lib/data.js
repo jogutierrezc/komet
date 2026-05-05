@@ -841,8 +841,14 @@ function normalizeStatus(value) {
 }
 
 function mapEvaluationItem(item) {
+  const respondentProgram =
+    item?.preguntas?._publicRespondent?.program ||
+    item?.preguntas?.program ||
+    item?.preguntas?.programa ||
+    null;
+
   const role = normalizeRole(item.dirigidoA || item.estado || item.tipoPrograma);
-  const program = normalizeProgram(item.tipoPrograma || item.student?.program || item.tutor?.specialty);
+  const program = normalizeProgram(item.tipoPrograma || item.student?.program || item.tutor?.specialty || respondentProgram);
   const center = normalizeCenter(item);
   const status = normalizeStatus(item.status || 'Pendiente');
   const person = item.student?.full_name || item.tutor?.full_name || item.titulo || 'Evaluación';
