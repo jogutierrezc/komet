@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { 
   ClipboardCheck, Rocket, Pencil, Plus, ChevronRight, Settings2, X, 
   CheckSquare, Type, ListTodo, Hash, Calendar, AlertCircle,
-  Star, Camera, PenTool, FileText, ArrowRightCircle, Trash2, ArrowUp, ArrowDown
+  Star, Camera, PenTool, FileText, ArrowRightCircle, Trash2, ArrowUp, ArrowDown, Link2
 } from 'lucide-react';
 import { getCampuses, getSurveys, createSurvey, updateSurvey } from '../lib/data';
 import EvaluacionesFormPreview from './EvaluacionesFormPreview';
@@ -14,6 +14,7 @@ export default function Evaluaciones() {
   const [centers, setCenters] = useState([]);
   const [loadingCenters, setLoadingCenters] = useState(false);
   const [loadingEvaluations, setLoadingEvaluations] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const [previewMode, setPreviewMode] = useState(false);
   const [previewSurvey, setPreviewSurvey] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
@@ -324,6 +325,17 @@ export default function Evaluaciones() {
     setPreviewMode(true);
   };
 
+  const handleCopyPublicLink = async (surveyId) => {
+    try {
+      const publicUrl = `${window.location.origin}/evaluacion-publica?survey=${surveyId}`;
+      await navigator.clipboard.writeText(publicUrl);
+      setStatusMessage('Enlace público copiado al portapapeles.');
+    } catch (error) {
+      console.error('No se pudo copiar el enlace público:', error);
+      setStatusMessage('No fue posible copiar el enlace. Intenta manualmente desde el navegador.');
+    }
+  };
+
   if (previewMode) {
     const surveyToPreview = previewSurvey || {
       title: newEval.titulo,
@@ -353,6 +365,7 @@ export default function Evaluaciones() {
           <div>
             <h1 className="text-2xl font-bold text-gray-800">Formularios de Evaluación</h1>
             <p className="text-gray-500 text-sm mt-1">Crea y gestiona cuestionarios de evaluación personalizados.</p>
+            {statusMessage ? <p className="text-emerald-700 text-xs mt-2 font-semibold">{statusMessage}</p> : null}
           </div>
           <button 
             onClick={() => setView('create')}
@@ -406,6 +419,15 @@ export default function Evaluaciones() {
                     className="text-blue-600 text-xs font-bold hover:underline"
                   >
                     Editar
+                  </button>
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCopyPublicLink(e.id);
+                    }}
+                    className="inline-flex items-center gap-1 text-indigo-600 text-xs font-bold hover:underline"
+                  >
+                    <Link2 size={12} /> Link público
                   </button>
                 </div>
               </div>

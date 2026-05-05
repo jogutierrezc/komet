@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary } from '../lib/data';
+import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getSurveyById } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
+  const [searchParams] = useSearchParams();
+  const sharedSurveyId = (searchParams.get('survey') || searchParams.get('sid') || '').trim();
   const [view, setView] = useState('login');
   const [userId, setUserId] = useState('');
   const [userData, setUserData] = useState(null);
+  const [sharedSurvey, setSharedSurvey] = useState(null);
+  const [publicRespondent, setPublicRespondent] = useState({
+    full_name: '',
+    academic_code: '',
+    program: ''
+  });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [surveys, setSurveys] = useState([]);
@@ -26,7 +35,62 @@ export default function PublicEvaluationPortal() {
     return description.replace(/(Escenario:\s*)([^·]+)/i, `$1${scenarioName}`);
   };
 
+  const mapTargetTypeToRole = (targetType = '') => {
+    const normalized = String(targetType || '').toLowerCase();
+    if (normalized.includes('profesor') || normalized.includes('docente')) return 'professor';
+    if (normalized.includes('estudiante')) return 'student';
+    if (normalized.includes('coordinador')) return 'coordinator';
+    return 'public';
+  };
+
   useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrapSharedSurvey() {
+      if (!sharedSurveyId) return;
+
+      setIsLoading(true);
+      setError('');
+
+      try {
+        const survey = await getSurveyById(sharedSurveyId);
+        if (!survey) {
+          if (!cancelled) {
+            setError('El enlace público no corresponde a una evaluación válida o fue desactivado.');
+            setView('login');
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setSharedSurvey(survey);
+          setSelectedSurvey(survey);
+          setSurveys([survey]);
+          const availableCenters = await loadAvailableCenters(survey.campus_id || null);
+          setSelectedCenterId(availableCenters?.[0]?.id || '');
+          setView('public-entry');
+        }
+      } catch (loadError) {
+        console.error('Error cargando encuesta pública por enlace:', loadError);
+        if (!cancelled) {
+          setError('No se pudo cargar la evaluación pública desde el enlace.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    bootstrapSharedSurvey();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sharedSurveyId]);
+
+  useEffect(() => {
+    if (sharedSurveyId) return;
     if (!userData) return;
 
     async function loadActiveSurveys() {
@@ -54,7 +118,7 @@ export default function PublicEvaluationPortal() {
     }
 
     loadActiveSurveys();
-  }, [userData, userId, selectedCenterId]);
+  }, [sharedSurveyId, userData, userId, selectedCenterId]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -85,25 +149,29 @@ export default function PublicEvaluationPortal() {
 
   // Carga centros solo cuando ya conocemos el campus del usuario
   useEffect(() => {
+    if (sharedSurveyId) return;
     if (userData) {
       loadAvailableCenters(userData.campus_id || null);
     }
-  }, [userData]);
+  }, [sharedSurveyId, userData]);
 
   useEffect(() => {
+    if (sharedSurveyId) return;
     if (!userData || !centers.length) return;
     if (!selectedCenterId) {
       setSelectedCenterId(userData.practice_center_id || centers[0]?.id || '');
     }
-  }, [userData, centers]);
+  }, [sharedSurveyId, userData, centers]);
 
   async function loadAvailableCenters(campusId) {
     try {
       const data = await getConveniosByCampus(campusId);
       setCenters(data);
+      return data;
     } catch (error) {
       console.error('Error cargando centros de práctica:', error);
       setCenters([]);
+      return [];
     }
   }
 
@@ -133,43 +201,68 @@ export default function PublicEvaluationPortal() {
         <EvaluacionesFormPreview
           survey={selectedSurvey}
           studentInfo={{
-            nombre: userData.full_name,
-            programaOrigen: userData.program,
-            role: userData.role === 'student' ? 'Estudiante' : userData.role === 'professor' ? 'Profesor' : capitalize(userData.role || ''),
-            escenario: centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name,
-            periodo: userData.started || userData.status || 'N/A'
+            nombre: sharedSurveyId ? publicRespondent.full_name : userData.full_name,
+            programaOrigen: sharedSurveyId ? publicRespondent.program : userData.program,
+            role: sharedSurveyId
+              ? capitalize(mapTargetTypeToRole(selectedSurvey?.target_type || 'public'))
+              : userData.role === 'student'
+              ? 'Estudiante'
+              : userData.role === 'professor'
+              ? 'Profesor'
+              : capitalize(userData.role || ''),
+            escenario: centers.find((center) => center.id === selectedCenterId)?.name || userData?.practice_center_name || userData?.campus_name,
+            periodo: sharedSurveyId ? 'Enlace público' : userData.started || userData.status || 'N/A'
           }}
-          onClose={() => setView('ready')}
+          onClose={() => setView(sharedSurveyId ? 'public-entry' : 'ready')}
           onSubmit={async (answers) => {
             if (!selectedSurvey) return;
             setIsSubmitting(true);
             try {
+              const responsePayload = {
+                ...(answers || {}),
+                _publicRespondent: sharedSurveyId
+                  ? {
+                      full_name: publicRespondent.full_name,
+                      academic_code: publicRespondent.academic_code,
+                      program: publicRespondent.program
+                    }
+                  : null,
+                _source: sharedSurveyId ? 'public_link' : 'authenticated_portal',
+                _survey_link_id: sharedSurveyId || null
+              };
+
               const createdEvaluation = await createEvaluationWithResponses(
                 {
                   survey_id: selectedSurvey.id,
-                  campus_id: selectedSurvey.campus_id || userData.campus_id || null,
-                  center_id: selectedCenterId || userData.practice_center_id || null,
-                  student_id: userData.role === 'student' ? userData.user_id : null,
-                  tutor_id: userData.role === 'professor' ? userData.user_id : null,
-                  evaluator_user_id: userData.user_id || null,
-                  evaluator_role: userData.role || null,
+                  campus_id: selectedSurvey.campus_id || userData?.campus_id || null,
+                  center_id: selectedCenterId || userData?.practice_center_id || null,
+                  student_id: sharedSurveyId ? null : userData.role === 'student' ? userData.user_id : null,
+                  tutor_id: sharedSurveyId ? null : userData.role === 'professor' ? userData.user_id : null,
+                  evaluator_user_id: sharedSurveyId ? null : userData.user_id || null,
+                  evaluator_role: sharedSurveyId ? mapTargetTypeToRole(selectedSurvey?.target_type || 'public') : userData.role || null,
                   status: 'Completada',
                   completed_at: new Date().toISOString(),
                   dirigidoA: selectedSurvey.target_type || 'Todos',
-                  estado: userData.role || null,
-                  periodoCorte: userData.started || userData.status || null,
-                  preguntas: answers || {},
-                  tipoPrograma: selectedSurvey.target_type || null,
+                  estado: sharedSurveyId ? 'public' : userData.role || null,
+                  periodoCorte: sharedSurveyId ? null : userData.started || userData.status || null,
+                  preguntas: responsePayload,
+                  tipoPrograma: sharedSurveyId ? publicRespondent.program || selectedSurvey.target_type || null : selectedSurvey.target_type || null,
                   titulo: selectedSurvey.title || null
                 },
-                [{ answers: answers || {} }]
+                [{ answers: responsePayload }]
               );
 
               const scoreSummary = calculateSurveyScoreSummary({
                 survey: selectedSurvey,
-                answers: answers || {}
+                answers: responsePayload
               });
               console.log('Puntajes calculados desde respuestas:', scoreSummary, createdEvaluation);
+
+              if (sharedSurveyId) {
+                setView('public-success');
+                setError('');
+                return;
+              }
 
               const activeSurveys = await getPortalActiveSurveysByCode(userId.trim(), selectedCenterId);
               setSurveys(activeSurveys);
@@ -203,6 +296,120 @@ export default function PublicEvaluationPortal() {
           >
             Volver
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'public-success') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-2xl w-full rounded-[2rem] border border-emerald-100 bg-white p-10 shadow-xl text-center">
+          <h2 className="text-3xl font-black text-emerald-700 mb-3">Evaluación enviada</h2>
+          <p className="text-slate-600 mb-8">
+            Gracias, tu evaluación fue registrada correctamente para el sitio de práctica seleccionado.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setView('public-entry');
+              setSelectedSurvey(sharedSurvey || selectedSurvey);
+            }}
+            className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-bold uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
+          >
+            Nueva respuesta
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'public-entry') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="w-full max-w-3xl rounded-[2rem] bg-white border border-slate-200 p-8 shadow-xl space-y-8">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-600">Enlace público</p>
+            <h1 className="text-3xl font-black text-slate-900 mt-2">Registro para evaluar sitio de práctica</h1>
+            <p className="text-slate-500 mt-2">Completa tus datos académicos y selecciona el sitio de práctica conforme al campus de la evaluación.</p>
+          </div>
+
+          {sharedSurvey ? (
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+              <p className="text-xs uppercase tracking-[0.2em] font-black text-slate-400 mb-1">Evaluación</p>
+              <p className="text-lg font-black text-slate-800">{sharedSurvey.title || 'Evaluación pública'}</p>
+              <p className="text-sm text-slate-500 mt-1">{sharedSurvey.description || 'Formulario de evaluación institucional.'}</p>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nombre del Estudiante</label>
+              <input
+                value={publicRespondent.full_name}
+                onChange={(e) => setPublicRespondent((prev) => ({ ...prev, full_name: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                placeholder="Nombre completo"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Código del Estudiante</label>
+              <input
+                value={publicRespondent.academic_code}
+                onChange={(e) => setPublicRespondent((prev) => ({ ...prev, academic_code: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                placeholder="Ej: A0123456"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Programa Académico</label>
+              <input
+                value={publicRespondent.program}
+                onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                placeholder="Ej: Enfermería"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Sitio de práctica a evaluar</label>
+              <select
+                value={selectedCenterId}
+                onChange={(e) => setSelectedCenterId(e.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
+              >
+                <option value="">Selecciona un sitio</option>
+                {centers.map((center) => (
+                  <option key={center.id} value={center.id}>{center.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {error ? (
+            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>
+          ) : null}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                if (!publicRespondent.full_name || !publicRespondent.academic_code || !publicRespondent.program) {
+                  setError('Debes completar nombre, código y programa para continuar.');
+                  return;
+                }
+                if (!selectedCenterId) {
+                  setError('Selecciona el sitio de práctica a evaluar.');
+                  return;
+                }
+                setError('');
+                setView('form');
+              }}
+              className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-black uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
+            >
+              Continuar al formulario
+            </button>
+          </div>
         </div>
       </div>
     );

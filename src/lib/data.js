@@ -101,6 +101,25 @@ export async function runOpenRouterPrompt({
   }
 
   async function requestOpenRouterCompletion({ trimmedKey, candidateModel, requestTemperature, messages }) {
+    const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
+
+    const callDirectOpenRouter = async () => {
+      return fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${trimmedKey}`,
+          'HTTP-Referer': browserOrigin,
+          'X-Title': 'Komet'
+        },
+        body: JSON.stringify({
+          model: candidateModel,
+          temperature: requestTemperature,
+          messages
+        })
+      });
+    };
+
     const proxyResponse = await fetch('/api/openrouter-chat', {
       method: 'POST',
       headers: {
@@ -116,36 +135,7 @@ export async function runOpenRouterPrompt({
 
     // Vite dev server may return HTML 404 if /api is not served; fallback to direct OpenRouter.
     if (proxyResponse.status === 404) {
-      const text = await proxyResponse.text();
-      const looksLikeHtml = String(text || '').toLowerCase().includes('<!doctype html>');
-
-      if (looksLikeHtml) {
-        const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
-
-        const directResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${trimmedKey}`,
-            'HTTP-Referer': browserOrigin,
-            'X-Title': 'Komet'
-          },
-          body: JSON.stringify({
-            model: candidateModel,
-            temperature: requestTemperature,
-            messages
-          })
-        });
-
-        return directResponse;
-      }
-
-      return {
-        ok: false,
-        status: 404,
-        json: async () => ({ error: { message: text || 'openrouter_proxy_not_found' } }),
-        text: async () => text
-      };
+      return callDirectOpenRouter();
     }
 
     return proxyResponse;
@@ -430,6 +420,18 @@ export async function getSurveys() {
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data || [];
+}
+
+export async function getSurveyById(surveyId) {
+  if (!surveyId) return null;
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('*')
+    .eq('id', surveyId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
 }
 
 export async function getPortalUserByCode(userCode) {
