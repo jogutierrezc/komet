@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
+import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
 
 const LOCAL_REPORT_KEY = 'komet_informe_html_v1';
 
@@ -144,6 +145,11 @@ function buildBarRow(label, value, max = 5) {
   `;
 }
 
+function scoreToText(value) {
+  if (typeof value !== 'number') return 'N/D';
+  return value.toFixed(2);
+}
+
 function parseNarrativeJson(rawText = '') {
   try {
     const parsed = JSON.parse(rawText);
@@ -179,8 +185,16 @@ function composeReportHtml({
   centerSummary,
   programSummary,
   improvements,
-  narrative
+  narrative,
+  informeOutput
 }) {
+  const metricasGlobales = informeOutput?.metricasGlobales || {};
+  const resumenPorCampus = informeOutput?.resumenPorCampus || [];
+  const resumenPorEscenario = informeOutput?.resumenPorEscenario || [];
+  const resumenPorPrograma = informeOutput?.resumenPorPrograma || [];
+  const preguntasCriticas = informeOutput?.preguntasCriticas || [];
+  const planesAccion = informeOutput?.planesAccion || [];
+
   const topCenters = centerSummary.slice(0, 10);
   const topPrograms = programSummary.slice(0, 10);
 
@@ -225,6 +239,109 @@ function composeReportHtml({
   const centerChartRowsHtml = topCenters.map((row) => buildBarRow(row.center, row.avgScore)).join('');
   const programChartRowsHtml = topPrograms.map((row) => buildBarRow(row.program, row.avgScore)).join('');
 
+  const sectionRowsHtml = (metricasGlobales.promediosPorSeccion || [])
+    .map(
+      (section) => `
+      <tr>
+        <td>${escapeHtml(section.seccion)}</td>
+        <td class="num">${scoreToText(section.promedio)}</td>
+        <td class="num">${section.totalRespuestas || 0}</td>
+        <td>${escapeHtml(section.interpretacion || '')}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const campusRowsHtml = resumenPorCampus
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.campus)}</td>
+        <td class="num">${item.totalEvaluaciones}</td>
+        <td class="num">${item.totalEscenarios}</td>
+        <td class="num">${item.totalProgramas}</td>
+        <td class="num">${scoreToText(item.promedioGlobal)}</td>
+        <td>${escapeHtml(item.escenarioDestacado || 'N/D')}</td>
+        <td>${escapeHtml(item.escenarioCritico || 'N/D')}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const escenarioRowsHtml = resumenPorEscenario
+    .slice(0, 15)
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.campus)}</td>
+        <td>${escapeHtml(item.escenario)}</td>
+        <td class="num">${item.totalEvaluaciones}</td>
+        <td class="num">${scoreToText(item.promedioGlobal)}</td>
+        <td>${escapeHtml(item.calificacionCualitativa)}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const programaRowsHtmlEngine = resumenPorPrograma
+    .slice(0, 15)
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.programa)}</td>
+        <td>${escapeHtml(item.tipoPrograma)}</td>
+        <td>${escapeHtml((item.campus || []).join(', ') || 'N/D')}</td>
+        <td class="num">${item.totalEvaluaciones}</td>
+        <td class="num">${scoreToText(item.promedioGlobal)}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const criticasRowsHtml = preguntasCriticas
+    .slice(0, 12)
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.preguntaId)}</td>
+        <td>${escapeHtml(item.seccion)}</td>
+        <td>${escapeHtml(item.texto)}</td>
+        <td class="num">${scoreToText(item.promedio)}</td>
+        <td>${escapeHtml((item.escenarios || []).join(', ') || 'N/D')}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const planesRowsHtml = planesAccion
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.seccion)}</td>
+        <td>${escapeHtml(item.problema)}</td>
+        <td>${escapeHtml(item.accionPropuesta)}</td>
+        <td>${escapeHtml(item.responsable)}</td>
+        <td>${escapeHtml(item.plazo)}</td>
+        <td>${escapeHtml(item.indicador)}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const fortalezasHtml = (informeOutput?.fortalezasIdentificadas || [])
+    .slice(0, 8)
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join('');
+
+  const oportunidadesHtml = (informeOutput?.oportunidadesMejora || [])
+    .slice(0, 10)
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join('');
+
+  const recomendacionesHtml = (informeOutput?.recomendaciones || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join('');
+
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -239,7 +356,10 @@ function composeReportHtml({
     .meta div { border: 1px solid #e2e8f0; padding: 8px 10px; border-radius: 8px; }
     h1 { font-size: 34px; margin: 6px 0 8px; font-family: 'Segoe UI', Tahoma, sans-serif; }
     h2 { margin-top: 26px; font-size: 18px; font-family: 'Segoe UI', Tahoma, sans-serif; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+    h3 { margin-top: 18px; font-size: 14px; font-family: 'Segoe UI', Tahoma, sans-serif; }
     p { line-height: 1.65; text-align: justify; }
+    ul { margin: 10px 0 18px; padding-left: 20px; }
+    li { margin-bottom: 6px; line-height: 1.5; }
     .kpis { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 12px 0 14px; }
     .kpi { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
     .kpi .label { font-size: 11px; text-transform: uppercase; color: #475569; font-weight: 700; letter-spacing: 0.06em; }
@@ -269,6 +389,8 @@ function composeReportHtml({
       <div><strong>Centro:</strong> ${escapeHtml(center)}</div>
       <div><strong>Fecha de generacion:</strong> ${escapeHtml(generatedAt)}</div>
       <div><strong>Total de evaluaciones:</strong> ${totalRows}</div>
+      <div><strong>Periodo consolidado:</strong> ${escapeHtml(informeOutput?.periodo || 'No definido')}</div>
+      <div><strong>Campus en corte:</strong> ${escapeHtml((metricasGlobales.campuses || []).join(', ') || 'No definido')}</div>
     </div>
 
     <div class="kpis">
@@ -279,9 +401,20 @@ function composeReportHtml({
 
     <h2>1. Resumen Ejecutivo</h2>
     <p>${escapeHtml(narrative.summary || 'El analisis muestra tendencias consistentes de desempeno entre centros de practica y programas, con oportunidades de mejora focalizadas en componentes de seguimiento y bienestar.')}</p>
+    <p>${escapeHtml(informeOutput?.analisisGeneral || '')}</p>
 
     <h2>2. Metodologia y Alcance</h2>
     <p>${escapeHtml(narrative.methodology || 'Se consolidaron evaluaciones completadas, filtradas por campus, rol, programa y centro. Se calcularon promedios globales y distribuciones por subgrupos para identificar brechas y prioridades de intervencion.')}</p>
+
+    <h3>2.1 Metricas globales del instrumento</h3>
+    <table>
+      <thead>
+        <tr><th>Seccion</th><th>Promedio</th><th>Respuestas</th><th>Interpretacion</th></tr>
+      </thead>
+      <tbody>
+        ${sectionRowsHtml || '<tr><td colspan="4">Sin datos de secciones para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
 
     <h2>3. Analisis Cuantitativo por Centro</h2>
     <table>
@@ -301,9 +434,19 @@ function composeReportHtml({
       </table>
     </div>
 
+    <h2>4. Analisis por Campus</h2>
+    <table>
+      <thead>
+        <tr><th>Campus</th><th>Evaluaciones</th><th>Escenarios</th><th>Programas</th><th>Promedio</th><th>Escenario destacado</th><th>Escenario critico</th></tr>
+      </thead>
+      <tbody>
+        ${campusRowsHtml || '<tr><td colspan="7">Sin datos por campus para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
+
     <div class="page-break"></div>
 
-    <h2>4. Analisis por Programa Academico</h2>
+    <h2>5. Analisis por Programa Academico</h2>
     <table>
       <thead>
         <tr><th>Programa</th><th>Evaluaciones</th><th>Promedio</th><th>Sitios vinculados</th></tr>
@@ -321,20 +464,55 @@ function composeReportHtml({
       </table>
     </div>
 
-    <h2>5. Aspectos de Mejora Priorizados</h2>
+    <h3>5.1 Resumen estructurado por programa</h3>
+    <table>
+      <thead><tr><th>Programa</th><th>Tipo</th><th>Campus</th><th>Evaluaciones</th><th>Promedio</th></tr></thead>
+      <tbody>${programaRowsHtmlEngine || '<tr><td colspan="5">Sin resumen por programa.</td></tr>'}</tbody>
+    </table>
+
+    <h2>6. Analisis por Escenario</h2>
+    <table>
+      <thead><tr><th>Campus</th><th>Escenario</th><th>Evaluaciones</th><th>Promedio</th><th>Interpretacion</th></tr></thead>
+      <tbody>${escenarioRowsHtml || '<tr><td colspan="5">Sin datos por escenario.</td></tr>'}</tbody>
+    </table>
+
+    <h2>7. Preguntas Criticas del Instrumento</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Seccion</th><th>Pregunta</th><th>Promedio</th><th>Escenarios</th></tr></thead>
+      <tbody>${criticasRowsHtml || '<tr><td colspan="5">No se detectaron preguntas criticas por debajo del umbral.</td></tr>'}</tbody>
+    </table>
+
+    <h2>8. Aspectos de Mejora Priorizados</h2>
     <table>
       <thead><tr><th>Aspecto</th><th>Menciones</th></tr></thead>
       <tbody>${improvementRowsHtml || '<tr><td colspan="2">No se detectaron aspectos por debajo del umbral configurado.</td></tr>'}</tbody>
     </table>
 
-    <h2>6. Interpretacion Cualitativa</h2>
+    <h2>9. Interpretacion Cualitativa</h2>
+    <p>${escapeHtml(narrative.quantitative || '')}</p>
     <p>${escapeHtml(narrative.qualitative || 'Las observaciones sugieren priorizar acciones de mejora en trazabilidad de compromisos, retroalimentacion por rol y estandarizacion operativa entre escenarios de practica.')}</p>
 
-    <h2>7. Plan 30-60-90 Dias</h2>
+    <h3>9.1 Fortalezas identificadas</h3>
+    <ul>${fortalezasHtml || '<li>No se reportaron fortalezas textuales en este corte.</li>'}</ul>
+
+    <h3>9.2 Oportunidades de mejora</h3>
+    <ul>${oportunidadesHtml || '<li>No se reportaron oportunidades de mejora textuales en este corte.</li>'}</ul>
+
+    <h2>10. Plan 30-60-90 Dias</h2>
     <p>${escapeHtml(narrative.actionPlan || '30 dias: validacion de brechas por centro y programa. 60 dias: implementacion de acciones formativas y ajustes operativos. 90 dias: evaluacion de impacto y cierre del ciclo con nuevo corte de medicion.')}</p>
 
-    <h2>8. Conclusiones</h2>
+    <h3>10.1 Plan de accion sugerido</h3>
+    <table>
+      <thead><tr><th>Seccion</th><th>Problema</th><th>Accion</th><th>Responsable</th><th>Plazo</th><th>Indicador</th></tr></thead>
+      <tbody>${planesRowsHtml || '<tr><td colspan="6">No se generaron planes de accion para este corte.</td></tr>'}</tbody>
+    </table>
+
+    <h3>10.2 Recomendaciones</h3>
+    <ul>${recomendacionesHtml || '<li>Sin recomendaciones para el filtro seleccionado.</li>'}</ul>
+
+    <h2>11. Conclusiones</h2>
     <p>${escapeHtml(narrative.conclusion || 'El informe confirma que la combinacion de analitica estructurada y lectura cualitativa permite orientar decisiones de calidad con mayor precision y seguimiento institucional.')}</p>
+    <p>${escapeHtml(informeOutput?.conclusiones || '')}</p>
 
     <div class="footer">Komet | Informe HTML local para visualizacion e impresion en tamano carta.</div>
   </div>
@@ -462,6 +640,19 @@ export default function Reportes() {
     const centerSummary = buildCenterSummary(filteredRows);
     const programSummary = buildProgramSummary(filteredRows);
     const improvements = buildImprovementSummary(filteredRows);
+    const informeOutput = generarInformeDesdeRows(filteredRows, {
+      filtros: {
+        campus: selectedCampus === 'Todos' ? undefined : [selectedCampus],
+        programas: selectedProgram === 'Todos' ? undefined : [selectedProgram],
+        escenarios: selectedCenter === 'Todos' ? undefined : [selectedCenter],
+        actores: selectedRole === 'Todos' ? undefined : [selectedRole]
+      },
+      configuracion: {
+        incluirRecomendaciones: true,
+        incluirPlanesMejora: true,
+        nivelDetalle: 'completo'
+      }
+    });
 
     const compactDataset = {
       filters: {
@@ -477,7 +668,16 @@ export default function Reportes() {
       },
       centers: centerSummary.slice(0, 15),
       programs: programSummary.slice(0, 15),
-      improvements
+      improvements,
+      secciones: (informeOutput.metricasGlobales?.promediosPorSeccion || []).map((sec) => ({
+        seccion: sec.seccion,
+        promedio: sec.promedio,
+        respuestas: sec.totalRespuestas,
+        interpretacion: sec.interpretacion
+      })),
+      resumenCampus: (informeOutput.resumenPorCampus || []).slice(0, 6),
+      preguntasCriticas: (informeOutput.preguntasCriticas || []).slice(0, 8),
+      recomendaciones: informeOutput.recomendaciones || []
     };
 
     let narrative = {
@@ -507,6 +707,7 @@ Requisitos:
 - Sin usar formato con dobles asteriscos.
 - Tono narrativo tecnico para minimo 3 paginas al imprimirse en carta junto a tablas y graficos.
 - No inventes datos fuera del dataset.
+- Incluye lectura de secciones del instrumento y analisis de riesgos por preguntas criticas.
 
 Dataset:
 ${JSON.stringify(compactDataset)}
@@ -540,7 +741,8 @@ ${JSON.stringify(compactDataset)}
       centerSummary,
       programSummary,
       improvements,
-      narrative
+      narrative,
+      informeOutput
     });
 
     localStorage.setItem(LOCAL_REPORT_KEY, html);
