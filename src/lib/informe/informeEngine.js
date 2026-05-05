@@ -5,6 +5,7 @@ import {
   calcularResumenPorPrograma,
   detectarPreguntasCriticas
 } from './metricasEngine';
+import { generarAnalisisNormativo, NIVELES_COMPLEJIDAD, normalizeComplexity, TEXTOS_NORMATIVOS } from './algoritmo0273';
 import { PREGUNTAS_INSTRUMENTO } from './instrumento';
 
 function normalizeText(value, fallback = '') {
@@ -326,6 +327,8 @@ export function generarInformeDesdeRows(rows = [], input = {}) {
   const recomendaciones = buildRecommendations(metricasGlobales, preguntasCriticas);
   const planesAccion = buildPlanesAccion(metricasGlobales, preguntasCriticas);
   const plan306090 = buildPlan306090(metricasGlobales, preguntasCriticas);
+  const nivelComplejidad = normalizeComplexity(input.configuracion?.nivelComplejidadEscenario || NIVELES_COMPLEJIDAD.ALTA);
+  const analisisNormativo = generarAnalisisNormativo(metricasGlobales, nivelComplejidad);
 
   const periodo = metricasGlobales.periodos.length
     ? metricasGlobales.periodos.join(', ')
@@ -350,6 +353,8 @@ export function generarInformeDesdeRows(rows = [], input = {}) {
     fortalezasIdentificadas: insights.fortalezasIdentificadas,
     oportunidadesMejora: insights.oportunidadesMejora,
     recomendaciones,
+    analisisNormativo,
+    textosNormativos: TEXTOS_NORMATIVOS,
     conclusiones:
       'Se recomienda mantener ciclos de medicion periodica y seguimiento de indicadores por seccion del instrumento para cerrar brechas de calidad.',
     planesAccion: input.configuracion?.incluirPlanesMejora === false ? [] : planesAccion,

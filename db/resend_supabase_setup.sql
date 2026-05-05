@@ -110,7 +110,11 @@ left join public.convenios cn on cn.id = t.convenio_id;
 
 -- Funcion con email incluido
 -- Mantiene compatibilidad con el frontend y habilita envio de confirmaciones
-create or replace function public.get_portal_user_by_code(user_code text)
+drop function if exists public.portal_user_has_completed(text, uuid, uuid);
+drop function if exists public.portal_active_surveys_by_code(text, uuid);
+drop function if exists public.get_portal_user_by_code(text);
+
+create function public.get_portal_user_by_code(user_code text)
 returns table(
   user_id uuid,
   role text,
@@ -134,4 +138,63 @@ from public.portal_users
 where coalesce(academic_code, '') = user_code
    or coalesce(document_number, '') = user_code
 limit 1;
+$$;
+
+-- Se recrean funciones dependientes para mantener compatibilidad RPC
+create or replace function public.portal_active_surveys_by_code(user_code text, practice_center_id uuid default null)
+returns table(
+  survey_id uuid,
+  title text,
+  description text,
+  target_type text,
+  questions jsonb,
+  campus_id uuid,
+  campus_name text
+)
+language sql stable
+as $$
+select
+  s.id,
+  s.title,
+  s.description,
+  s.target_type,
+  s.questions,
+  s.campus_id,
+  c.name as campus_name
+from public.get_portal_user_by_code(user_code) u
+join public.active_surveys s on (
+       lower(s.target_type) = 'todos'
+    or (u.role = 'student' and lower(s.target_type) = 'estudiante')
+    or (u.role = 'professor' and lower(s.target_type) in ('profesor', 'docente'))
+    or (u.role not in ('student','professor') and lower(s.target_type) = lower(u.role))
+)
+left join public.campuses c on c.id = s.campus_id
+where s.campus_id = u.campus_id
+  and not exists (
+    select 1
+    from public.evaluations ev
+    where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
+      and (
+        ev.evaluator_user_id = u.user_id
+        or (u.role = 'student' and ev.student_id = u.user_id)
+        or (u.role = 'professor' and ev.tutor_id = u.user_id)
+      )
+  );
+$$;
+
+create or replace function public.portal_user_has_completed(user_code text, survey_id uuid, practice_center_id uuid default null)
+returns boolean
+language sql stable
+as $$
+select exists(
+  select 1
+  from public.get_portal_user_by_code(user_code) u
+  join public.evaluations ev on ev.survey_id = survey_id
+  where ev.center_id = coalesce(practice_center_id, u.practice_center_id)
+    and (
+      ev.evaluator_user_id = u.user_id
+      or (u.role = 'student' and ev.student_id = u.user_id)
+      or (u.role = 'professor' and ev.tutor_id = u.user_id)
+    )
+);
 $$;

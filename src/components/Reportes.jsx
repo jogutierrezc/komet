@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
+import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
 import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
 
 const LOCAL_REPORT_KEY = 'komet_informe_html_v1';
@@ -215,6 +216,67 @@ function buildPlanRows(plan = []) {
     .join('');
 }
 
+function buildSectionDistributionSummary(metricasGlobales = {}) {
+  return (metricasGlobales.promediosPorSeccion || []).map((section) => ({
+    seccion: section.seccion,
+    promedio: section.promedio,
+    totalRespuestas: section.totalRespuestas || 0,
+    distribucion: section.distribucion || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  }));
+}
+
+function buildRoleDistributionSummary(rows = []) {
+  const roleMap = new Map();
+
+  rows.forEach((row) => {
+    const role = normalizeText(row.role || 'Sin rol');
+    const bucket = roleMap.get(role) || { role, total: 0, counts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+
+    (row.scoreSummary?.sectionScores || []).forEach((section) => {
+      const rounded = Math.round(Number(section.score || 0));
+      if (rounded >= 1 && rounded <= 5) {
+        bucket.counts[rounded] += 1;
+        bucket.total += 1;
+      }
+    });
+
+    roleMap.set(role, bucket);
+  });
+
+  return [...roleMap.values()].sort((a, b) => b.total - a.total);
+}
+
+function buildProgramDistributionSummary(rows = []) {
+  const programMap = new Map();
+
+  rows.forEach((row) => {
+    const program = resolveProgram(row);
+    const bucket = programMap.get(program) || { program, total: 0, counts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+
+    (row.scoreSummary?.sectionScores || []).forEach((section) => {
+      const rounded = Math.round(Number(section.score || 0));
+      if (rounded >= 1 && rounded <= 5) {
+        bucket.counts[rounded] += 1;
+        bucket.total += 1;
+      }
+    });
+
+    programMap.set(program, bucket);
+  });
+
+  return [...programMap.values()].sort((a, b) => b.total - a.total).slice(0, 10);
+}
+
+function buildDistributionCells(counts = {}, total = 0) {
+  return [1, 2, 3, 4, 5]
+    .map((score) => {
+      const count = counts?.[score] || 0;
+      const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+      return `<td class="num">${count} <span style="color:#64748b; font-size:10px;">(${pct}%)</span></td>`;
+    })
+    .join('');
+}
+
 function buildBarRow(label, value, max = 5) {
   const pct = Math.max(0, Math.min(100, (Number(value || 0) / max) * 100));
   return `
@@ -269,6 +331,7 @@ function composeReportHtml({
   role,
   program,
   center,
+  filteredRows,
   generatedAt,
   globalScore,
   completionRate,
@@ -288,11 +351,16 @@ function composeReportHtml({
   const preguntasCriticas = informeOutput?.preguntasCriticas || [];
   const planesAccion = informeOutput?.planesAccion || [];
   const plan306090 = informeOutput?.plan306090 || { dias30: [], dias60: [], dias90: [] };
+  const analisisNormativo = informeOutput?.analisisNormativo || null;
+  const textosNormativos = informeOutput?.textosNormativos || {};
 
   const topCenters = centerSummary.slice(0, 10);
   const topPrograms = programSummary.slice(0, 10);
   const topRoles = roleSummary.slice(0, 10);
   const topEvaluados = evaluatedSummary.slice(0, 12);
+  const sectionDistribution = buildSectionDistributionSummary(metricasGlobales);
+  const roleDistribution = buildRoleDistributionSummary(filteredRows).slice(0, 10);
+  const programDistribution = buildProgramDistributionSummary(filteredRows);
 
   const centerRowsHtml = topCenters
     .map(
@@ -378,6 +446,43 @@ function composeReportHtml({
       </tr>
     `;
       }
+    )
+    .join('');
+
+  const sectionDistributionRowsHtml = sectionDistribution
+    .map(
+      (section) => `
+      <tr>
+        <td>${escapeHtml(section.seccion)}</td>
+        <td class="num">${scoreToText(section.promedio)}</td>
+        ${buildDistributionCells(section.distribucion, section.totalRespuestas)}
+        <td class="num">${section.totalRespuestas}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const roleDistributionRowsHtml = roleDistribution
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.role)}</td>
+        ${buildDistributionCells(item.counts, item.total)}
+        <td class="num">${item.total}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const programDistributionRowsHtml = programDistribution
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.program)}</td>
+        ${buildDistributionCells(item.counts, item.total)}
+        <td class="num">${item.total}</td>
+      </tr>
+    `
     )
     .join('');
 
@@ -469,6 +574,18 @@ function composeReportHtml({
 
   const recomendacionesHtml = (informeOutput?.recomendaciones || [])
     .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join('');
+
+  const hallazgosNormativosHtml = (analisisNormativo?.hallazgos || [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.eje)}</td>
+        <td>${escapeHtml(item.estado)}</td>
+        <td>${escapeHtml(item.detalle)}</td>
+      </tr>
+    `
+    )
     .join('');
 
   const centerBest = topCenters[0];
@@ -565,6 +682,28 @@ function composeReportHtml({
       </tbody>
     </table>
 
+    <h3>2.2 Lectura normativa MEN 00273 de 2021</h3>
+    <p>${escapeHtml(textosNormativos.INTRO_ALGORITMO || '')}</p>
+    <p>${escapeHtml(analisisNormativo?.veredictoTecnico || '')}</p>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Nivel de complejidad</div><div class="value">${escapeHtml(analisisNormativo?.nivelComplejidadEvaluado || 'ALTA')}</div></div>
+      <div class="kpi"><div class="label">Cumplimiento normativo</div><div class="value">${typeof analisisNormativo?.porcentajeCumplimiento === 'number' ? `${analisisNormativo.porcentajeCumplimiento.toFixed(2)}%` : 'N/D'}</div></div>
+      <div class="kpi"><div class="label">Hallazgos tecnicos</div><div class="value">${(analisisNormativo?.hallazgos || []).length}</div></div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Eje</th><th>Estado</th><th>Detalle tecnico</th></tr>
+      </thead>
+      <tbody>
+        ${hallazgosNormativosHtml || '<tr><td colspan="3">No se detectaron brechas normativas con los parametros seleccionados.</td></tr>'}
+      </tbody>
+    </table>
+
+    <p>${escapeHtml(textosNormativos.CRITERIO_CAPACIDAD || '')}</p>
+    <p>${escapeHtml(textosNormativos.CRITERIO_SEGURIDAD || '')}</p>
+    <p>${escapeHtml(analisisNormativo?.recomendacionEstrategica || '')}</p>
+
     <h2>3. Analisis Cuantitativo por Centro</h2>
     <table>
       <thead>
@@ -600,6 +739,36 @@ function composeReportHtml({
       </thead>
       <tbody>
         ${evaluatedRowsHtml || '<tr><td colspan="7">Sin datos por evaluado para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
+
+    <h3>3.3 Distribucion detallada de calificaciones por seccion</h3>
+    <table>
+      <thead>
+        <tr><th>Seccion</th><th>Promedio</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>Total</th></tr>
+      </thead>
+      <tbody>
+        ${sectionDistributionRowsHtml || '<tr><td colspan="8">Sin distribuciones por seccion para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
+
+    <h3>3.4 Distribucion de resultados por rol evaluador</h3>
+    <table>
+      <thead>
+        <tr><th>Rol</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>Total</th></tr>
+      </thead>
+      <tbody>
+        ${roleDistributionRowsHtml || '<tr><td colspan="7">Sin distribucion por roles para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
+
+    <h3>3.5 Distribucion de resultados por programa</h3>
+    <table>
+      <thead>
+        <tr><th>Programa</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>Total</th></tr>
+      </thead>
+      <tbody>
+        ${programDistributionRowsHtml || '<tr><td colspan="7">Sin distribucion por programa para el filtro seleccionado.</td></tr>'}
       </tbody>
     </table>
 
@@ -716,6 +885,7 @@ export default function Reportes() {
   const [selectedRole, setSelectedRole] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
   const [selectedCenter, setSelectedCenter] = useState('Todos');
+  const [selectedComplexity, setSelectedComplexity] = useState(NIVELES_COMPLEJIDAD.ALTA);
   const [reportHtml, setReportHtml] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -840,7 +1010,8 @@ export default function Reportes() {
       configuracion: {
         incluirRecomendaciones: true,
         incluirPlanesMejora: true,
-        nivelDetalle: 'completo'
+        nivelDetalle: 'completo',
+        nivelComplejidadEscenario: selectedComplexity
       }
     });
 
@@ -865,13 +1036,43 @@ export default function Reportes() {
         seccion: sec.seccion,
         promedio: sec.promedio,
         respuestas: sec.totalRespuestas,
-        interpretacion: sec.interpretacion
+        interpretacion: sec.interpretacion,
+        distribucion: sec.distribucion || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
       })),
+      distribucionRoles: buildRoleDistributionSummary(filteredRows).slice(0, 10),
+      distribucionProgramas: buildProgramDistributionSummary(filteredRows),
       resumenCampus: (informeOutput.resumenPorCampus || []).slice(0, 6),
       preguntasCriticas: (informeOutput.preguntasCriticas || []).slice(0, 8),
       recomendaciones: informeOutput.recomendaciones || [],
-      plan306090: informeOutput.plan306090 || { dias30: [], dias60: [], dias90: [] }
+      plan306090: informeOutput.plan306090 || { dias30: [], dias60: [], dias90: [] },
+      analisisNormativo: informeOutput.analisisNormativo || null
     };
+
+    const systemPrompt = `
+  Eres un coordinador institucional experto en relacion docencia-servicio, aseguramiento de la calidad y evaluacion de escenarios de practica en educacion superior colombiana.
+
+  Tu tarea es redactar la narrativa de un informe tecnico institucional con lenguaje profesional, criterio analitico y enfoque directivo.
+
+  Reglas obligatorias:
+  - Usa exclusivamente la evidencia entregada en el dataset.
+  - No inventes cifras, porcentajes, causas, tendencias ni actores no presentes en los datos.
+  - Integra lectura cuantitativa, comparativa y normativa.
+  - Analiza variaciones entre centros, programas, roles evaluadores, evaluados y distribuciones de calificaciones.
+  - Interpreta la distribucion de puntajes de 1 a 5 como evidencia de dispersion, concentracion, estabilidad o riesgo.
+  - Explica brechas relevantes, posibles implicaciones institucionales y prioridades de intervencion.
+  - Relaciona los hallazgos con el marco de calidad de la Resolucion 00273 de 2021 y, cuando aplique, con el Decreto 2376 de 2010.
+  - Manten un tono sobrio, tecnico y ejecutivo; evita frases genericas, promocionales o vacias.
+  - No uses markdown.
+  - Debes responder solo con JSON valido siguiendo exactamente la estructura solicitada por el usuario.
+
+  Contenido esperado por seccion:
+  - summary: sintesis ejecutiva con hallazgos principales, brechas y nivel de desempeno general.
+  - methodology: alcance, filtros, enfoque analitico y como se interpretaron tablas, comparativos y distribuciones.
+  - quantitative: lectura detallada de promedios, dispersion, concentraciones de calificaciones y diferencias entre actores.
+  - qualitative: interpretacion institucional, riesgos, causas probables sustentadas en datos y lectura normativa.
+  - actionPlan: plan accionable con horizontes de 30, 60 y 90 dias, responsables tipo y criterios de seguimiento.
+  - conclusion: cierre ejecutivo con prioridad estrategica y siguiente paso institucional.
+    `.trim();
 
     let narrative = {
       summary: '',
@@ -902,7 +1103,10 @@ Requisitos:
 - No inventes datos fuera del dataset.
 - Incluye lectura de secciones del instrumento y analisis de riesgos por preguntas criticas.
 - Incluye comparativos claros entre roles evaluadores y entre evaluados (brechas, dispersion y hallazgos accionables).
+- Usa como insumo clave la distribucion de calificaciones por seccion, rol y programa para explicar concentraciones en puntajes bajos, medios o altos.
+- Cuando identifiques dispersion o polarizacion, explicala como un hallazgo operativo y no solo descriptivo.
 - En actionPlan incorpora acciones concretas por horizonte de 30, 60 y 90 dias.
+- Incorpora una lectura normativa basada en el Algoritmo 00273 de 2021 y relaciona los hallazgos con el nivel de complejidad ${selectedComplexity}.
 
 Dataset:
 ${JSON.stringify(compactDataset)}
@@ -911,9 +1115,7 @@ ${JSON.stringify(compactDataset)}
       const rawNarrative = await runOpenRouterPrompt({
         apiKey: settings?.openrouter_api_key,
         model: settings?.openrouter_model,
-        systemPrompt:
-          (settings?.openrouter_system_prompt || 'Eres analista institucional experto en docencia-servicio.') +
-          ' Debes entregar narrativa profesional para informes tecnicos.',
+        systemPrompt: [systemPrompt, settings?.openrouter_system_prompt].filter(Boolean).join('\n\n'),
         temperature: Number(settings?.openrouter_temperature ?? 0.6),
         prompt
       });
@@ -929,6 +1131,7 @@ ${JSON.stringify(compactDataset)}
       role: selectedRole,
       program: selectedProgram,
       center: selectedCenter,
+      filteredRows,
       generatedAt,
       globalScore,
       completionRate,
@@ -1088,6 +1291,16 @@ ${JSON.stringify(compactDataset)}
               {centerOptions.map((center) => (
                 <option key={center} value={center}>{center}</option>
               ))}
+            </select>
+          </label>
+
+          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
+            <FileText size={16} className="text-slate-400" />
+            <select className="w-full bg-transparent outline-none" value={selectedComplexity} onChange={(event) => setSelectedComplexity(event.target.value)}>
+              <option value={NIVELES_COMPLEJIDAD.ALTA}>Complejidad alta</option>
+              <option value={NIVELES_COMPLEJIDAD.MEDIA}>Complejidad media</option>
+              <option value={NIVELES_COMPLEJIDAD.BAJA}>Complejidad baja</option>
+              <option value={NIVELES_COMPLEJIDAD.NO_CLINICO}>No clinico</option>
             </select>
           </label>
         </div>
