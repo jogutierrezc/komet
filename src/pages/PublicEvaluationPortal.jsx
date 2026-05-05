@@ -14,8 +14,11 @@ export default function PublicEvaluationPortal() {
   const [publicRespondent, setPublicRespondent] = useState({
     full_name: '',
     academic_code: '',
+    document_number: '',
     program: ''
   });
+  const [selectedPublicRole, setSelectedPublicRole] = useState('');
+  const [publicStep, setPublicStep] = useState(1);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [surveys, setSurveys] = useState([]);
@@ -43,6 +46,25 @@ export default function PublicEvaluationPortal() {
     return 'public';
   };
 
+  const roleOptions = [
+    { id: 'student', label: 'Estudiante', icon: GraduationCap, color: 'text-blue-600' },
+    { id: 'professor', label: 'Profesor', icon: User, color: 'text-emerald-600' },
+    { id: 'coordinator', label: 'Coordinador', icon: UserCheck, color: 'text-indigo-600' }
+  ];
+
+  const roleLabel = (value = '') => {
+    if (value === 'student') return 'Estudiante';
+    if (value === 'professor') return 'Profesor';
+    if (value === 'coordinator') return 'Coordinador';
+    return capitalize(value || 'Publico');
+  };
+
+  const getCurrentAcademicPeriod = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    return `${year}-${now.getMonth() < 6 ? 'A' : 'B'}`;
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -68,6 +90,8 @@ export default function PublicEvaluationPortal() {
           setSurveys([survey]);
           const availableCenters = await loadAvailableCenters(survey.campus_id || null);
           setSelectedCenterId(availableCenters?.[0]?.id || '');
+          setSelectedPublicRole('');
+          setPublicStep(1);
           setView('public-entry');
         }
       } catch (loadError) {
@@ -204,14 +228,14 @@ export default function PublicEvaluationPortal() {
             nombre: sharedSurveyId ? publicRespondent.full_name : userData.full_name,
             programaOrigen: sharedSurveyId ? publicRespondent.program : userData.program,
             role: sharedSurveyId
-              ? capitalize(mapTargetTypeToRole(selectedSurvey?.target_type || 'public'))
+              ? roleLabel(selectedPublicRole || mapTargetTypeToRole(selectedSurvey?.target_type || 'public'))
               : userData.role === 'student'
               ? 'Estudiante'
               : userData.role === 'professor'
               ? 'Profesor'
               : capitalize(userData.role || ''),
             escenario: centers.find((center) => center.id === selectedCenterId)?.name || userData?.practice_center_name || userData?.campus_name,
-            periodo: sharedSurveyId ? 'Enlace público' : userData.started || userData.status || 'N/A'
+            periodo: sharedSurveyId ? getCurrentAcademicPeriod() : userData.started || userData.status || 'N/A'
           }}
           onClose={() => setView(sharedSurveyId ? 'public-entry' : 'ready')}
           onSubmit={async (answers) => {
@@ -222,9 +246,18 @@ export default function PublicEvaluationPortal() {
                 ...(answers || {}),
                 _publicRespondent: sharedSurveyId
                   ? {
+                      role: selectedPublicRole,
                       full_name: publicRespondent.full_name,
                       academic_code: publicRespondent.academic_code,
+                      document_number: publicRespondent.document_number,
                       program: publicRespondent.program
+                    }
+                  : null,
+                _publicContext: sharedSurveyId
+                  ? {
+                      period: getCurrentAcademicPeriod(),
+                      practice_center_id: selectedCenterId || null,
+                      practice_center_name: centers.find((center) => center.id === selectedCenterId)?.name || null
                     }
                   : null,
                 _source: sharedSurveyId ? 'public_link' : 'authenticated_portal',
@@ -239,14 +272,14 @@ export default function PublicEvaluationPortal() {
                   student_id: sharedSurveyId ? null : userData.role === 'student' ? userData.user_id : null,
                   tutor_id: sharedSurveyId ? null : userData.role === 'professor' ? userData.user_id : null,
                   evaluator_user_id: sharedSurveyId ? null : userData.user_id || null,
-                  evaluator_role: sharedSurveyId ? mapTargetTypeToRole(selectedSurvey?.target_type || 'public') : userData.role || null,
+                  evaluator_role: sharedSurveyId ? selectedPublicRole || mapTargetTypeToRole(selectedSurvey?.target_type || 'public') : userData.role || null,
                   status: 'Completada',
                   completed_at: new Date().toISOString(),
                   dirigidoA: selectedSurvey.target_type || 'Todos',
-                  estado: sharedSurveyId ? 'public' : userData.role || null,
-                  periodoCorte: sharedSurveyId ? null : userData.started || userData.status || null,
+                  estado: sharedSurveyId ? selectedPublicRole || 'public' : userData.role || null,
+                  periodoCorte: sharedSurveyId ? getCurrentAcademicPeriod() : userData.started || userData.status || null,
                   preguntas: responsePayload,
-                  tipoPrograma: sharedSurveyId ? publicRespondent.program || selectedSurvey.target_type || null : selectedSurvey.target_type || null,
+                  tipoPrograma: sharedSurveyId ? publicRespondent.program || null : selectedSurvey.target_type || null,
                   titulo: selectedSurvey.title || null
                 },
                 [{ answers: responsePayload }]
@@ -273,7 +306,7 @@ export default function PublicEvaluationPortal() {
               console.error('Error guardando la evaluación:', error);
               if (error?.code === 'already_evaluated_center' || error?.code === '23505') {
                 setError('Ya registraste una evaluación para este sitio de práctica. Solo se permite una evaluación por sitio y por rol.');
-                setView('ready');
+                setView(sharedSurveyId ? 'public-entry' : 'ready');
               } else {
                 setError('No fue posible registrar la evaluación. Intenta nuevamente.');
               }
@@ -314,6 +347,14 @@ export default function PublicEvaluationPortal() {
             onClick={() => {
               setView('public-entry');
               setSelectedSurvey(sharedSurvey || selectedSurvey);
+              setSelectedPublicRole('');
+              setPublicRespondent({
+                full_name: '',
+                academic_code: '',
+                document_number: '',
+                program: ''
+              });
+              setPublicStep(1);
             }}
             className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-bold uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
           >
@@ -342,72 +383,137 @@ export default function PublicEvaluationPortal() {
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nombre del Estudiante</label>
-              <input
-                value={publicRespondent.full_name}
-                onChange={(e) => setPublicRespondent((prev) => ({ ...prev, full_name: e.target.value }))}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                placeholder="Nombre completo"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Código del Estudiante</label>
-              <input
-                value={publicRespondent.academic_code}
-                onChange={(e) => setPublicRespondent((prev) => ({ ...prev, academic_code: e.target.value }))}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                placeholder="Ej: A0123456"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Programa Académico</label>
-              <input
-                value={publicRespondent.program}
-                onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program: e.target.value }))}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                placeholder="Ej: Enfermería"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Sitio de práctica a evaluar</label>
-              <select
-                value={selectedCenterId}
-                onChange={(e) => setSelectedCenterId(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
-              >
-                <option value="">Selecciona un sitio</option>
-                {centers.map((center) => (
-                  <option key={center.id} value={center.id}>{center.name}</option>
+          {publicStep === 1 ? (
+            <div className="space-y-5 animate-in fade-in slide-in-from-right-3 duration-300">
+              <p className="text-[11px] uppercase tracking-[0.2em] font-black text-slate-500">1. Selecciona el rol con el que evalúas</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {roleOptions.map((roleOption) => (
+                  <button
+                    key={roleOption.id}
+                    type="button"
+                    onClick={() => setSelectedPublicRole(roleOption.id)}
+                    className={`rounded-2xl border p-4 text-left transition-all ${selectedPublicRole === roleOption.id ? 'border-blue-600 bg-blue-50 shadow-md shadow-blue-100' : 'border-slate-200 hover:border-blue-200 hover:bg-slate-50'}`}
+                  >
+                    <roleOption.icon className={`w-6 h-6 mb-3 ${roleOption.color}`} />
+                    <p className="text-sm font-black text-slate-900">{roleOption.label}</p>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-left-3 duration-300">
+              <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700">
+                <p><span className="font-bold">Rol seleccionado:</span> {roleLabel(selectedPublicRole)}</p>
+                <p><span className="font-bold">Periodo:</span> {getCurrentAcademicPeriod()}</p>
+                <p><span className="font-bold">Escenario:</span> {centers.find((center) => center.id === selectedCenterId)?.name || 'Selecciona un sitio de práctica'}</p>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nombre completo</label>
+                <input
+                  value={publicRespondent.full_name}
+                  onChange={(e) => setPublicRespondent((prev) => ({ ...prev, full_name: e.target.value }))}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                  placeholder="Nombre completo"
+                />
+              </div>
+
+              {selectedPublicRole === 'student' ? (
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Código Académico</label>
+                  <input
+                    value={publicRespondent.academic_code}
+                    onChange={(e) => setPublicRespondent((prev) => ({ ...prev, academic_code: e.target.value }))}
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                    placeholder="Ej: A0123456"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">No. de Documento</label>
+                  <input
+                    value={publicRespondent.document_number}
+                    onChange={(e) => setPublicRespondent((prev) => ({ ...prev, document_number: e.target.value }))}
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                    placeholder="Ej: 1098765432"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Programa Académico</label>
+                <input
+                  value={publicRespondent.program}
+                  onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program: e.target.value }))}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                  placeholder="Ej: Enfermería"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Sitio de práctica a evaluar</label>
+                <select
+                  value={selectedCenterId}
+                  onChange={(e) => setSelectedCenterId(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
+                >
+                  <option value="">Selecciona un sitio</option>
+                  {centers.map((center) => (
+                    <option key={center.id} value={center.id}>{center.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           {error ? (
             <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>
           ) : null}
 
-          <div className="flex justify-end">
+          <div className="flex justify-between items-center gap-3">
+            {publicStep > 1 ? (
+              <button
+                type="button"
+                onClick={() => setPublicStep(1)}
+                className="rounded-[2rem] bg-slate-100 px-6 py-3 text-slate-700 font-bold uppercase tracking-[0.12em] hover:bg-slate-200 transition-all"
+              >
+                Volver
+              </button>
+            ) : <span />}
+
             <button
               type="button"
               onClick={() => {
-                if (!publicRespondent.full_name || !publicRespondent.academic_code || !publicRespondent.program) {
-                  setError('Debes completar nombre, código y programa para continuar.');
+                if (publicStep === 1) {
+                  if (!selectedPublicRole) {
+                    setError('Selecciona un rol para continuar.');
+                    return;
+                  }
+                  setError('');
+                  setPublicStep(2);
+                  return;
+                }
+
+                const needsAcademicCode = selectedPublicRole === 'student';
+                const idFieldOk = needsAcademicCode ? Boolean(publicRespondent.academic_code) : Boolean(publicRespondent.document_number);
+
+                if (!publicRespondent.full_name || !publicRespondent.program || !idFieldOk) {
+                  setError(needsAcademicCode
+                    ? 'Debes completar nombre, código académico y programa para continuar.'
+                    : 'Debes completar nombre, número de documento y programa para continuar.');
                   return;
                 }
                 if (!selectedCenterId) {
                   setError('Selecciona el sitio de práctica a evaluar.');
                   return;
                 }
+
                 setError('');
                 setView('form');
               }}
               className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-black uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
             >
-              Continuar al formulario
+              {publicStep === 1 ? 'Siguiente' : 'Continuar al formulario'}
             </button>
           </div>
         </div>

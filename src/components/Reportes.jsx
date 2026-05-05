@@ -13,6 +13,16 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function resolveProgram(row = {}) {
+  return normalizeText(
+    row.program ||
+      row.rawAnswers?._publicRespondent?.program ||
+      row.rawAnswers?.program ||
+      row.rawAnswers?.programa ||
+      'Sin programa'
+  );
+}
+
 function escapeHtml(value = '') {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -43,7 +53,7 @@ function buildCenterSummary(rows = []) {
     if (row.status === 'Completada') current.completed += 1;
     if (typeof score === 'number') current.scores.push(score);
 
-    const program = normalizeText(row.program || 'Sin programa');
+    const program = resolveProgram(row);
     const role = normalizeText(row.role || 'Sin rol');
 
     current.programs.set(program, (current.programs.get(program) || 0) + 1);
@@ -69,7 +79,7 @@ function buildProgramSummary(rows = []) {
   const map = new Map();
 
   rows.forEach((row) => {
-    const key = normalizeText(row.program || 'Sin programa');
+    const key = resolveProgram(row);
     const current =
       map.get(key) || {
         program: key,
@@ -381,22 +391,33 @@ export default function Reportes() {
   const campusOptions = useMemo(() => [...new Set(rows.map((row) => normalizeText(row.campus || 'Sin campus')))].sort(), [rows]);
   const roleOptions = useMemo(() => [...new Set(rows.map((row) => normalizeText(row.role || 'Sin rol')))].sort(), [rows]);
 
-  const baseRows = useMemo(() => {
+  const campusRows = useMemo(() => {
     return rows.filter((row) => {
       if (selectedCampus !== 'Todos' && normalizeText(row.campus) !== selectedCampus) return false;
+      return true;
+    });
+  }, [rows, selectedCampus]);
+
+  const roleRows = useMemo(() => {
+    return campusRows.filter((row) => {
       if (selectedRole !== 'Todos' && normalizeText(row.role) !== selectedRole) return false;
       return true;
     });
-  }, [rows, selectedCampus, selectedRole]);
+  }, [campusRows, selectedRole]);
 
   const programOptions = useMemo(() => {
-    return [...new Set(baseRows.map((row) => normalizeText(row.program || 'Sin programa')))].sort();
-  }, [baseRows]);
+    const options = [...new Set(campusRows.map((row) => resolveProgram(row)))].sort();
+    return options.sort((a, b) => {
+      if (a === 'Sin programa') return 1;
+      if (b === 'Sin programa') return -1;
+      return a.localeCompare(b);
+    });
+  }, [campusRows]);
 
   const centerOptions = useMemo(() => {
-    const scopedByProgram = baseRows.filter((row) => selectedProgram === 'Todos' || normalizeText(row.program || 'Sin programa') === selectedProgram);
+    const scopedByProgram = roleRows.filter((row) => selectedProgram === 'Todos' || resolveProgram(row) === selectedProgram);
     return [...new Set(scopedByProgram.map((row) => normalizeText(row.center || 'Sin sitio')))].sort();
-  }, [baseRows, selectedProgram]);
+  }, [roleRows, selectedProgram]);
 
   useEffect(() => {
     if (selectedProgram !== 'Todos' && !programOptions.includes(selectedProgram)) {
@@ -411,12 +432,12 @@ export default function Reportes() {
   }, [centerOptions, selectedCenter]);
 
   const filteredRows = useMemo(() => {
-    return baseRows.filter((row) => {
-      if (selectedProgram !== 'Todos' && normalizeText(row.program || 'Sin programa') !== selectedProgram) return false;
+    return roleRows.filter((row) => {
+      if (selectedProgram !== 'Todos' && resolveProgram(row) !== selectedProgram) return false;
       if (selectedCenter !== 'Todos' && normalizeText(row.center || 'Sin sitio') !== selectedCenter) return false;
       return true;
     });
-  }, [baseRows, selectedProgram, selectedCenter]);
+  }, [roleRows, selectedProgram, selectedCenter]);
 
   const globalScore = useMemo(() => {
     const scores = filteredRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number');

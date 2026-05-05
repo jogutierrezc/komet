@@ -841,13 +841,18 @@ function normalizeStatus(value) {
 }
 
 function mapEvaluationItem(item) {
+  const respondentRole =
+    item?.preguntas?._publicRespondent?.role ||
+    item?.preguntas?.role ||
+    null;
+
   const respondentProgram =
     item?.preguntas?._publicRespondent?.program ||
     item?.preguntas?.program ||
     item?.preguntas?.programa ||
     null;
 
-  const role = normalizeRole(item.dirigidoA || item.estado || item.tipoPrograma);
+  const role = normalizeRole(item.evaluator_role || respondentRole || item.estado || item.dirigidoA || item.tipoPrograma);
   const program = normalizeProgram(item.tipoPrograma || item.student?.program || item.tutor?.specialty || respondentProgram);
   const center = normalizeCenter(item);
   const status = normalizeStatus(item.status || 'Pendiente');
