@@ -60,16 +60,33 @@ function toLikertScore(value) {
   return null;
 }
 
+function wordSet(normalizedText) {
+  return new Set(normalizedText.split(' ').filter((w) => w.length > 3));
+}
+
+function jaccardSimilarity(textA, textB) {
+  const setA = wordSet(textA);
+  const setB = wordSet(textB);
+  if (!setA.size || !setB.size) return 0;
+  let intersectionCount = 0;
+  setA.forEach((w) => { if (setB.has(w)) intersectionCount++; });
+  const unionSize = setA.size + setB.size - intersectionCount;
+  return unionSize > 0 ? intersectionCount / unionSize : 0;
+}
+
 function buildQuestionMappings(questions = []) {
   const byQuestionId = new Map();
-  const byNormalizedText = new Map(
-    PREGUNTAS_INSTRUMENTO.map((item) => [normalizeComparableText(item.texto), item.id])
-  );
+  const instrumentNormalized = PREGUNTAS_INSTRUMENTO.map((item) => ({
+    id: item.id,
+    text: normalizeComparableText(item.texto)
+  }));
+  const byExactText = new Map(instrumentNormalized.map((item) => [item.text, item.id]));
 
   questions.forEach((question) => {
     const questionId = String(question?.id || '').trim();
     if (!questionId) return;
 
+    // 1. Direct instrument code in any field
     const fromCode =
       extractInstrumentCode(question?.id) ||
       extractInstrumentCode(question?.codigo) ||
@@ -87,9 +104,26 @@ function buildQuestionMappings(questions = []) {
     const questionText = normalizeComparableText(
       question?.label || question?.texto || question?.name || question?.title || ''
     );
+    if (!questionText) return;
 
-    if (questionText && byNormalizedText.has(questionText)) {
-      byQuestionId.set(questionId, byNormalizedText.get(questionText));
+    // 2. Exact normalized text match
+    if (byExactText.has(questionText)) {
+      byQuestionId.set(questionId, byExactText.get(questionText));
+      return;
+    }
+
+    // 3. Fuzzy word-overlap match (Jaccard >= 0.65)
+    let bestScore = 0;
+    let bestId = null;
+    for (const inst of instrumentNormalized) {
+      const score = jaccardSimilarity(questionText, inst.text);
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = inst.id;
+      }
+    }
+    if (bestScore >= 0.65 && bestId) {
+      byQuestionId.set(questionId, bestId);
     }
   });
 

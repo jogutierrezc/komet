@@ -909,7 +909,11 @@ function mapEvaluationItem(item) {
       title: item.survey?.title || item.titulo || 'Evaluación',
       description: item.survey?.description || '',
       target_type: item.survey?.target_type || item.dirigidoA || '',
-      questions: Array.isArray(item.survey?.questions) ? item.survey.questions : []
+      questions: Array.isArray(item.survey?.questions) && item.survey.questions.length
+        ? item.survey.questions
+        : Array.isArray(item.preguntas)
+        ? item.preguntas
+        : []
     }
   };
 }

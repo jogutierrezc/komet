@@ -125,6 +125,7 @@ export default function Evaluaciones() {
       tipo: type,
       label: type === 'instruction' ? 'Bloque de instrucciones' : `Nueva pregunta de ${type}`,
       instrucciones: '',
+      codigo: '',
       requerido: false,
       opciones: ['Sí', 'No'],
       logic: { active: false, whenValue: 'Sí', dependentId: null },
@@ -708,6 +709,17 @@ export default function Evaluaciones() {
                     onChange={e => updateQuestion(selectedQuestionId, 'label', e.target.value)}
                   />
                 </PropField>
+
+                {selectedQuestion.tipo !== 'section' && selectedQuestion.tipo !== 'instruction' && (
+                  <PropField label="Código instrumento (ej: AG1, PF3)">
+                    <input
+                      className="w-full border border-gray-200 rounded-2xl p-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 font-mono uppercase"
+                      placeholder="AG1, CI2, PF10…"
+                      value={selectedQuestion.codigo || ''}
+                      onChange={e => updateQuestion(selectedQuestionId, 'codigo', e.target.value.toUpperCase().trim())}
+                    />
+                  </PropField>
+                )}
 
                 {selectedQuestion.tipo !== 'section' && selectedQuestion.tipo !== 'instruction' && (
                   <label className="flex items-center gap-2 cursor-pointer">
