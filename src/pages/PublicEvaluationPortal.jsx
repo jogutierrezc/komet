@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getSurveyById } from '../lib/data';
+import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
   const [searchParams] = useSearchParams();
@@ -15,6 +15,7 @@ export default function PublicEvaluationPortal() {
     full_name: '',
     academic_code: '',
     document_number: '',
+    program_level: 'Pregrado',
     program: ''
   });
   const [selectedPublicRole, setSelectedPublicRole] = useState('');
@@ -26,6 +27,27 @@ export default function PublicEvaluationPortal() {
   const [centers, setCenters] = useState([]);
   const [selectedCenterId, setSelectedCenterId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [programOptions, setProgramOptions] = useState([]);
+
+  const normalizeProgramLevel = (value = '') => {
+    const normalized = String(value || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    if (normalized.startsWith('pre')) return 'pregrado';
+    if (normalized.startsWith('pos')) return 'posgrado';
+    return normalized;
+  };
+
+  const selectedCampusId = sharedSurveyId ? sharedSurvey?.campus_id || null : userData?.campus_id || null;
+
+  const filteredProgramOptions = programOptions.filter((item) => {
+    const level = normalizeProgramLevel(item.level);
+    const selectedLevel = normalizeProgramLevel(publicRespondent.program_level);
+    return !selectedLevel || level === selectedLevel;
+  });
 
   const capitalize = (value = '') => String(value)
     .split(/\s+/)
@@ -112,6 +134,43 @@ export default function PublicEvaluationPortal() {
       cancelled = true;
     };
   }, [sharedSurveyId]);
+
+  useEffect(() => {
+    if (!selectedCampusId) {
+      setProgramOptions([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPrograms() {
+      try {
+        const list = await getProgramsByCampus(selectedCampusId);
+        if (!cancelled) setProgramOptions(list);
+      } catch (programError) {
+        console.error('Error cargando programas del campus:', programError);
+        if (!cancelled) setProgramOptions([]);
+      }
+    }
+
+    loadPrograms();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCampusId]);
+
+  useEffect(() => {
+    const exists = filteredProgramOptions.some((item) => item.name === publicRespondent.program);
+    if (!exists) {
+      const nextProgram = filteredProgramOptions[0]?.name || '';
+      if (nextProgram === publicRespondent.program) return;
+      setPublicRespondent((prev) => ({
+        ...prev,
+        program: nextProgram
+      }));
+    }
+  }, [publicRespondent.program_level, filteredProgramOptions]);
 
   useEffect(() => {
     if (sharedSurveyId) return;
@@ -250,6 +309,7 @@ export default function PublicEvaluationPortal() {
                       full_name: publicRespondent.full_name,
                       academic_code: publicRespondent.academic_code,
                       document_number: publicRespondent.document_number,
+                      program_level: publicRespondent.program_level,
                       program: publicRespondent.program
                     }
                   : null,
@@ -279,7 +339,7 @@ export default function PublicEvaluationPortal() {
                   estado: sharedSurveyId ? selectedPublicRole || 'public' : userData.role || null,
                   periodoCorte: sharedSurveyId ? getCurrentAcademicPeriod() : userData.started || userData.status || null,
                   preguntas: responsePayload,
-                  tipoPrograma: sharedSurveyId ? publicRespondent.program || null : selectedSurvey.target_type || null,
+                  tipoPrograma: sharedSurveyId ? publicRespondent.program_level || null : selectedSurvey.target_type || null,
                   titulo: selectedSurvey.title || null
                 },
                 [{ answers: responsePayload }]
@@ -352,6 +412,7 @@ export default function PublicEvaluationPortal() {
                 full_name: '',
                 academic_code: '',
                 document_number: '',
+                program_level: 'Pregrado',
                 program: ''
               });
               setPublicStep(1);
@@ -441,13 +502,29 @@ export default function PublicEvaluationPortal() {
               )}
 
               <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nivel de Formación</label>
+                <select
+                  value={publicRespondent.program_level}
+                  onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program_level: e.target.value }))}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-blue-500"
+                >
+                  <option value="Pregrado">Pregrado</option>
+                  <option value="Posgrado">Posgrado</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Programa Académico</label>
-                <input
+                <select
                   value={publicRespondent.program}
                   onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                  placeholder="Ej: Enfermería"
-                />
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-blue-500"
+                >
+                  <option value="">Selecciona un programa</option>
+                  {filteredProgramOptions.map((program) => (
+                    <option key={program.id} value={program.name}>{program.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="md:col-span-2">
@@ -499,8 +576,8 @@ export default function PublicEvaluationPortal() {
 
                 if (!publicRespondent.full_name || !publicRespondent.program || !idFieldOk) {
                   setError(needsAcademicCode
-                    ? 'Debes completar nombre, código académico y programa para continuar.'
-                    : 'Debes completar nombre, número de documento y programa para continuar.');
+                    ? 'Debes completar nombre, código académico, nivel y programa para continuar.'
+                    : 'Debes completar nombre, número de documento, nivel y programa para continuar.');
                   return;
                 }
                 if (!selectedCenterId) {

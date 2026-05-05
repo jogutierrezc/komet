@@ -408,6 +408,26 @@ export async function getCampuses() {
   return data || [];
 }
 
+export async function getProgramsByCampus(campusId = null, level = null) {
+  let query = supabase
+    .from('programs')
+    .select('id,name,level,campus_id,campus:campus_id(name),is_active')
+    .eq('is_active', true)
+    .order('name');
+
+  if (campusId) {
+    query = query.eq('campus_id', campusId);
+  }
+
+  if (level) {
+    query = query.filter('level', 'ilike', String(level).trim());
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
 export async function getConvenios() {
   const { data, error } = await supabase.from('convenios').select('*, campus:campus_id(name)').order('name');
   if (error) throw error;
@@ -436,6 +456,28 @@ export async function createConvenio(convenio) {
   const { data, error } = await supabase.from('convenios').insert([payload]).select('*');
   if (error) throw error;
   return data;
+}
+
+export async function importConvenios(convenios = []) {
+  if (!Array.isArray(convenios) || !convenios.length) return [];
+
+  const payload = convenios.map((convenio) => ({
+    ...convenio,
+    photo_url: convenio.photo || convenio.photo_url || null,
+    campus_id: convenio.campus_id || null
+  }));
+
+  payload.forEach((item) => {
+    delete item.photo;
+  });
+
+  const { data, error } = await supabase
+    .from('convenios')
+    .insert(payload)
+    .select('*, campus:campus_id(name)');
+
+  if (error) throw error;
+  return data || [];
 }
 
 export async function updateConvenio(id, convenio) {

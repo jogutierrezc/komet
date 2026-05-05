@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { 
   ClipboardCheck, Rocket, Pencil, Plus, ChevronRight, Settings2, X, 
   CheckSquare, Type, ListTodo, Hash, Calendar, AlertCircle,
-  Star, Camera, PenTool, FileText, ArrowRightCircle, Trash2, ArrowUp, ArrowDown, Link2
+  Star, Camera, PenTool, FileText, ArrowRightCircle, Trash2, ArrowUp, ArrowDown, Link2, Copy
 } from 'lucide-react';
-import { getCampuses, getSurveys, createSurvey, updateSurvey } from '../lib/data';
+import { getCampuses, getProgramsByCampus, getSurveys, createSurvey, updateSurvey } from '../lib/data';
 import EvaluacionesFormPreview from './EvaluacionesFormPreview';
 
 export default function Evaluaciones() {
@@ -13,6 +13,8 @@ export default function Evaluaciones() {
   const [selectedSectionId, setSelectedSectionId] = useState(null);
   const [centers, setCenters] = useState([]);
   const [loadingCenters, setLoadingCenters] = useState(false);
+  const [loadingPrograms, setLoadingPrograms] = useState(false);
+  const [programs, setPrograms] = useState([]);
   const [loadingEvaluations, setLoadingEvaluations] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [previewMode, setPreviewMode] = useState(false);
@@ -23,6 +25,7 @@ export default function Evaluaciones() {
     titulo: 'Nueva Evaluación',
     campus: '',
     dirigidoA: 'Estudiante',
+    nivelPrograma: 'Pregrado',
     tipoPrograma: 'Pregrado',
     escenarioPractica: 'Todos',
     periodoCorte: 'A',
@@ -52,6 +55,14 @@ export default function Evaluaciones() {
     loadCampuses();
     loadSurveys();
   }, []);
+
+  useEffect(() => {
+    if (!newEval.campus) {
+      setPrograms([]);
+      return;
+    }
+    loadProgramsByCampus(newEval.campus);
+  }, [newEval.campus]);
 
   useEffect(() => {
     if (!newEval.escenarioPractica || !centers.length) return;
@@ -86,6 +97,30 @@ export default function Evaluaciones() {
       console.error('Error cargando encuestas:', error);
     } finally {
       setLoadingEvaluations(false);
+    }
+  }
+
+  async function loadProgramsByCampus(campusId) {
+    setLoadingPrograms(true);
+    try {
+      const data = await getProgramsByCampus(campusId);
+      setPrograms(data);
+
+      if (!data.length) return;
+
+      const selectedExists = data.some((program) => program.name === newEval.tipoPrograma);
+      if (!selectedExists) {
+        setNewEval((prev) => ({
+          ...prev,
+          tipoPrograma: data[0].name,
+          nivelPrograma: data[0].level || prev.nivelPrograma || 'Pregrado'
+        }));
+      }
+    } catch (error) {
+      console.error('Error cargando programas por campus:', error);
+      setPrograms([]);
+    } finally {
+      setLoadingPrograms(false);
     }
   }
 
@@ -254,19 +289,22 @@ export default function Evaluaciones() {
     setEditedEvaluation(null);
     setNewEval({
       titulo: 'Nueva Evaluación',
-      campus: 'Bucaramanga',
+      campus: centers[0]?.id || '',
       dirigidoA: 'Estudiante',
+      nivelPrograma: 'Pregrado',
       tipoPrograma: 'Pregrado',
       escenarioPractica: 'Todos',
       periodoCorte: 'A',
       preguntas: []
     });
+    setSelectedQuestionId(null);
+    setSelectedSectionId(null);
   };
 
   const handleSaveEvaluation = async () => {
     const surveyObject = {
       title: newEval.titulo,
-      description: `Programa: ${newEval.tipoPrograma} · Escenario: ${getScenarioName(newEval.escenarioPractica)} · Período: ${newEval.periodoCorte}`,
+      description: `Programa: ${newEval.tipoPrograma} · Nivel: ${newEval.nivelPrograma} · Escenario: ${getScenarioName(newEval.escenarioPractica)} · Período: ${newEval.periodoCorte}`,
       target_type: newEval.dirigidoA,
       questions: newEval.preguntas,
       campus_id: newEval.campus || null
@@ -306,6 +344,7 @@ export default function Evaluaciones() {
 
     const description = evaluation.description || '';
     const tipoProgramaMatch = description.match(/Programa:\s*([^·]+)/);
+    const nivelProgramaMatch = description.match(/Nivel:\s*([^·]+)/);
     const escenarioPracticaMatch = description.match(/Escenario:\s*([^·]+)/);
     const periodoCorteMatch = description.match(/Per[ií]odo:\s*(.+)$/);
 
@@ -313,11 +352,68 @@ export default function Evaluaciones() {
       titulo: evaluation.title || evaluation.titulo || 'Nueva Evaluación',
       campus: evaluation.campus_id || evaluation.campus || '',
       dirigidoA: evaluation.target_type || evaluation.dirigidoA || 'Estudiante',
+      nivelPrograma: nivelProgramaMatch ? nivelProgramaMatch[1].trim() : evaluation.nivelPrograma || 'Pregrado',
       tipoPrograma: tipoProgramaMatch ? tipoProgramaMatch[1].trim() : evaluation.tipoPrograma || 'Pregrado',
       escenarioPractica: escenarioPracticaMatch ? getScenarioIdByName(escenarioPracticaMatch[1].trim()) : evaluation.escenarioPractica || '',
       periodoCorte: periodoCorteMatch ? periodoCorteMatch[1].trim() : evaluation.periodoCorte || 'A',
       preguntas: evaluation.questions || evaluation.preguntas || []
     });
+    setSelectedQuestionId(null);
+    setSelectedSectionId(null);
+    setView('create');
+  };
+
+  const cloneQuestionTree = (questions = []) => {
+    const idMap = new Map();
+    questions.forEach((question) => {
+      const oldId = String(question?.id || '').trim();
+      if (!oldId) return;
+      idMap.set(oldId, createId());
+    });
+
+    return questions.map((question) => {
+      const oldId = String(question?.id || '').trim();
+      const newId = idMap.get(oldId) || createId();
+      const parentId = question?.parentId ? idMap.get(question.parentId) || null : null;
+      const sectionId = question?.sectionId ? idMap.get(question.sectionId) || null : null;
+      const logicDependentId = question?.logic?.dependentId ? idMap.get(question.logic.dependentId) || null : null;
+
+      return {
+        ...question,
+        id: newId,
+        parentId,
+        sectionId,
+        logic: {
+          ...(question.logic || { active: false, whenValue: 'Sí', dependentId: null }),
+          dependentId: logicDependentId
+        }
+      };
+    });
+  };
+
+  const handleDuplicateEvaluation = (evaluation) => {
+    const description = evaluation.description || '';
+    const tipoProgramaMatch = description.match(/Programa:\s*([^·]+)/);
+    const nivelProgramaMatch = description.match(/Nivel:\s*([^·]+)/);
+    const escenarioPracticaMatch = description.match(/Escenario:\s*([^·]+)/);
+    const periodoCorteMatch = description.match(/Per[ií]odo:\s*(.+)$/);
+
+    const duplicatedQuestions = cloneQuestionTree(evaluation.questions || evaluation.preguntas || []);
+
+    setEditedEvaluation(null);
+    setNewEval({
+      titulo: `${evaluation.title || evaluation.titulo || 'Nueva Evaluación'} (Copia)`,
+      campus: evaluation.campus_id || evaluation.campus || newEval.campus || '',
+      dirigidoA: evaluation.target_type || evaluation.dirigidoA || 'Estudiante',
+      nivelPrograma: nivelProgramaMatch ? nivelProgramaMatch[1].trim() : evaluation.nivelPrograma || 'Pregrado',
+      tipoPrograma: tipoProgramaMatch ? tipoProgramaMatch[1].trim() : evaluation.tipoPrograma || 'Pregrado',
+      escenarioPractica: escenarioPracticaMatch ? getScenarioIdByName(escenarioPracticaMatch[1].trim()) : evaluation.escenarioPractica || 'Todos',
+      periodoCorte: periodoCorteMatch ? periodoCorteMatch[1].trim() : evaluation.periodoCorte || 'A',
+      preguntas: duplicatedQuestions
+    });
+    setSelectedQuestionId(null);
+    setSelectedSectionId(null);
+    setStatusMessage('Modelo duplicado. Puedes ajustarlo y guardarlo como un nuevo formulario.');
     setView('create');
   };
 
@@ -420,6 +516,15 @@ export default function Evaluaciones() {
                     className="text-blue-600 text-xs font-bold hover:underline"
                   >
                     Editar
+                  </button>
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDuplicateEvaluation(e);
+                    }}
+                    className="inline-flex items-center gap-1 text-violet-600 text-xs font-bold hover:underline"
+                  >
+                    <Copy size={12} /> Duplicar
                   </button>
                   <button
                     onClick={(event) => {
@@ -562,17 +667,39 @@ export default function Evaluaciones() {
                   </div>
 
                   <div className="grid grid-cols-12 border-b border-gray-200">
-                    <div className="col-span-3 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">Tipo de Programa:</div>
+                    <div className="col-span-3 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">Programa Académico:</div>
                     <div className="col-span-9 px-3 py-1.5">
                       <select
                         className="w-full text-sm bg-white text-gray-700 outline-none"
                         value={newEval.tipoPrograma}
-                        onChange={e => setNewEval({ ...newEval, tipoPrograma: e.target.value })}
+                        onChange={e => {
+                          const selected = programs.find((program) => program.name === e.target.value);
+                          setNewEval({
+                            ...newEval,
+                            tipoPrograma: e.target.value,
+                            nivelPrograma: selected?.level || newEval.nivelPrograma || 'Pregrado'
+                          });
+                        }}
                       >
-                        <option value="Técnico">Técnico</option>
-                        <option value="Pregrado">Pregrado</option>
-                        <option value="Posgrado">Posgrado</option>
+                        {loadingPrograms ? (
+                          <option value="">Cargando programas...</option>
+                        ) : programs.length ? (
+                          programs.map((program) => (
+                            <option key={program.id} value={program.name}>
+                              {program.name} ({program.level || 'Pregrado'})
+                            </option>
+                          ))
+                        ) : (
+                          <option value="">No hay programas para este campus</option>
+                        )}
                       </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-12 border-b border-gray-200">
+                    <div className="col-span-3 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">Nivel:</div>
+                    <div className="col-span-9 px-3 py-2 text-sm font-semibold text-gray-700">
+                      {newEval.nivelPrograma || 'Pregrado'}
                     </div>
                   </div>
 

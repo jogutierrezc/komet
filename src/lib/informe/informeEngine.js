@@ -199,16 +199,82 @@ function buildRecommendations(metricasGlobales, preguntasCriticas = []) {
   return recomendaciones;
 }
 
-function buildPlanesAccion(preguntasCriticas = []) {
-  return preguntasCriticas.slice(0, 6).map((q) => ({
+function getPrioritizedFocus(metricasGlobales = {}, preguntasCriticas = []) {
+  const fromCriticas = preguntasCriticas.slice(0, 6).map((q) => ({
     seccion: q.seccion,
     problema: `${q.preguntaId}: ${q.texto}`,
-    accionPropuesta: `Diseñar e implementar accion correctiva focalizada para elevar el promedio por encima de 3.5.`,
-    responsable: 'Coordinacion Docencia-Servicio',
-    plazo: q.promedio < 2.5 ? 'inmediato' : q.promedio < 3 ? 'corto_plazo' : 'mediano_plazo',
     indicador: `Promedio de ${q.preguntaId} >= 3.5 en siguiente corte`,
-    escenario: q.escenarios[0] || undefined
+    prioridad: q.promedio < 2.5 ? 'alta' : q.promedio < 3 ? 'media' : 'moderada',
+    escenario: q.escenarios?.[0] || undefined
   }));
+
+  if (fromCriticas.length) return fromCriticas;
+
+  const fromSecciones = [...(metricasGlobales.promediosPorSeccion || [])]
+    .filter((sec) => sec.promedio !== null && sec.promedio !== undefined)
+    .sort((a, b) => (a.promedio || 0) - (b.promedio || 0))
+    .slice(0, 4)
+    .map((sec) => ({
+      seccion: sec.seccion,
+      problema: `Brecha de desempeno en ${sec.seccion}`,
+      indicador: `Promedio de seccion ${sec.seccion} >= 3.8 en el siguiente corte`,
+      prioridad: (sec.promedio || 0) < 3 ? 'alta' : 'media',
+      escenario: undefined
+    }));
+
+  if (fromSecciones.length) return fromSecciones;
+
+  return [
+    {
+      seccion: 'General',
+      problema: 'Seguimiento transversal de calidad Docencia-Servicio',
+      indicador: 'Incrementar el promedio global institucional en al menos 0.2 puntos',
+      prioridad: 'media',
+      escenario: undefined
+    }
+  ];
+}
+
+function buildPlanesAccion(metricasGlobales = {}, preguntasCriticas = []) {
+  const focus = getPrioritizedFocus(metricasGlobales, preguntasCriticas);
+
+  return focus.slice(0, 6).map((item) => ({
+    seccion: item.seccion,
+    problema: item.problema,
+    accionPropuesta: `Diseñar e implementar accion correctiva focalizada para elevar el desempeno de ${item.seccion}.`,
+    responsable: 'Coordinacion Docencia-Servicio',
+    plazo: item.prioridad === 'alta' ? 'inmediato' : item.prioridad === 'media' ? 'corto_plazo' : 'mediano_plazo',
+    indicador: item.indicador,
+    escenario: item.escenario
+  }));
+}
+
+function buildPlan306090(metricasGlobales = {}, preguntasCriticas = []) {
+  const focus = getPrioritizedFocus(metricasGlobales, preguntasCriticas);
+  const top = focus.slice(0, 3);
+
+  const dias30 = top.map((item) => ({
+    objetivo: `Diagnosticar y alinear brechas en ${item.seccion}`,
+    accion: `Socializar hallazgos, validar causas raiz y acordar linea base para ${item.problema.toLowerCase()}.`,
+    responsable: 'Coordinacion Docencia-Servicio',
+    indicador: `Plan de intervencion aprobado para ${item.seccion}`
+  }));
+
+  const dias60 = top.map((item) => ({
+    objetivo: `Implementar acciones en ${item.seccion}`,
+    accion: 'Ejecutar capacitaciones, ajustes de proceso y seguimiento quincenal por centro y programa.',
+    responsable: 'Comite Docencia-Servicio',
+    indicador: `Ejecucion >= 80% de actividades del plan en ${item.seccion}`
+  }));
+
+  const dias90 = top.map((item) => ({
+    objetivo: `Verificar impacto en ${item.seccion}`,
+    accion: 'Medir resultados, comparar contra linea base y consolidar cierre de ciclo con acciones sostenibles.',
+    responsable: 'Lideres de calidad por campus',
+    indicador: item.indicador
+  }));
+
+  return { dias30, dias60, dias90 };
 }
 
 function filterEvaluaciones(evaluaciones = [], filtros = {}) {
@@ -258,7 +324,8 @@ export function generarInformeDesdeRows(rows = [], input = {}) {
 
   const insights = collectInsights(evaluaciones);
   const recomendaciones = buildRecommendations(metricasGlobales, preguntasCriticas);
-  const planesAccion = buildPlanesAccion(preguntasCriticas);
+  const planesAccion = buildPlanesAccion(metricasGlobales, preguntasCriticas);
+  const plan306090 = buildPlan306090(metricasGlobales, preguntasCriticas);
 
   const periodo = metricasGlobales.periodos.length
     ? metricasGlobales.periodos.join(', ')
@@ -285,6 +352,7 @@ export function generarInformeDesdeRows(rows = [], input = {}) {
     recomendaciones,
     conclusiones:
       'Se recomienda mantener ciclos de medicion periodica y seguimiento de indicadores por seccion del instrumento para cerrar brechas de calidad.',
-    planesAccion: input.configuracion?.incluirPlanesMejora === false ? [] : planesAccion
+    planesAccion: input.configuracion?.incluirPlanesMejora === false ? [] : planesAccion,
+    plan306090
   };
 }

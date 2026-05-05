@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
 import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
@@ -132,6 +132,89 @@ function buildImprovementSummary(rows = []) {
     .slice(0, 10);
 }
 
+function buildRoleSummary(rows = []) {
+  const map = new Map();
+
+  rows.forEach((row) => {
+    const role = normalizeText(row.role || 'Sin rol');
+    const current =
+      map.get(role) || {
+        role,
+        total: 0,
+        completed: 0,
+        scores: []
+      };
+
+    const score = row.scoreSummary?.globalScore;
+    current.total += 1;
+    if (row.status === 'Completada') current.completed += 1;
+    if (typeof score === 'number') current.scores.push(score);
+    map.set(role, current);
+  });
+
+  return [...map.values()]
+    .map((item) => ({
+      role: item.role,
+      total: item.total,
+      completionRate: item.total ? Number(((item.completed / item.total) * 100).toFixed(1)) : 0,
+      avgScore: average(item.scores)
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+}
+
+function buildEvaluatedSummary(rows = []) {
+  const map = new Map();
+
+  rows.forEach((row) => {
+    const person = normalizeText(row.person || 'Evaluado sin nombre');
+    const role = normalizeText(row.role || 'Sin rol');
+    const key = `${person}||${role}`;
+    const current =
+      map.get(key) || {
+        person,
+        role,
+        center: normalizeText(row.center || 'Sin sitio'),
+        campus: normalizeText(row.campus || 'Sin campus'),
+        total: 0,
+        completed: 0,
+        scores: []
+      };
+
+    const score = row.scoreSummary?.globalScore;
+    current.total += 1;
+    if (row.status === 'Completada') current.completed += 1;
+    if (typeof score === 'number') current.scores.push(score);
+    map.set(key, current);
+  });
+
+  return [...map.values()]
+    .map((item) => ({
+      person: item.person,
+      role: item.role,
+      center: item.center,
+      campus: item.campus,
+      total: item.total,
+      completionRate: item.total ? Number(((item.completed / item.total) * 100).toFixed(1)) : 0,
+      avgScore: average(item.scores)
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+}
+
+function buildPlanRows(plan = []) {
+  return plan
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.objetivo || '')}</td>
+        <td>${escapeHtml(item.accion || '')}</td>
+        <td>${escapeHtml(item.responsable || '')}</td>
+        <td>${escapeHtml(item.indicador || '')}</td>
+      </tr>
+    `
+    )
+    .join('');
+}
+
 function buildBarRow(label, value, max = 5) {
   const pct = Math.max(0, Math.min(100, (Number(value || 0) / max) * 100));
   return `
@@ -192,6 +275,8 @@ function composeReportHtml({
   totalRows,
   centerSummary,
   programSummary,
+  roleSummary,
+  evaluatedSummary,
   improvements,
   narrative,
   informeOutput
@@ -202,9 +287,12 @@ function composeReportHtml({
   const resumenPorPrograma = informeOutput?.resumenPorPrograma || [];
   const preguntasCriticas = informeOutput?.preguntasCriticas || [];
   const planesAccion = informeOutput?.planesAccion || [];
+  const plan306090 = informeOutput?.plan306090 || { dias30: [], dias60: [], dias90: [] };
 
   const topCenters = centerSummary.slice(0, 10);
   const topPrograms = programSummary.slice(0, 10);
+  const topRoles = roleSummary.slice(0, 10);
+  const topEvaluados = evaluatedSummary.slice(0, 12);
 
   const centerRowsHtml = topCenters
     .map(
@@ -239,6 +327,35 @@ function composeReportHtml({
       <tr>
         <td>${escapeHtml(row.aspect)}</td>
         <td class="num">${row.mentions}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const roleRowsHtml = topRoles
+    .map(
+      (row) => `
+      <tr>
+        <td>${escapeHtml(row.role)}</td>
+        <td class="num">${row.total}</td>
+        <td class="num">${row.completionRate.toFixed(1)}%</td>
+        <td class="num">${row.avgScore.toFixed(2)}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const evaluatedRowsHtml = topEvaluados
+    .map(
+      (row) => `
+      <tr>
+        <td>${escapeHtml(row.person)}</td>
+        <td>${escapeHtml(row.role)}</td>
+        <td>${escapeHtml(row.campus)}</td>
+        <td>${escapeHtml(row.center)}</td>
+        <td class="num">${row.total}</td>
+        <td class="num">${row.completionRate.toFixed(1)}%</td>
+        <td class="num">${row.avgScore.toFixed(2)}</td>
       </tr>
     `
     )
@@ -354,6 +471,20 @@ function composeReportHtml({
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join('');
 
+  const centerBest = topCenters[0];
+  const centerWorst = topCenters[topCenters.length - 1];
+  const roleBest = topRoles[0];
+  const roleWorst = topRoles[topRoles.length - 1];
+
+  const comparativeNarrative = [
+    centerBest && centerWorst
+      ? `En el comparativo por centros, ${centerBest.center} presenta el mejor promedio (${scoreToText(centerBest.avgScore)}), mientras ${centerWorst.center} registra el menor (${scoreToText(centerWorst.avgScore)}), lo que sugiere una brecha operativa relevante entre escenarios.`
+      : 'No se dispone de suficientes centros con puntuacion para calcular brechas comparativas.',
+    roleBest && roleWorst
+      ? `Por rol evaluador, el desempeno promedio es mayor en ${roleBest.role} (${scoreToText(roleBest.avgScore)}) y menor en ${roleWorst.role} (${scoreToText(roleWorst.avgScore)}), por lo que se recomienda focalizar acompanamiento segun actor.`
+      : 'No se dispone de suficientes datos por rol para comparativos robustos.'
+  ].join(' ');
+
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -419,6 +550,7 @@ function composeReportHtml({
     <h2>1. Resumen Ejecutivo</h2>
     <p>${escapeHtml(narrative.summary || 'El analisis muestra tendencias consistentes de desempeno entre centros de practica y programas, con oportunidades de mejora focalizadas en componentes de seguimiento y bienestar.')}</p>
     <p>${escapeHtml(informeOutput?.analisisGeneral || '')}</p>
+    <p>${escapeHtml(comparativeNarrative)}</p>
 
     <h2>2. Metodologia y Alcance</h2>
     <p>${escapeHtml(narrative.methodology || 'Se consolidaron evaluaciones completadas, filtradas por campus, rol, programa y centro. Se calcularon promedios globales y distribuciones por subgrupos para identificar brechas y prioridades de intervencion.')}</p>
@@ -450,6 +582,26 @@ function composeReportHtml({
         <tbody>${centerChartRowsHtml || ''}</tbody>
       </table>
     </div>
+
+    <h3>3.1 Comparativo por rol evaluador</h3>
+    <table>
+      <thead>
+        <tr><th>Rol</th><th>Evaluaciones</th><th>Cumplimiento</th><th>Promedio</th></tr>
+      </thead>
+      <tbody>
+        ${roleRowsHtml || '<tr><td colspan="4">Sin datos por rol para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
+
+    <h3>3.2 Comparativo por evaluado</h3>
+    <table>
+      <thead>
+        <tr><th>Evaluado</th><th>Rol</th><th>Campus</th><th>Centro</th><th>Evaluaciones</th><th>Cumplimiento</th><th>Promedio</th></tr>
+      </thead>
+      <tbody>
+        ${evaluatedRowsHtml || '<tr><td colspan="7">Sin datos por evaluado para el filtro seleccionado.</td></tr>'}
+      </tbody>
+    </table>
 
     <h2>4. Analisis por Campus</h2>
     <table>
@@ -518,13 +670,31 @@ function composeReportHtml({
     <h2>10. Plan 30-60-90 Dias</h2>
     <p>${escapeHtml(narrative.actionPlan || '30 dias: validacion de brechas por centro y programa. 60 dias: implementacion de acciones formativas y ajustes operativos. 90 dias: evaluacion de impacto y cierre del ciclo con nuevo corte de medicion.')}</p>
 
-    <h3>10.1 Plan de accion sugerido</h3>
+    <h3>10.1 Hoja de ruta 30 dias</h3>
+    <table>
+      <thead><tr><th>Objetivo</th><th>Accion</th><th>Responsable</th><th>Indicador</th></tr></thead>
+      <tbody>${buildPlanRows(plan306090.dias30) || '<tr><td colspan="4">No se definieron acciones para 30 dias.</td></tr>'}</tbody>
+    </table>
+
+    <h3>10.2 Hoja de ruta 60 dias</h3>
+    <table>
+      <thead><tr><th>Objetivo</th><th>Accion</th><th>Responsable</th><th>Indicador</th></tr></thead>
+      <tbody>${buildPlanRows(plan306090.dias60) || '<tr><td colspan="4">No se definieron acciones para 60 dias.</td></tr>'}</tbody>
+    </table>
+
+    <h3>10.3 Hoja de ruta 90 dias</h3>
+    <table>
+      <thead><tr><th>Objetivo</th><th>Accion</th><th>Responsable</th><th>Indicador</th></tr></thead>
+      <tbody>${buildPlanRows(plan306090.dias90) || '<tr><td colspan="4">No se definieron acciones para 90 dias.</td></tr>'}</tbody>
+    </table>
+
+    <h3>10.4 Plan de accion sugerido</h3>
     <table>
       <thead><tr><th>Seccion</th><th>Problema</th><th>Accion</th><th>Responsable</th><th>Plazo</th><th>Indicador</th></tr></thead>
       <tbody>${planesRowsHtml || '<tr><td colspan="6">No se generaron planes de accion para este corte.</td></tr>'}</tbody>
     </table>
 
-    <h3>10.2 Recomendaciones</h3>
+    <h3>10.5 Recomendaciones</h3>
     <ul>${recomendacionesHtml || '<li>Sin recomendaciones para el filtro seleccionado.</li>'}</ul>
 
     <h2>11. Conclusiones</h2>
@@ -550,6 +720,7 @@ export default function Reportes() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState('');
   const [showCode, setShowCode] = useState(false);
+  const previewFrameRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -656,6 +827,8 @@ export default function Reportes() {
 
     const centerSummary = buildCenterSummary(filteredRows);
     const programSummary = buildProgramSummary(filteredRows);
+    const roleSummary = buildRoleSummary(filteredRows);
+    const evaluatedSummary = buildEvaluatedSummary(filteredRows);
     const improvements = buildImprovementSummary(filteredRows);
     const informeOutput = generarInformeDesdeRows(filteredRows, {
       filtros: {
@@ -685,6 +858,8 @@ export default function Reportes() {
       },
       centers: centerSummary.slice(0, 15),
       programs: programSummary.slice(0, 15),
+      roles: roleSummary,
+      evaluados: evaluatedSummary.slice(0, 15),
       improvements,
       secciones: (informeOutput.metricasGlobales?.promediosPorSeccion || []).map((sec) => ({
         seccion: sec.seccion,
@@ -694,7 +869,8 @@ export default function Reportes() {
       })),
       resumenCampus: (informeOutput.resumenPorCampus || []).slice(0, 6),
       preguntasCriticas: (informeOutput.preguntasCriticas || []).slice(0, 8),
-      recomendaciones: informeOutput.recomendaciones || []
+      recomendaciones: informeOutput.recomendaciones || [],
+      plan306090: informeOutput.plan306090 || { dias30: [], dias60: [], dias90: [] }
     };
 
     let narrative = {
@@ -725,6 +901,8 @@ Requisitos:
 - Tono narrativo tecnico para minimo 3 paginas al imprimirse en carta junto a tablas y graficos.
 - No inventes datos fuera del dataset.
 - Incluye lectura de secciones del instrumento y analisis de riesgos por preguntas criticas.
+- Incluye comparativos claros entre roles evaluadores y entre evaluados (brechas, dispersion y hallazgos accionables).
+- En actionPlan incorpora acciones concretas por horizonte de 30, 60 y 90 dias.
 
 Dataset:
 ${JSON.stringify(compactDataset)}
@@ -757,6 +935,8 @@ ${JSON.stringify(compactDataset)}
       totalRows: filteredRows.length,
       centerSummary,
       programSummary,
+      roleSummary,
+      evaluatedSummary,
       improvements,
       narrative,
       informeOutput
@@ -792,11 +972,32 @@ ${JSON.stringify(compactDataset)}
     popup.document.open();
     popup.document.write(html);
     popup.document.close();
-    popup.focus();
-    setTimeout(() => popup.print(), 350);
+
+    const runPrint = () => {
+      try {
+        popup.focus();
+        popup.print();
+      } catch {
+        // noop
+      }
+    };
+
+    popup.onload = () => setTimeout(runPrint, 250);
+    setTimeout(runPrint, 900);
   }
 
   function printReport() {
+    const iframeWindow = previewFrameRef.current?.contentWindow;
+    if (iframeWindow) {
+      try {
+        iframeWindow.focus();
+        iframeWindow.print();
+        return;
+      } catch {
+        // fallback below
+      }
+    }
+
     printHtml(reportHtml);
   }
 
@@ -844,7 +1045,7 @@ ${JSON.stringify(compactDataset)}
               <Download size={15} /> Guardar HTML
             </button>
             <button type="button" onClick={printReport} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Printer size={15} /> Imprimir Carta
+              <Printer size={15} /> Imprimir reporte HTML
             </button>
           </div>
         </div>
@@ -920,7 +1121,7 @@ ${JSON.stringify(compactDataset)}
         </div>
 
         {reportHtml ? (
-          <iframe title="Informe HTML" srcDoc={reportHtml} className="w-full min-h-[900px] rounded-2xl border border-slate-200 bg-white" />
+          <iframe ref={previewFrameRef} title="Informe HTML" srcDoc={reportHtml} className="w-full min-h-[900px] rounded-2xl border border-slate-200 bg-white" />
         ) : (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-slate-500 text-center">
             Genera el informe para guardar la plantilla HTML local y visualizarla aqui.

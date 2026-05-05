@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { 
   Plus, 
+  Upload,
+  Download,
   Eye, 
   Pencil, 
   Trash2, 
@@ -12,7 +14,8 @@ import {
   Rocket,
   ClipboardCheck
 } from 'lucide-react';
-import { getConvenios, getCampuses, createConvenio, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio } from '../lib/data';
+import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio } from '../lib/data';
+import { parseFile } from '../lib/importHelpers';
 
 export default function Convenios() {
   const [view, setView] = useState('list');
@@ -28,6 +31,8 @@ export default function Convenios() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [campusFilter, setCampusFilter] = useState('');
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef(null);
   const [formData, setFormData] = useState({
     name: '',
     type: 'IPS',
@@ -158,6 +163,138 @@ export default function Convenios() {
   };
 
   const filteredSites = campusFilter ? sites.filter((site) => site.campus_id === campusFilter) : sites;
+
+  const buildCampusResolver = () => {
+    const map = new Map();
+    campuses.forEach((campus) => {
+      map.set(String(campus.id).toLowerCase(), campus.id);
+      map.set(String(campus.name || '').trim().toLowerCase(), campus.id);
+    });
+    return map;
+  };
+
+  const normalizeStatus = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return 'activo';
+    if (['activo', 'active', '1', 'si', 'sí', 'true'].includes(normalized)) return 'activo';
+    if (['inactivo', 'inactive', '0', 'no', 'false'].includes(normalized)) return 'inactivo';
+    return 'activo';
+  };
+
+  const normalizeImportRows = (rows = []) => {
+    const campusResolver = buildCampusResolver();
+    const valid = [];
+    const issues = [];
+
+    rows.forEach((row, index) => {
+      const rowNum = index + 2;
+      const name = String(row?.name || row?.sitio || row?.convenio || '').trim();
+      const type = String(row?.type || row?.tipo || 'IPS').trim() || 'IPS';
+      const address = String(row?.address || row?.direccion || '').trim();
+      const photo_url = String(row?.photo_url || row?.photo || row?.foto || '').trim();
+      const status = normalizeStatus(row?.status || row?.estado);
+      const campusRaw = String(row?.campus_id || row?.campus || row?.campus_name || '').trim().toLowerCase();
+      const campus_id = campusResolver.get(campusRaw) || null;
+
+      if (!name) {
+        issues.push(`Fila ${rowNum}: falta el nombre del sitio.`);
+        return;
+      }
+
+      if (!address) {
+        issues.push(`Fila ${rowNum}: falta la direccion.`);
+        return;
+      }
+
+      if (!campus_id) {
+        issues.push(`Fila ${rowNum}: campus no reconocido (${row?.campus_id || row?.campus_name || row?.campus || 'vacio'}).`);
+        return;
+      }
+
+      valid.push({
+        name,
+        type,
+        address,
+        photo_url,
+        campus_id,
+        status
+      });
+    });
+
+    return { valid, issues };
+  };
+
+  const handleDownloadConveniosTemplate = () => {
+    const headers = ['name', 'type', 'address', 'campus_name', 'photo_url', 'status'];
+    const sampleRows = [
+      ['Clinica Santa Cruz', 'IPS', 'Cra 27 #45-12 Bucaramanga', 'Bucaramanga', '', 'activo'],
+      ['Hospital Universitario del Oriente', 'Hospital Universitario', 'Calle 100 #12-34 Cucuta', 'Cucuta', '', 'activo'],
+      ['Centro de Simulacion UDES Valledupar', 'Centros de Simulación', 'Av. Sierra Nevada #18-20 Valledupar', 'Valledupar', '', 'inactivo']
+    ];
+
+    const csv = [headers.join(','), ...sampleRows.map((row) => row.join(','))].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'plantilla_importar_convenios.csv';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    setStatusMessage('Plantilla CSV descargada. Puedes llenarla y luego importar.');
+    setErrorMessage('');
+  };
+
+  const triggerConveniosImport = () => {
+    importInputRef.current?.click();
+  };
+
+  const handleConveniosFileImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    setErrorMessage('');
+    setStatusMessage('');
+
+    try {
+      const parsedRows = await parseFile(file);
+      if (!parsedRows.length) {
+        setErrorMessage('El archivo no tiene filas para importar.');
+        return;
+      }
+
+      const { valid, issues } = normalizeImportRows(parsedRows);
+
+      if (!valid.length) {
+        setErrorMessage(`No se importaron convenios. ${issues.slice(0, 3).join(' ')}`);
+        return;
+      }
+
+      const inserted = await importConvenios(valid);
+      setSites((prev) => [...inserted, ...prev]);
+
+      // Recalcula resumen para convenios nuevos
+      const summaries = await Promise.all(inserted.map(async (convenio) => {
+        const summary = await getEvaluationSummaryByConvenio(convenio.id);
+        return [convenio.id, summary];
+      }));
+      setEvaluationSummaries((prev) => ({ ...prev, ...Object.fromEntries(summaries) }));
+
+      const issueHint = issues.length
+        ? ` Se omitieron ${issues.length} fila(s): ${issues.slice(0, 2).join(' ')}`
+        : '';
+      setStatusMessage(`Importacion completada. Se crearon ${inserted.length} sitio(s).${issueHint}`);
+    } catch (error) {
+      console.error('Error importando convenios:', error);
+      setErrorMessage('No fue posible importar el archivo. Verifica formato CSV y columnas requeridas.');
+    } finally {
+      event.target.value = '';
+      setImporting(false);
+    }
+  };
 
   const openConvenioDetail = async (convenio) => {
     setSelectedConvenio(convenio);
@@ -380,14 +517,50 @@ export default function Convenios() {
           <h1 className="text-2xl font-bold text-gray-800">Sitios de Práctica</h1>
           <p className="text-gray-500 text-sm mt-1">Gestiona los convenios y lugares donde tus estudiantes realizan sus prácticas.</p>
         </div>
-        <button 
-          onClick={() => setView('create')}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-500/20 transition-all active:scale-95"
-        >
-          <Plus size={18} />
-          Nuevo Sitio
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleDownloadConveniosTemplate}
+            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2.5 rounded-2xl font-medium text-sm inline-flex items-center gap-2"
+          >
+            <Download size={16} /> Plantilla CSV
+          </button>
+          <button
+            type="button"
+            onClick={triggerConveniosImport}
+            disabled={importing}
+            className="border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-4 py-2.5 rounded-2xl font-medium text-sm inline-flex items-center gap-2 disabled:opacity-70"
+          >
+            <Upload size={16} /> {importing ? 'Importando...' : 'Importar convenios'}
+          </button>
+          <button 
+            onClick={() => setView('create')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+          >
+            <Plus size={18} />
+            Nuevo Sitio
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={handleConveniosFileImport}
+          />
+        </div>
       </div>
+
+      {statusMessage ? (
+        <div className="rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-700 px-4 py-3 text-sm">
+          {statusMessage}
+        </div>
+      ) : null}
+
+      {errorMessage ? (
+        <div className="rounded-2xl bg-red-50 border border-red-100 text-red-700 px-4 py-3 text-sm">
+          {errorMessage}
+        </div>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
