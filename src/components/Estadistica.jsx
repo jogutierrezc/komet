@@ -3,13 +3,19 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis,
   PieChart, Pie, Cell, ScatterChart, Scatter, ZAxis, ReferenceLine,
+  LineChart, Line, FunnelChart, Funnel,
   LabelList
 } from 'recharts';
-import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity } from 'lucide-react';
-import { getEvaluationReportMetrics } from '../lib/data';
+import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain } from 'lucide-react';
+import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
+const OPEN_TEXT_KEY_HINT = /(coment|observ|recomend|suger|justific|fortalez|debilid|opinion|retro|texto|escrib|mejora)/i;
+const EXCLUDED_OPEN_TEXT_KEYS = new Set([
+  'program', 'programa', 'program_level', 'campus', 'center', 'centro', 'role', 'rol',
+  'name', 'nombre', 'email', 'correo', 'telefono', 'phone', 'identificacion', 'documento'
+]);
 
 function avg(values = []) {
   if (!values.length) return 0;
@@ -17,6 +23,55 @@ function avg(values = []) {
 }
 
 function norm(v) { return String(v || '').trim(); }
+
+function extractOpenTextResponses(row = {}) {
+  const out = [];
+  const seen = new Set();
+  const questions = Array.isArray(row.questions) ? row.questions : [];
+  const questionMap = new Map(questions.map((q) => [String(q?.id || ''), q]));
+
+  function visit(node, path = []) {
+    if (node === null || node === undefined) return;
+
+    if (typeof node === 'string') {
+      const text = norm(node);
+      if (!text || text.length < 10) return;
+      if (/^[0-9]+([.,][0-9]+)?$/.test(text)) return;
+      if (/^(si|no|na|n\/?a)$/i.test(text)) return;
+
+      const key = String(path[path.length - 1] || '');
+      const q = questionMap.get(key);
+      const qType = String(q?.type || '').toLowerCase();
+      if (qType.includes('likert') || qType.includes('scale') || qType.includes('rating') || qType.includes('number')) return;
+
+      const label = norm(q?.label || q?.question || key || 'Comentario');
+      const includeByHint = OPEN_TEXT_KEY_HINT.test(label) || OPEN_TEXT_KEY_HINT.test(key);
+      if (!includeByHint && text.length < 35) return;
+
+      const sig = `${label}|${text}`;
+      if (seen.has(sig)) return;
+      seen.add(sig);
+      out.push({ question: label, text });
+      return;
+    }
+
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => visit(item, path.concat(String(index))));
+      return;
+    }
+
+    if (typeof node === 'object') {
+      Object.entries(node).forEach(([key, value]) => {
+        if (key.startsWith('_')) return;
+        if (EXCLUDED_OPEN_TEXT_KEYS.has(String(key).toLowerCase())) return;
+        visit(value, path.concat(key));
+      });
+    }
+  }
+
+  visit(row.rawAnswers || {}, []);
+  return out;
+}
 
 function resolveProgram(row = {}) {
   const j = norm(
@@ -75,6 +130,43 @@ function PieTooltip({ active, payload }) {
   );
 }
 
+function parseAnaliticKometResponse(rawText = '') {
+  const fallback = {
+    resumenEjecutivo: 'No fue posible estructurar la respuesta IA en este momento.',
+    lecturaGraficas: 'Intenta de nuevo con un rango de filtros diferente.',
+    hallazgosClave: [],
+    mejorasPriorizadas: [],
+    alertasTempranas: [],
+    conclusion: ''
+  };
+
+  const text = String(rawText || '').trim();
+  if (!text) return fallback;
+
+  const fromFence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fromFence || text;
+  const start = candidate.indexOf('{');
+  const end = candidate.lastIndexOf('}');
+  const jsonText = start >= 0 && end > start ? candidate.slice(start, end + 1) : candidate;
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    return {
+      resumenEjecutivo: String(parsed?.resumenEjecutivo || fallback.resumenEjecutivo),
+      lecturaGraficas: String(parsed?.lecturaGraficas || fallback.lecturaGraficas),
+      hallazgosClave: Array.isArray(parsed?.hallazgosClave) ? parsed.hallazgosClave : [],
+      mejorasPriorizadas: Array.isArray(parsed?.mejorasPriorizadas) ? parsed.mejorasPriorizadas : [],
+      alertasTempranas: Array.isArray(parsed?.alertasTempranas) ? parsed.alertasTempranas : [],
+      conclusion: String(parsed?.conclusion || '')
+    };
+  } catch {
+    return {
+      ...fallback,
+      resumenEjecutivo: text.slice(0, 1600)
+    };
+  }
+}
+
 // ─── sección card wrapper ────────────────────────────────────────────────────
 function ChartCard({ title, subtitle, children, span = 1 }) {
   return (
@@ -94,7 +186,14 @@ export default function Estadistica() {
   const [loading, setLoading] = useState(true);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
   const [selectedLevel, setSelectedLevel] = useState('Todos');
+  const [selectedCenter, setSelectedCenter] = useState('Todos');
+  const [selectedProgram, setSelectedProgram] = useState('Todos');
+  const [selectedCenterView, setSelectedCenterView] = useState('Todos');
   const [activeTab, setActiveTab] = useState('general');
+  const [isGeneratingAnalitic, setIsGeneratingAnalitic] = useState(false);
+  const [analiticError, setAnaliticError] = useState('');
+  const [analiticOutput, setAnaliticOutput] = useState(null);
+  const [analiticGeneratedAt, setAnaliticGeneratedAt] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -104,8 +203,8 @@ export default function Estadistica() {
       .finally(() => setLoading(false));
   }, []);
 
-  // filtro base
-  const filtered = useMemo(() => {
+  // filtro base (campus y nivel)
+  const baseFiltered = useMemo(() => {
     return rows.filter((row) => {
       if (selectedCampus !== 'Todos' && norm(row.campus) !== selectedCampus) return false;
       if (selectedLevel !== 'Todos') {
@@ -116,10 +215,49 @@ export default function Estadistica() {
     });
   }, [rows, selectedCampus, selectedLevel]);
 
+  // filtro final (centro y programa)
+  const filtered = useMemo(() => {
+    return baseFiltered.filter((row) => {
+      const rowCenter = norm(row.center || 'Sin sitio');
+      const rowProgram = resolveProgram(row);
+      if (selectedCenter !== 'Todos' && rowCenter !== selectedCenter) return false;
+      if (selectedProgram !== 'Todos' && rowProgram !== selectedProgram) return false;
+      return true;
+    });
+  }, [baseFiltered, selectedCenter, selectedProgram]);
+
   // opciones de campus
   const campusOptions = useMemo(() => {
     return ['Todos', ...[...new Set(rows.map((r) => norm(r.campus)).filter(Boolean))].sort()];
   }, [rows]);
+
+  const centerOptions = useMemo(() => {
+    return ['Todos', ...[...new Set(baseFiltered.map((r) => norm(r.center || 'Sin sitio')).filter(Boolean))].sort()];
+  }, [baseFiltered]);
+
+  const programOptions = useMemo(() => {
+    const source = selectedCenter === 'Todos'
+      ? baseFiltered
+      : baseFiltered.filter((r) => norm(r.center || 'Sin sitio') === selectedCenter);
+    const programs = [...new Set(source.map((r) => resolveProgram(r)).filter((p) => p && p !== 'Sin programa'))].sort();
+    return ['Todos', ...programs];
+  }, [baseFiltered, selectedCenter]);
+
+  useEffect(() => {
+    if (!centerOptions.includes(selectedCenter)) setSelectedCenter('Todos');
+  }, [centerOptions, selectedCenter]);
+
+  useEffect(() => {
+    if (!programOptions.includes(selectedProgram)) setSelectedProgram('Todos');
+  }, [programOptions, selectedProgram]);
+
+  const centerViewOptions = useMemo(() => {
+    return ['Todos', ...[...new Set(filtered.map((r) => norm(r.center || 'Sin sitio')).filter(Boolean))].sort()];
+  }, [filtered]);
+
+  useEffect(() => {
+    if (!centerViewOptions.includes(selectedCenterView)) setSelectedCenterView('Todos');
+  }, [centerViewOptions, selectedCenterView]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -154,6 +292,32 @@ export default function Estadistica() {
       .slice(0, 12);
   }, [filtered]);
 
+  const byProgramExtended = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((row) => {
+      const key = resolveProgram(row);
+      if (key === 'Sin programa') return;
+      const cur = map.get(key) || { name: key, total: 0, completed: 0, scores: [], centers: new Set() };
+      cur.total += 1;
+      if (row.status === 'Completada') cur.completed += 1;
+      cur.centers.add(norm(row.center || 'Sin sitio'));
+      const s = row.scoreSummary?.globalScore;
+      if (typeof s === 'number') cur.scores.push(s);
+      map.set(key, cur);
+    });
+
+    return [...map.values()]
+      .map((d) => ({
+        name: d.name,
+        total: d.total,
+        score: avg(d.scores),
+        completionPct: d.total ? Number(((d.completed / d.total) * 100).toFixed(1)) : 0,
+        centerCount: d.centers.size,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 15);
+  }, [filtered]);
+
   // ── por centro ────────────────────────────────────────────────────────────
   const byCenter = useMemo(() => {
     const map = new Map();
@@ -176,6 +340,164 @@ export default function Estadistica() {
       .sort((a, b) => b.score - a.score)
       .slice(0, 15);
   }, [filtered]);
+
+  const topCentersByVolume = useMemo(() => {
+    return [...byCenter]
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 12)
+      .map((d, i) => ({ ...d, rank: i + 1 }));
+  }, [byCenter]);
+
+  const centerComments = useMemo(() => {
+    const source = selectedCenterView === 'Todos'
+      ? filtered
+      : filtered.filter((r) => norm(r.center || 'Sin sitio') === selectedCenterView);
+
+    const records = [];
+    source.forEach((row) => {
+      const snippets = extractOpenTextResponses(row).slice(0, 3);
+      snippets.forEach((snippet) => {
+        records.push({
+          center: norm(row.center || 'Sin sitio'),
+          program: resolveProgram(row),
+          role: norm(row.role || 'Sin rol'),
+          person: norm(row.person || 'Evaluador'),
+          date: row.completed_at || row.created_at || '',
+          question: snippet.question,
+          text: snippet.text,
+        });
+      });
+    });
+
+    return records
+      .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+      .slice(0, 40);
+  }, [filtered, selectedCenterView]);
+
+  const commentKeywords = useMemo(() => {
+    const stop = new Set(['para', 'como', 'esta', 'este', 'desde', 'entre', 'sobre', 'donde', 'cuando', 'porque', 'tambien', 'pero', 'muy', 'que', 'con', 'sin', 'por', 'del', 'las', 'los', 'una', 'uno', 'unos', 'unas', 'han', 'hay', 'fue', 'son', 'sus', 'al', 'el', 'la', 'en', 'de', 'y', 'o']);
+    const counter = new Map();
+
+    centerComments.forEach((item) => {
+      item.text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !stop.has(w))
+        .forEach((w) => {
+          counter.set(w, (counter.get(w) || 0) + 1);
+        });
+    });
+
+    return [...counter.entries()]
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }, [centerComments]);
+
+  const aiComments = useMemo(() => {
+    const snippets = [];
+    filtered.forEach((row) => {
+      extractOpenTextResponses(row).slice(0, 2).forEach((item) => {
+        snippets.push({
+          center: norm(row.center || 'Sin sitio'),
+          program: resolveProgram(row),
+          role: norm(row.role || 'Sin rol'),
+          question: item.question,
+          text: item.text
+        });
+      });
+    });
+    return snippets.slice(0, 50);
+  }, [filtered]);
+
+  async function generateAnaliticKomet() {
+    try {
+      setIsGeneratingAnalitic(true);
+      setAnaliticError('');
+
+      const settings = await getSystemSettings();
+      const trimmedApiKey = String(settings?.openrouter_api_key || '').trim();
+      if (!trimmedApiKey) {
+        throw new Error('Configura la API Key de OpenRouter en Sistema para generar Analitic Komet.');
+      }
+
+      const payload = {
+        filtros: {
+          campus: selectedCampus,
+          nivel: selectedLevel,
+          centro: selectedCenter,
+          programa: selectedProgram
+        },
+        kpis,
+        tendenciaMensual: monthlyTrend,
+        funnel: funnelData,
+        programasTop: byProgramExtended.slice(0, 10),
+        centrosTopVolumen: topCentersByVolume.slice(0, 10),
+        centrosTopPromedio: byCenter.slice(0, 10),
+        roles: byRole,
+        secciones: bySectionRaw,
+        paretoSecciones: paretoSections,
+        comentarios: aiComments
+      };
+
+      const systemPrompt = [
+        'Eres Analitic Komet, analista senior de calidad academica y relacion docencia-servicio.',
+        'Debes interpretar tableros estadisticos y comentarios abiertos para generar hallazgos accionables.',
+        'No inventes datos. Usa solo la evidencia del dataset recibido.',
+        'Responde en espanol, tono tecnico-directivo, claro y ejecutable.',
+        'Obligatorio: responde solo JSON valido sin markdown.'
+      ].join(' ');
+
+      const prompt = `
+Genera un analisis institucional llamado "Analitic Komet" con base en los datos filtrados.
+
+Devuelve exclusivamente JSON con esta estructura exacta:
+{
+  "resumenEjecutivo": "...",
+  "lecturaGraficas": "...",
+  "hallazgosClave": ["..."],
+  "mejorasPriorizadas": [
+    {
+      "accion": "...",
+      "prioridad": "Alta|Media|Baja",
+      "horizonte": "30 dias|60 dias|90 dias",
+      "responsableSugerido": "...",
+      "justificacion": "..."
+    }
+  ],
+  "alertasTempranas": ["..."],
+  "conclusion": "..."
+}
+
+Reglas:
+- Interpreta tendencias, dispersion y comparativos entre centros, programas, roles y secciones.
+- Usa comentarios para construir oportunidades de mejora concretas.
+- Incluye riesgos operativos y acciones priorizadas por impacto.
+- Si hay pocos datos, dilo explicitamente y sugiere mejoras de captura.
+
+Dataset filtrado:
+${JSON.stringify(payload)}
+      `.trim();
+
+      const raw = await runOpenRouterPrompt({
+        apiKey: trimmedApiKey,
+        model: settings?.openrouter_model,
+        systemPrompt: [systemPrompt, settings?.openrouter_system_prompt].filter(Boolean).join('\n\n'),
+        temperature: Number(settings?.openrouter_temperature ?? 0.6),
+        prompt
+      });
+
+      setAnaliticOutput(parseAnaliticKometResponse(raw));
+      setAnaliticGeneratedAt(new Date().toLocaleString('es-CO'));
+    } catch (err) {
+      setAnaliticError(err?.message || 'No fue posible generar Analitic Komet en este momento.');
+    } finally {
+      setIsGeneratingAnalitic(false);
+    }
+  }
 
   // scatter: total vs score por centro
   const scatterData = useMemo(() => byCenter.map((d) => ({ name: d.name, x: d.total, y: d.score, z: d.total })), [byCenter]);
@@ -284,6 +606,76 @@ export default function Estadistica() {
     return Object.entries(counts).map(([score, count]) => ({ score, count }));
   }, [filtered]);
 
+  // tendencia temporal por mes
+  const monthlyTrend = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((row) => {
+      const rawDate = row.completed_at || row.created_at;
+      if (!rawDate) return;
+      const dt = new Date(rawDate);
+      if (Number.isNaN(dt.getTime())) return;
+      const monthKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      const cur = map.get(monthKey) || { monthKey, scores: [], total: 0, completed: 0 };
+      cur.total += 1;
+      if (row.status === 'Completada') cur.completed += 1;
+      const s = row.scoreSummary?.globalScore;
+      if (typeof s === 'number') cur.scores.push(s);
+      map.set(monthKey, cur);
+    });
+
+    return [...map.values()]
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+      .map((d) => ({
+        month: d.monthKey,
+        score: avg(d.scores),
+        total: d.total,
+        completionPct: d.total ? Number(((d.completed / d.total) * 100).toFixed(1)) : 0,
+      }));
+  }, [filtered]);
+
+  // funnel de proceso
+  const funnelData = useMemo(() => {
+    const total = filtered.length;
+    const started = filtered.filter((r) => r.status !== 'Pendiente').length;
+    const completed = filtered.filter((r) => r.status === 'Completada').length;
+    return [
+      { name: 'Asignadas', value: total, fill: '#2563eb' },
+      { name: 'Iniciadas', value: started, fill: '#14b8a6' },
+      { name: 'Completadas', value: completed, fill: '#22c55e' },
+    ];
+  }, [filtered]);
+
+  // pareto por sección (impacto negativo vs umbral 3.7)
+  const paretoSections = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((row) => {
+      (row.scoreSummary?.sectionScores || []).forEach((sec) => {
+        const key = norm(sec.title || sec.seccion || 'Sección');
+        const cur = map.get(key) || { name: key, gap: 0, total: 0 };
+        const val = Number(sec.score || 0);
+        cur.total += 1;
+        cur.gap += Math.max(0, 3.7 - val);
+        map.set(key, cur);
+      });
+    });
+
+    const sorted = [...map.values()]
+      .map((d) => ({ ...d, impact: Number(d.gap.toFixed(2)) }))
+      .sort((a, b) => b.impact - a.impact)
+      .slice(0, 10);
+
+    const totalImpact = sorted.reduce((s, d) => s + d.impact, 0) || 1;
+    let accum = 0;
+    return sorted.map((d) => {
+      accum += d.impact;
+      return {
+        name: d.name.length > 24 ? d.name.slice(0, 24) + '…' : d.name,
+        impact: d.impact,
+        cumulativePct: Number(((accum / totalImpact) * 100).toFixed(1)),
+      };
+    });
+  }, [filtered]);
+
   // heatmap centros × secciones (top 8 centros, top 6 secciones)
   const heatmap = useMemo(() => {
     const centerMap = new Map();
@@ -325,6 +717,7 @@ export default function Estadistica() {
     { key: 'centros', label: 'Centros', icon: Building2 },
     { key: 'roles', label: 'Por Rol', icon: Users },
     { key: 'secciones', label: 'Secciones', icon: BarChart3 },
+    { key: 'analitic', label: 'Analitic Komet', icon: Brain },
   ];
 
   if (loading) {
@@ -364,6 +757,20 @@ export default function Estadistica() {
             <option value="Todos">Todos los niveles</option>
             <option value="pregrado">Pregrado</option>
             <option value="posgrado">Posgrado</option>
+          </select>
+          <select
+            value={selectedCenter}
+            onChange={(e) => setSelectedCenter(e.target.value)}
+            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {centerOptions.map((c) => <option key={c} value={c}>{c === 'Todos' ? 'Todos los centros' : c}</option>)}
+          </select>
+          <select
+            value={selectedProgram}
+            onChange={(e) => setSelectedProgram(e.target.value)}
+            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {programOptions.map((p) => <option key={p} value={p}>{p === 'Todos' ? 'Todos los programas' : p}</option>)}
           </select>
         </div>
       </div>
@@ -522,6 +929,87 @@ export default function Estadistica() {
               </ResponsiveContainer>
             )}
           </ChartCard>
+
+          <ChartCard
+            title="Tendencia mensual de desempeño"
+            subtitle="Evolución del puntaje promedio y porcentaje de completitud por mes"
+            span={2}
+          >
+            {monthlyTrend.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center mt-10">Sin fechas suficientes para construir tendencia</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={290}>
+                <LineChart data={monthlyTrend} margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="score" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="pct" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                  <Tooltip
+                    content={({ active, payload }) =>
+                      active && payload?.length ? (
+                        <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                          <p className="font-semibold text-slate-800">{payload[0]?.payload?.month}</p>
+                          <p>Promedio: <strong>{Number(payload[0]?.payload?.score || 0).toFixed(2)}</strong></p>
+                          <p>Completitud: <strong>{payload[0]?.payload?.completionPct}%</strong></p>
+                          <p>Evaluaciones: <strong>{payload[0]?.payload?.total}</strong></p>
+                        </div>
+                      ) : null
+                    }
+                  />
+                  <ReferenceLine yAxisId="score" y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Line yAxisId="score" type="monotone" dataKey="score" name="Promedio" stroke="#2563eb" strokeWidth={3} dot={{ r: 3 }} />
+                  <Line yAxisId="pct" type="monotone" dataKey="completionPct" name="Completitud %" stroke="#14b8a6" strokeWidth={2} dot={{ r: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard
+            title="Embudo de avance"
+            subtitle="Flujo de evaluaciones: asignadas, iniciadas y completadas"
+          >
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width="55%" height={250}>
+                <FunnelChart>
+                  <Tooltip />
+                  <Funnel dataKey="value" data={funnelData} isAnimationActive>
+                    <LabelList position="right" fill="#334155" stroke="none" dataKey="name" />
+                  </Funnel>
+                </FunnelChart>
+              </ResponsiveContainer>
+              <div className="space-y-2 text-sm">
+                {funnelData.map((step) => (
+                  <div key={step.name} className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full" style={{ background: step.fill }} />
+                    <span className="text-slate-600">{step.name}:</span>
+                    <span className="font-bold text-slate-800">{step.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </ChartCard>
+
+          <ChartCard
+            title="Pareto de secciones críticas"
+            subtitle="Impacto negativo acumulado frente al umbral 3.7 (priorización 80/20)"
+          >
+            {paretoSections.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center mt-10">Sin datos suficientes para análisis de pareto</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={paretoSections}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={60} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar yAxisId="left" dataKey="impact" name="Impacto" fill="#f97316" radius={[6, 6, 0, 0]} />
+                  <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="Acumulado %" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
+                  <ReferenceLine yAxisId="right" y={80} stroke="#dc2626" strokeDasharray="4 3" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
         </div>
       )}
 
@@ -586,6 +1074,49 @@ export default function Estadistica() {
               </div>
             </div>
           </ChartCard>
+
+          <ChartCard title="Calidad vs volumen por programa" subtitle="Eje X = evaluaciones · Eje Y = promedio · Tamaño = cobertura en centros">
+            <ResponsiveContainer width="100%" height={280}>
+              <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="x" type="number" name="Evaluaciones" tick={{ fontSize: 11 }} />
+                <YAxis dataKey="y" type="number" name="Promedio" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                <ZAxis dataKey="z" range={[40, 320]} />
+                <Tooltip
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                        <p className="font-semibold">{payload[0]?.payload?.name}</p>
+                        <p>Evaluaciones: <strong>{payload[0]?.payload?.x}</strong></p>
+                        <p>Promedio: <strong>{Number(payload[0]?.payload?.y || 0).toFixed(2)}</strong></p>
+                        <p>Centros: <strong>{payload[0]?.payload?.centers}</strong></p>
+                      </div>
+                    ) : null
+                  }
+                />
+                <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                <Scatter
+                  data={byProgramExtended.map((p) => ({ name: p.name, x: p.total, y: p.score, z: p.centerCount, centers: p.centerCount }))}
+                  fill="#2563eb"
+                  fillOpacity={0.75}
+                />
+              </ScatterChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Cumplimiento por programa" subtitle="Porcentaje de evaluaciones completadas en los programas con más volumen">
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={byProgramExtended.slice(0, 10)} barSize={18}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={65} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                <Tooltip formatter={(v) => `${v}%`} />
+                <Bar dataKey="completionPct" name="Cumplimiento" fill="#14b8a6" radius={[6, 6, 0, 0]}>
+                  <LabelList dataKey="completionPct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 10, fontWeight: 600 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
       )}
 
@@ -647,6 +1178,115 @@ export default function Estadistica() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Centros con más evaluaciones" subtitle="Ranking por volumen total y su desempeño asociado" span={2}>
+            {topCentersByVolume.length === 0 ? (
+              <p className="text-sm text-slate-400">Sin datos disponibles para ranking de centros</p>
+            ) : (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <ResponsiveContainer width="100%" height={Math.max(280, topCentersByVolume.length * 30)}>
+                  <BarChart data={topCentersByVolume} layout="vertical" barSize={16}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={220} tick={{ fontSize: 11 }} />
+                    <Tooltip content={<ScoreTooltip />} />
+                    <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[0, 6, 6, 0]}>
+                      <LabelList dataKey="total" position="right" style={{ fontSize: 11, fontWeight: 600 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-slate-500 border-b border-slate-200">
+                        <th className="py-2 text-left">#</th>
+                        <th className="py-2 text-left">Centro</th>
+                        <th className="py-2 text-right">Eval.</th>
+                        <th className="py-2 text-right">Prom.</th>
+                        <th className="py-2 text-right">Cumpl.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topCentersByVolume.slice(0, 10).map((c) => (
+                        <tr key={c.name} className="border-b border-slate-100">
+                          <td className="py-2 font-semibold text-slate-600">{c.rank}</td>
+                          <td className="py-2 text-slate-700 max-w-[260px] truncate" title={c.name}>{c.name}</td>
+                          <td className="py-2 text-right font-semibold">{c.total}</td>
+                          <td className="py-2 text-right font-semibold" style={{ color: alertColor(c.score) }}>{c.score.toFixed(2)}</td>
+                          <td className="py-2 text-right text-slate-600">{c.completionPct}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </ChartCard>
+
+          <ChartCard title="Comentarios y respuestas escritas por centro" subtitle="Extracción de texto abierto para lectura cualitativa" span={2}>
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <label className="text-sm text-slate-600 font-semibold">Centro para detalle:</label>
+              <select
+                value={selectedCenterView}
+                onChange={(e) => setSelectedCenterView(e.target.value)}
+                className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {centerViewOptions.map((c) => <option key={c} value={c}>{c === 'Todos' ? 'Todos los centros' : c}</option>)}
+              </select>
+              <span className="text-xs text-slate-500">Registros encontrados: {centerComments.length}</span>
+            </div>
+
+            {centerComments.length === 0 ? (
+              <p className="text-sm text-slate-400">No se encontraron comentarios escritos para el filtro seleccionado.</p>
+            ) : (
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                <div className="xl:col-span-2 overflow-x-auto max-h-[420px]">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-white">
+                      <tr className="text-slate-500 border-b border-slate-200">
+                        <th className="py-2 text-left">Fecha</th>
+                        <th className="py-2 text-left">Centro</th>
+                        <th className="py-2 text-left">Programa / Rol</th>
+                        <th className="py-2 text-left">Pregunta</th>
+                        <th className="py-2 text-left">Comentario</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {centerComments.map((item, i) => (
+                        <tr key={`${item.center}-${item.person}-${i}`} className="border-b border-slate-100 align-top">
+                          <td className="py-2 text-xs text-slate-500 whitespace-nowrap">{item.date ? new Date(item.date).toLocaleDateString() : 'Sin fecha'}</td>
+                          <td className="py-2 text-slate-700 max-w-[180px] truncate" title={item.center}>{item.center}</td>
+                          <td className="py-2">
+                            <div className="text-slate-700 max-w-[150px] truncate" title={item.program}>{item.program}</div>
+                            <div className="text-xs text-slate-500">{item.role}</div>
+                          </td>
+                          <td className="py-2 text-xs text-slate-600 max-w-[180px] truncate" title={item.question}>{item.question}</td>
+                          <td className="py-2 text-slate-700 min-w-[260px]">{item.text}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold text-slate-700 mb-2">Palabras más frecuentes</h4>
+                  {commentKeywords.length === 0 ? (
+                    <p className="text-xs text-slate-400">Sin palabras relevantes</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {commentKeywords.map((k) => (
+                        <div key={k.word} className="flex items-center justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                          <span className="font-medium text-slate-700">{k.word}</span>
+                          <span className="font-bold text-blue-700">{k.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </ChartCard>
 
           {/* Heatmap centros × secciones */}
@@ -849,6 +1489,107 @@ export default function Estadistica() {
               );
             })()}
           </ChartCard>
+        </div>
+      )}
+
+      {/* ── TAB: ANALITIC KOMET ── */}
+      {activeTab === 'analitic' && (
+        <div className="space-y-6">
+          <ChartCard
+            title="Analitic Komet"
+            subtitle="Analitica IA dinamica usando los filtros superiores y modelos gratuitos en OpenRouter"
+            span={2}
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={generateAnaliticKomet}
+                disabled={isGeneratingAnalitic}
+                className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isGeneratingAnalitic ? 'Generando analisis...' : 'Generar Analitic Komet'}
+              </button>
+              <span className="text-xs text-slate-500">
+                Filtros activos: {selectedCampus} · {selectedLevel} · {selectedCenter} · {selectedProgram}
+              </span>
+              {analiticGeneratedAt && (
+                <span className="text-xs text-slate-500">Ultima generacion: {analiticGeneratedAt}</span>
+              )}
+            </div>
+            {analiticError && <p className="text-sm text-red-600 mt-3">{analiticError}</p>}
+          </ChartCard>
+
+          {analiticOutput && (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <ChartCard title="Resumen ejecutivo" subtitle="Lectura general del estado de calidad" span={2}>
+                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.resumenEjecutivo}</p>
+              </ChartCard>
+
+              <ChartCard title="Lectura de graficas" subtitle="Interpretacion de tendencias y comparativos" span={2}>
+                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.lecturaGraficas}</p>
+              </ChartCard>
+
+              <ChartCard title="Hallazgos clave" subtitle="Puntos criticos identificados por Analitic Komet">
+                {analiticOutput.hallazgosClave?.length ? (
+                  <ul className="space-y-2 text-sm text-slate-700 list-disc pl-5">
+                    {analiticOutput.hallazgosClave.map((item, idx) => (
+                      <li key={idx}>{String(item)}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-slate-400">Sin hallazgos estructurados.</p>
+                )}
+              </ChartCard>
+
+              <ChartCard title="Alertas tempranas" subtitle="Señales de riesgo operativo a monitorear">
+                {analiticOutput.alertasTempranas?.length ? (
+                  <ul className="space-y-2 text-sm text-slate-700 list-disc pl-5">
+                    {analiticOutput.alertasTempranas.map((item, idx) => (
+                      <li key={idx}>{String(item)}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-slate-400">Sin alertas reportadas.</p>
+                )}
+              </ChartCard>
+
+              <ChartCard title="Aspectos de mejora" subtitle="Plan de accion sugerido desde comentarios y metricas" span={2}>
+                {analiticOutput.mejorasPriorizadas?.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-200">
+                          <th className="py-2 text-left">Accion</th>
+                          <th className="py-2 text-left">Prioridad</th>
+                          <th className="py-2 text-left">Horizonte</th>
+                          <th className="py-2 text-left">Responsable</th>
+                          <th className="py-2 text-left">Justificacion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analiticOutput.mejorasPriorizadas.map((m, idx) => (
+                          <tr key={idx} className="border-b border-slate-100 align-top">
+                            <td className="py-2 font-medium text-slate-800 min-w-[220px]">{String(m?.accion || '')}</td>
+                            <td className="py-2 text-slate-700">{String(m?.prioridad || '')}</td>
+                            <td className="py-2 text-slate-700">{String(m?.horizonte || '')}</td>
+                            <td className="py-2 text-slate-700">{String(m?.responsableSugerido || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[260px]">{String(m?.justificacion || '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">Sin acciones priorizadas disponibles.</p>
+                )}
+              </ChartCard>
+
+              {analiticOutput.conclusion && (
+                <ChartCard title="Conclusion" subtitle="Cierre ejecutivo del analisis IA" span={2}>
+                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.conclusion}</p>
+                </ChartCard>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
