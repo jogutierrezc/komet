@@ -7,6 +7,7 @@ import Estudiantes from './components/Estudiantes';
 import Profesores from './components/Profesores';
 import Evaluaciones from './components/Evaluaciones';
 import Reportes from './components/Reportes';
+import Estadistica from './components/Estadistica';
 import Sistema from './components/Sistema';
 
 export default function App({ onLogout }) {
@@ -30,6 +31,8 @@ export default function App({ onLogout }) {
         return <Evaluaciones />;
       case 'reportes':
         return <Reportes />;
+      case 'estadistica':
+        return <Estadistica />;
       case 'sistema':
         return <Sistema />;
       default:

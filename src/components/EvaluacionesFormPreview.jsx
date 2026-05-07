@@ -1,4 +1,12 @@
 import React, { useState } from 'react';
+
+const LIKERT_LABELS = {
+  1: 'Tot. Desacuerdo',
+  2: 'En Desacuerdo',
+  3: 'Ni Ac. Ni Desac.',
+  4: 'De Acuerdo',
+  5: 'Tot. Acuerdo',
+};
 import { 
   ChevronRight, 
   ChevronLeft, 
@@ -151,7 +159,7 @@ export const buildEvaluationPreviewHtml = ({ studentInfo, sections, currentYear 
         const options = [1, 2, 3, 4, 5].map((val) => `
           <div class="relative flex flex-col items-center justify-center py-8 rounded-[2rem] border-2 bg-white border-slate-100 text-slate-400">
             <span class="text-3xl font-black mb-1">${val}</span>
-            <span class="text-[10px] uppercase font-black tracking-tighter text-slate-300">${val === 1 ? 'Nunca' : val === 5 ? 'Siempre' : val === 3 ? 'Neutral' : ''}</span>
+            <span class="text-[10px] uppercase font-black tracking-tighter text-slate-300 text-center leading-tight px-1">${LIKERT_LABELS[val] ?? ''}</span>
           </div>
         `).join('');
 
@@ -508,7 +516,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                             >
                               <span className="text-3xl font-black mb-1">{val}</span>
                               <span className={`text-[10px] uppercase font-black tracking-tighter ${formData[q.id] === val ? 'text-blue-100' : 'text-slate-300'}`}>
-                                {val === 1 ? 'Nunca' : val === 5 ? 'Siempre' : val === 3 ? 'Neutral' : ''}
+                                {LIKERT_LABELS[val] ?? ''}
                               </span>
                               {formData[q.id] === val && (
                                 <div className="absolute -top-2 -right-2 w-8 h-8 bg-white rounded-full flex items-center justify-center shadow-lg animate-in zoom-in duration-300">

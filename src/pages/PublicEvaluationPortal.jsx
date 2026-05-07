@@ -12,13 +12,11 @@ export default function PublicEvaluationPortal() {
   const [userData, setUserData] = useState(null);
   const [sharedSurvey, setSharedSurvey] = useState(null);
   const [publicRespondent, setPublicRespondent] = useState({
-    full_name: '',
     email: '',
-    academic_code: '',
-    document_number: '',
     program_level: 'Pregrado',
     program: ''
   });
+  const [centerSearchQuery, setCenterSearchQuery] = useState('');
   const [selectedPublicRole, setSelectedPublicRole] = useState('');
   const [publicStep, setPublicStep] = useState(1);
   const [error, setError] = useState('');
@@ -31,33 +29,9 @@ export default function PublicEvaluationPortal() {
   const [programOptions, setProgramOptions] = useState([]);
   const [allProgramOptions, setAllProgramOptions] = useState([]);
 
-  const normalizeProgramLevel = (value = '') => {
-    const normalized = String(value || '')
-      .trim()
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-
-    if (normalized.startsWith('pre')) return 'pregrado';
-    if (normalized.startsWith('pos')) return 'posgrado';
-    return normalized;
-  };
-
   const selectedCampusId = sharedSurveyId ? sharedSurvey?.campus_id || null : userData?.campus_id || null;
 
-  const campusLevelPrograms = programOptions.filter((item) => {
-    const level = normalizeProgramLevel(item.level);
-    const selectedLevel = normalizeProgramLevel(publicRespondent.program_level);
-    return !selectedLevel || level === selectedLevel;
-  });
-
-  const globalLevelPrograms = allProgramOptions.filter((item) => {
-    const level = normalizeProgramLevel(item.level);
-    const selectedLevel = normalizeProgramLevel(publicRespondent.program_level);
-    return !selectedLevel || level === selectedLevel;
-  });
-
-  const filteredProgramOptions = campusLevelPrograms.length ? campusLevelPrograms : globalLevelPrograms;
+  const filteredProgramOptions = programOptions.length ? programOptions : allProgramOptions;
 
   const capitalize = (value = '') => String(value)
     .split(/\s+/)
@@ -157,8 +131,8 @@ export default function PublicEvaluationPortal() {
     async function loadPrograms() {
       try {
         const [campusList, allList] = await Promise.all([
-          getProgramsByCampus(selectedCampusId),
-          getProgramsByCampus(null)
+          getProgramsByCampus(selectedCampusId, publicRespondent.program_level),
+          getProgramsByCampus(null, publicRespondent.program_level)
         ]);
         if (!cancelled) {
           setProgramOptions(campusList || []);
@@ -178,7 +152,7 @@ export default function PublicEvaluationPortal() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCampusId]);
+  }, [selectedCampusId, publicRespondent.program_level]);
 
   useEffect(() => {
     const exists = filteredProgramOptions.some((item) => item.name === publicRespondent.program);
@@ -190,7 +164,7 @@ export default function PublicEvaluationPortal() {
         program: nextProgram
       }));
     }
-  }, [publicRespondent.program_level, filteredProgramOptions, publicRespondent.program]);
+  }, [publicRespondent.program_level, filteredProgramOptions]);
 
   useEffect(() => {
     if (sharedSurveyId) return;
@@ -326,9 +300,7 @@ export default function PublicEvaluationPortal() {
                 _publicRespondent: sharedSurveyId
                   ? {
                       role: selectedPublicRole,
-                      full_name: publicRespondent.full_name,
-                      academic_code: publicRespondent.academic_code,
-                      document_number: publicRespondent.document_number,
+                      email: publicRespondent.email,
                       program_level: publicRespondent.program_level,
                       program: publicRespondent.program
                     }
@@ -378,16 +350,14 @@ export default function PublicEvaluationPortal() {
                     to: recipientEmail,
                     templateKey: 'student_completed',
                     respondent: {
-                      name: sharedSurveyId ? publicRespondent.full_name : userData?.full_name || 'Participante',
+                      name: sharedSurveyId ? publicRespondent.email : userData?.full_name || 'Participante',
                       public_role: roleLabel(sharedSurveyId ? selectedPublicRole : userData?.role || ''),
                       program_level: sharedSurveyId ? publicRespondent.program_level : userData?.program_level || '',
                       program: sharedSurveyId ? publicRespondent.program : userData?.program || '',
                       practice_center_name: centers.find((center) => center.id === selectedCenterId)?.name || null,
                       period: getCurrentAcademicPeriod(),
-                      id_type: sharedSurveyId ? (selectedPublicRole === 'student' ? 'Código académico' : 'Documento') : 'Código de usuario',
-                      id_value: sharedSurveyId
-                        ? (selectedPublicRole === 'student' ? publicRespondent.academic_code : publicRespondent.document_number)
-                        : userId,
+                      id_type: 'Correo electrónico',
+                      id_value: sharedSurveyId ? publicRespondent.email : userId,
                       survey_title: selectedSurvey.title || 'Encuesta de prácticas formativas',
                       evaluation_link: `${window.location.origin}/evaluacion-publica?survey=${selectedSurvey.id}`
                     },
@@ -458,13 +428,11 @@ export default function PublicEvaluationPortal() {
               setSelectedSurvey(sharedSurvey || selectedSurvey);
               setSelectedPublicRole('');
               setPublicRespondent({
-                full_name: '',
                 email: '',
-                academic_code: '',
-                document_number: '',
                 program_level: 'Pregrado',
                 program: ''
               });
+              setCenterSearchQuery('');
               setPublicStep(1);
             }}
             className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-bold uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
@@ -520,16 +488,6 @@ export default function PublicEvaluationPortal() {
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nombre completo</label>
-                <input
-                  value={publicRespondent.full_name}
-                  onChange={(e) => setPublicRespondent((prev) => ({ ...prev, full_name: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                  placeholder="Nombre completo"
-                />
-              </div>
-
-              <div className="md:col-span-2">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Correo electrónico</label>
                 <input
                   type="email"
@@ -539,28 +497,6 @@ export default function PublicEvaluationPortal() {
                   placeholder="correo@dominio.com"
                 />
               </div>
-
-              {selectedPublicRole === 'student' ? (
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Código Académico</label>
-                  <input
-                    value={publicRespondent.academic_code}
-                    onChange={(e) => setPublicRespondent((prev) => ({ ...prev, academic_code: e.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                    placeholder="Ej: A0123456"
-                  />
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">No. de Documento</label>
-                  <input
-                    value={publicRespondent.document_number}
-                    onChange={(e) => setPublicRespondent((prev) => ({ ...prev, document_number: e.target.value }))}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                    placeholder="Ej: 1098765432"
-                  />
-                </div>
-              )}
 
               <div>
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nivel de Formación</label>
@@ -585,7 +521,7 @@ export default function PublicEvaluationPortal() {
                   {filteredProgramOptions.map((program) => (
                     <option key={program.id} value={program.name}>
                       {program.name}
-                      {!campusLevelPrograms.length && program.campus?.name ? ` (${program.campus.name})` : ''}
+                      {!programOptions.length && program.campus?.name ? ` (${program.campus.name})` : ''}
                     </option>
                   ))}
                 </select>
@@ -593,16 +529,46 @@ export default function PublicEvaluationPortal() {
 
               <div className="md:col-span-2">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Sitio de práctica a evaluar</label>
-                <select
-                  value={selectedCenterId}
-                  onChange={(e) => setSelectedCenterId(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
-                >
-                  <option value="">Selecciona un sitio</option>
-                  {centers.map((center) => (
-                    <option key={center.id} value={center.id}>{center.name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={centerSearchQuery}
+                    onChange={(e) => setCenterSearchQuery(e.target.value)}
+                    placeholder="Buscar sitio de práctica..."
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                  />
+                  {centerSearchQuery && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-lg z-10 max-h-48 overflow-y-auto">
+                      {centers
+                        .filter((center) =>
+                          center.name.toLowerCase().includes(centerSearchQuery.toLowerCase())
+                        )
+                        .map((center) => (
+                          <button
+                            key={center.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedCenterId(center.id);
+                              setCenterSearchQuery(center.name);
+                            }}
+                            className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b border-slate-100 last:border-b-0 transition-colors"
+                          >
+                            <p className="text-sm font-semibold text-slate-900">{center.name}</p>
+                          </button>
+                        ))}
+                      {centers.filter((center) =>
+                        center.name.toLowerCase().includes(centerSearchQuery.toLowerCase())
+                      ).length === 0 && (
+                        <div className="px-4 py-3 text-sm text-slate-500">No se encontraron resultados</div>
+                      )}
+                    </div>
+                  )}
+                  {selectedCenterId && !centerSearchQuery && (
+                    <div className="mt-2 p-3 rounded-xl bg-blue-50 border border-blue-100">
+                      <p className="text-sm font-semibold text-blue-900">{centers.find((c) => c.id === selectedCenterId)?.name || ''}</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -615,7 +581,10 @@ export default function PublicEvaluationPortal() {
             {publicStep > 1 ? (
               <button
                 type="button"
-                onClick={() => setPublicStep(1)}
+                onClick={() => {
+                  setPublicStep(1);
+                  setCenterSearchQuery('');
+                }}
                 className="rounded-[2rem] bg-slate-100 px-6 py-3 text-slate-700 font-bold uppercase tracking-[0.12em] hover:bg-slate-200 transition-all"
               >
                 Volver
@@ -635,15 +604,10 @@ export default function PublicEvaluationPortal() {
                   return;
                 }
 
-                const needsAcademicCode = selectedPublicRole === 'student';
-                const idFieldOk = needsAcademicCode ? Boolean(publicRespondent.academic_code) : Boolean(publicRespondent.document_number);
-
                 const hasValidEmail = /.+@.+\..+/.test(String(publicRespondent.email || '').trim());
 
-                if (!publicRespondent.full_name || !publicRespondent.program || !idFieldOk || !hasValidEmail) {
-                  setError(needsAcademicCode
-                    ? 'Debes completar nombre, correo, código académico, nivel y programa para continuar.'
-                    : 'Debes completar nombre, correo, número de documento, nivel y programa para continuar.');
+                if (!publicRespondent.email || !publicRespondent.program || !hasValidEmail) {
+                  setError('Debes completar correo, nivel de formación y programa para continuar.');
                   return;
                 }
                 if (!selectedCenterId) {

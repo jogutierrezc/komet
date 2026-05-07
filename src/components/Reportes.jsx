@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
-import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
+import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, getProgramsByCampus } from '../lib/data';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
 import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
 
@@ -15,14 +15,35 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
+
 function resolveProgram(row = {}) {
-  return normalizeText(
-    row.program ||
-      row.rawAnswers?._publicRespondent?.program ||
-      row.rawAnswers?.program ||
-      row.rawAnswers?.programa ||
-      'Sin programa'
+  // Para evaluaciones públicas, el programa real está en el JSONB del respondente
+  const fromJsonb = normalizeText(
+    row.rawAnswers?._publicRespondent?.program ||
+    row.rawAnswers?.program ||
+    row.rawAnswers?.programa ||
+    ''
   );
+  if (fromJsonb && !LEVEL_WORDS.has(fromJsonb.toLowerCase())) return fromJsonb;
+
+  // Para evaluaciones internas (tutores/estudiantes vinculados), usar row.program
+  // pero ignorarlo si contiene un valor de nivel en lugar de nombre de programa
+  const fromRow = normalizeText(row.program || '');
+  if (fromRow && !LEVEL_WORDS.has(fromRow.toLowerCase())) return fromRow;
+
+  return 'Sin programa';
+}
+
+function resolveLevel(row = {}) {
+  const raw = String(
+    row.rawAnswers?._publicRespondent?.program_level ||
+    row.rawAnswers?.program_level ||
+    ''
+  ).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (raw.startsWith('pre')) return 'pregrado';
+  if (raw.startsWith('pos')) return 'posgrado';
+  return '';
 }
 
 function escapeHtml(value = '') {
@@ -329,6 +350,7 @@ function parseNarrativeJson(rawText = '') {
 function composeReportHtml({
   campus,
   role,
+  level,
   program,
   center,
   filteredRows,
@@ -650,6 +672,7 @@ function composeReportHtml({
     <div class="meta">
       <div><strong>Campus:</strong> ${escapeHtml(campus)}</div>
       <div><strong>Rol evaluador:</strong> ${escapeHtml(role)}</div>
+      <div><strong>Nivel de formacion:</strong> ${escapeHtml(level || 'Todos los niveles')}</div>
       <div><strong>Programa:</strong> ${escapeHtml(program)}</div>
       <div><strong>Centro:</strong> ${escapeHtml(center)}</div>
       <div><strong>Fecha de generacion:</strong> ${escapeHtml(generatedAt)}</div>
@@ -883,8 +906,10 @@ export default function Reportes() {
   const [settings, setSettings] = useState(null);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
   const [selectedRole, setSelectedRole] = useState('Todos');
+  const [selectedLevel, setSelectedLevel] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
   const [selectedCenter, setSelectedCenter] = useState('Todos');
+  const [dbPrograms, setDbPrograms] = useState([]);
   const [selectedComplexity, setSelectedComplexity] = useState(NIVELES_COMPLEJIDAD.ALTA);
   const [reportHtml, setReportHtml] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -927,6 +952,52 @@ export default function Reportes() {
   const campusOptions = useMemo(() => [...new Set(rows.map((row) => normalizeText(row.campus || 'Sin campus')))].sort(), [rows]);
   const roleOptions = useMemo(() => [...new Set(rows.map((row) => normalizeText(row.role || 'Sin rol')))].sort(), [rows]);
 
+  // Carga todos los programas desde la tabla programs (sin filtro de campus, los rows no exponen campus_id)
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDbPrograms() {
+      try {
+        const data = await getProgramsByCampus(null);
+        if (!cancelled) setDbPrograms(data || []);
+      } catch {
+        if (!cancelled) setDbPrograms([]);
+      }
+    }
+    loadDbPrograms();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Programas de BD filtrados por nivel seleccionado
+  const levelFilteredDbPrograms = useMemo(() => {
+    if (selectedLevel === 'Todos') return dbPrograms;
+    return dbPrograms.filter((p) => p.level.toLowerCase() === selectedLevel.toLowerCase());
+  }, [dbPrograms, selectedLevel]);
+
+  // Set de nombres válidos por nivel (desde BD) — para fallback cuando el row no tiene program_level en JSONB
+  const validProgramNamesForLevel = useMemo(() => {
+    if (selectedLevel === 'Todos') return null;
+    return new Set(levelFilteredDbPrograms.map((p) => normalizeText(p.name).toLowerCase()));
+  }, [levelFilteredDbPrograms, selectedLevel]);
+
+  // programOptions: union de DB (nivel filtrado) + programas reales de los rows que coinciden con el nivel
+  const programOptions = useMemo(() => {
+    const combined = new Set(levelFilteredDbPrograms.map((p) => normalizeText(p.name)));
+    rows
+      .filter((row) => selectedCampus === 'Todos' || normalizeText(row.campus) === selectedCampus)
+      .filter((row) => {
+        if (selectedLevel === 'Todos') return true;
+        const rowLevel = resolveLevel(row);
+        if (rowLevel) return rowLevel === selectedLevel;
+        // Fallback: verificar por nombre en BD
+        return validProgramNamesForLevel?.has(normalizeText(resolveProgram(row)).toLowerCase()) ?? true;
+      })
+      .forEach((row) => {
+        const name = resolveProgram(row);
+        if (name !== 'Sin programa') combined.add(name);
+      });
+    return [...combined].sort((a, b) => a.localeCompare(b, 'es'));
+  }, [levelFilteredDbPrograms, rows, selectedCampus, selectedLevel, validProgramNamesForLevel]);
+
   const campusRows = useMemo(() => {
     return rows.filter((row) => {
       if (selectedCampus !== 'Todos' && normalizeText(row.campus) !== selectedCampus) return false;
@@ -940,15 +1011,6 @@ export default function Reportes() {
       return true;
     });
   }, [campusRows, selectedRole]);
-
-  const programOptions = useMemo(() => {
-    const options = [...new Set(campusRows.map((row) => resolveProgram(row)))].sort();
-    return options.sort((a, b) => {
-      if (a === 'Sin programa') return 1;
-      if (b === 'Sin programa') return -1;
-      return a.localeCompare(b);
-    });
-  }, [campusRows]);
 
   const centerOptions = useMemo(() => {
     const scopedByProgram = roleRows.filter((row) => selectedProgram === 'Todos' || resolveProgram(row) === selectedProgram);
@@ -969,11 +1031,21 @@ export default function Reportes() {
 
   const filteredRows = useMemo(() => {
     return roleRows.filter((row) => {
+      // Filtro por nivel: leer primero del JSONB, luego validar contra BD como fallback
+      if (selectedLevel !== 'Todos') {
+        const rowLevel = resolveLevel(row);
+        if (rowLevel) {
+          if (rowLevel !== selectedLevel) return false;
+        } else if (validProgramNamesForLevel) {
+          // Sin level en JSONB: filtrar por si el nombre del programa está en los de ese nivel en BD
+          if (!validProgramNamesForLevel.has(normalizeText(resolveProgram(row)).toLowerCase())) return false;
+        }
+      }
       if (selectedProgram !== 'Todos' && resolveProgram(row) !== selectedProgram) return false;
       if (selectedCenter !== 'Todos' && normalizeText(row.center || 'Sin sitio') !== selectedCenter) return false;
       return true;
     });
-  }, [roleRows, selectedProgram, selectedCenter]);
+  }, [roleRows, selectedProgram, selectedCenter, selectedLevel, validProgramNamesForLevel]);
 
   const globalScore = useMemo(() => {
     const scores = filteredRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number');
@@ -1019,6 +1091,7 @@ export default function Reportes() {
       filters: {
         campus: selectedCampus,
         role: selectedRole,
+        level: selectedLevel,
         program: selectedProgram,
         center: selectedCenter
       },
@@ -1129,6 +1202,7 @@ ${JSON.stringify(compactDataset)}
     const html = composeReportHtml({
       campus: selectedCampus,
       role: selectedRole,
+      level: selectedLevel === 'Todos' ? 'Todos los niveles' : selectedLevel.charAt(0).toUpperCase() + selectedLevel.slice(1),
       program: selectedProgram,
       center: selectedCenter,
       filteredRows,
@@ -1253,10 +1327,10 @@ ${JSON.stringify(compactDataset)}
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
             <MapPin size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedCampus} onChange={(event) => setSelectedCampus(event.target.value)}>
+            <select className="w-full bg-transparent outline-none" value={selectedCampus} onChange={(event) => { setSelectedCampus(event.target.value); setSelectedLevel('Todos'); setSelectedProgram('Todos'); }}>
               <option value="Todos">Todos los campus</option>
               {campusOptions.map((campus) => (
                 <option key={campus} value={campus}>{campus}</option>
@@ -1276,8 +1350,19 @@ ${JSON.stringify(compactDataset)}
 
           <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
             <GraduationCap size={16} className="text-slate-400" />
+            <select className="w-full bg-transparent outline-none" value={selectedLevel} onChange={(event) => { setSelectedLevel(event.target.value); setSelectedProgram('Todos'); }}>
+              <option value="Todos">Todos los niveles</option>
+              <option value="pregrado">Pregrado</option>
+              <option value="posgrado">Posgrado</option>
+            </select>
+          </label>
+
+          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
+            <GraduationCap size={16} className="text-slate-400" />
             <select className="w-full bg-transparent outline-none" value={selectedProgram} onChange={(event) => setSelectedProgram(event.target.value)}>
-              <option value="Todos">Todos los programas</option>
+              <option value="Todos">
+                {selectedLevel === 'Todos' ? 'Todos los programas' : `Todos (${selectedLevel === 'pregrado' ? 'Pregrado' : 'Posgrado'})`}
+              </option>
               {programOptions.map((program) => (
                 <option key={program} value={program}>{program}</option>
               ))}
