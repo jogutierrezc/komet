@@ -422,6 +422,22 @@ export default function Estadistica() {
       .sort((a, b) => a.promedio - b.promedio);
   }, [filtered]);
 
+  const aiComments = useMemo(() => {
+    const snippets = [];
+    filtered.forEach((row) => {
+      extractOpenTextResponses(row).slice(0, 2).forEach((item) => {
+        snippets.push({
+          center: norm(row.center || 'Sin sitio'),
+          program: resolveProgram(row),
+          role: norm(row.role || 'Sin rol'),
+          question: item.question,
+          text: item.text
+        });
+      });
+    });
+    return snippets.slice(0, 50);
+  }, [filtered]);
+
   const dataQualitySummary = useMemo(() => {
     const statusCounts = filtered.reduce((acc, row) => {
       const key = norm(row.status || 'Pendiente');
@@ -490,22 +506,6 @@ export default function Estadistica() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
   }, [centerComments]);
-
-  const aiComments = useMemo(() => {
-    const snippets = [];
-    filtered.forEach((row) => {
-      extractOpenTextResponses(row).slice(0, 2).forEach((item) => {
-        snippets.push({
-          center: norm(row.center || 'Sin sitio'),
-          program: resolveProgram(row),
-          role: norm(row.role || 'Sin rol'),
-          question: item.question,
-          text: item.text
-        });
-      });
-    });
-    return snippets.slice(0, 50);
-  }, [filtered]);
 
   async function generateAnaliticKomet() {
     try {
