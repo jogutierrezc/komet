@@ -22,6 +22,13 @@ function avg(values = []) {
   return Number((values.reduce((s, v) => s + v, 0) / values.length).toFixed(2));
 }
 
+function stdDev(values = []) {
+  if (!values.length) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length;
+  return Number(Math.sqrt(variance).toFixed(3));
+}
+
 function norm(v) { return String(v || '').trim(); }
 
 function extractOpenTextResponses(row = {}) {
@@ -133,8 +140,13 @@ function PieTooltip({ active, payload }) {
 function parseAnaliticKometResponse(rawText = '') {
   const fallback = {
     resumenEjecutivo: 'No fue posible estructurar la respuesta IA en este momento.',
+    metodologia: '',
     lecturaGraficas: 'Intenta de nuevo con un rango de filtros diferente.',
+    calidadDato: null,
+    analisisPorCriterio: [],
+    benchmarking: '',
     hallazgosClave: [],
+    riesgosPriorizados: [],
     mejorasPriorizadas: [],
     alertasTempranas: [],
     conclusion: ''
@@ -153,8 +165,13 @@ function parseAnaliticKometResponse(rawText = '') {
     const parsed = JSON.parse(jsonText);
     return {
       resumenEjecutivo: String(parsed?.resumenEjecutivo || fallback.resumenEjecutivo),
+      metodologia: String(parsed?.metodologia || ''),
       lecturaGraficas: String(parsed?.lecturaGraficas || fallback.lecturaGraficas),
+      calidadDato: parsed?.calidadDato && typeof parsed.calidadDato === 'object' ? parsed.calidadDato : null,
+      analisisPorCriterio: Array.isArray(parsed?.analisisPorCriterio) ? parsed.analisisPorCriterio : [],
+      benchmarking: String(parsed?.benchmarking || ''),
       hallazgosClave: Array.isArray(parsed?.hallazgosClave) ? parsed.hallazgosClave : [],
+      riesgosPriorizados: Array.isArray(parsed?.riesgosPriorizados) ? parsed.riesgosPriorizados : [],
       mejorasPriorizadas: Array.isArray(parsed?.mejorasPriorizadas) ? parsed.mejorasPriorizadas : [],
       alertasTempranas: Array.isArray(parsed?.alertasTempranas) ? parsed.alertasTempranas : [],
       conclusion: String(parsed?.conclusion || '')
@@ -194,6 +211,7 @@ export default function Estadistica() {
   const [analiticError, setAnaliticError] = useState('');
   const [analiticOutput, setAnaliticOutput] = useState(null);
   const [analiticGeneratedAt, setAnaliticGeneratedAt] = useState('');
+  const [analysisDepth, setAnalysisDepth] = useState('profundo');
 
   useEffect(() => {
     setLoading(true);
@@ -374,6 +392,56 @@ export default function Estadistica() {
     }));
   }, [byCenter, kpis.globalScore]);
 
+  const criteriaSectionStats = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((row) => {
+      (row.scoreSummary?.sectionScores || []).forEach((sec) => {
+        const key = norm(sec.title || sec.seccion || 'Sección');
+        const cur = map.get(key) || { criterio: key, scores: [] };
+        const value = Number(sec.score);
+        if (Number.isFinite(value)) cur.scores.push(value);
+        map.set(key, cur);
+      });
+    });
+
+    return [...map.values()]
+      .map((item) => {
+        const mean = avg(item.scores);
+        const gap = Number((mean - 3.7).toFixed(2));
+        return {
+          criterio: item.criterio,
+          muestras: item.scores.length,
+          promedio: mean,
+          desviacion: stdDev(item.scores),
+          minimo: item.scores.length ? Number(Math.min(...item.scores).toFixed(2)) : 0,
+          maximo: item.scores.length ? Number(Math.max(...item.scores).toFixed(2)) : 0,
+          brechaUmbral: gap,
+          estado0273: mean >= 4.0 ? 'Fortaleza' : mean >= 3.7 ? 'Cumple' : mean >= 3.2 ? 'Vigilancia' : 'Intervencion'
+        };
+      })
+      .sort((a, b) => a.promedio - b.promedio);
+  }, [filtered]);
+
+  const dataQualitySummary = useMemo(() => {
+    const statusCounts = filtered.reduce((acc, row) => {
+      const key = norm(row.status || 'Pendiente');
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+    const scoreRows = filtered.filter((row) => typeof row.scoreSummary?.globalScore === 'number').length;
+    return {
+      totalEvaluaciones: filtered.length,
+      evaluacionesConPuntaje: scoreRows,
+      coberturaPuntajePct: filtered.length ? Number(((scoreRows / filtered.length) * 100).toFixed(1)) : 0,
+      completitudPct: kpis.completionPct,
+      centrosActivos: kpis.centers,
+      programasActivos: kpis.programs,
+      comentariosAbiertos: aiComments.length,
+      distribucionEstados: statusCounts
+    };
+  }, [filtered, kpis, aiComments]);
+
   const centerComments = useMemo(() => {
     const source = selectedCenterView === 'Todos'
       ? filtered
@@ -455,7 +523,8 @@ export default function Estadistica() {
           campus: selectedCampus,
           nivel: selectedLevel,
           centro: selectedCenter,
-          programa: selectedProgram
+          programa: selectedProgram,
+          profundidadAnalisis: analysisDepth
         },
         marcoNormativo: {
           resolucion: 'MEN 00273 de 2021',
@@ -475,6 +544,8 @@ export default function Estadistica() {
         centrosTopVolumen: topCentersByVolume.slice(0, 10),
         centrosTopPromedio: byCenter.slice(0, 10),
         comparativoCentros: centerComparison.slice(0, 15),
+        criterioPorSeccion: criteriaSectionStats,
+        calidadDato: dataQualitySummary,
         roles: byRole,
         secciones: bySectionRaw,
         paretoSecciones: paretoSections,
@@ -483,7 +554,9 @@ export default function Estadistica() {
 
       const systemPrompt = [
         'Eres Analitic Komet, analista senior de calidad academica y relacion docencia-servicio.',
-        'Debes interpretar tableros estadisticos y comentarios abiertos para generar hallazgos accionables.',
+        'Debes interpretar tableros estadisticos y comentarios abiertos para generar hallazgos accionables y trazables.',
+        'Debes cubrir todos los criterios disponibles en criterioPorSeccion, sin omitir ninguno.',
+        'Cada afirmacion relevante debe incluir evidencia numerica y referenciar su fuente dentro del dataset.',
         'No inventes datos. Usa solo la evidencia del dataset recibido.',
         'Responde en espanol, tono tecnico-directivo, claro y ejecutable.',
         'Obligatorio: responde solo JSON valido sin markdown.'
@@ -495,14 +568,43 @@ Genera un analisis institucional llamado "Analitic Komet" con base en los datos 
 Devuelve exclusivamente JSON con esta estructura exacta:
 {
   "resumenEjecutivo": "...",
+  "metodologia": "...",
   "lecturaGraficas": "...",
+  "calidadDato": {
+    "diagnostico": "...",
+    "limitaciones": ["..."],
+    "confiabilidad": "Alta|Media|Baja"
+  },
+  "analisisPorCriterio": [
+    {
+      "criterio": "...",
+      "estado0273": "Fortaleza|Cumple|Vigilancia|Intervencion",
+      "evidenciaCuantitativa": "...",
+      "evidenciaCualitativa": "...",
+      "brecha": "...",
+      "recomendacion": "..."
+    }
+  ],
+  "benchmarking": "...",
   "hallazgosClave": ["..."],
+  "riesgosPriorizados": [
+    {
+      "riesgo": "...",
+      "tipo": "Normativo|Operativo|Pedagogico|Experiencia",
+      "severidad": "Alta|Media|Baja",
+      "impacto": "...",
+      "evidencia": "...",
+      "accionContencion": "..."
+    }
+  ],
   "mejorasPriorizadas": [
     {
       "accion": "...",
       "prioridad": "Alta|Media|Baja",
       "horizonte": "30 dias|60 dias|90 dias",
       "responsableSugerido": "...",
+      "kpiSeguimiento": "...",
+      "criterioObjetivo": "...",
       "justificacion": "..."
     }
   ],
@@ -515,6 +617,8 @@ Reglas:
 - Compara explicitamente cada programa frente al promedio global y frente al umbral 3.7.
 - Si hay un programa seleccionado, comparalo contra los demas programas del dataset filtrado.
 - Usa el marco del algoritmo MEN 00273 de 2021 para clasificar el nivel de riesgo por programa y centro.
+- Analiza todos los criterios presentes en criterioPorSeccion y reporta cada uno en analisisPorCriterio.
+- Si hay conflictos entre datos cuantitativos y comentarios, explicalos como tension de evidencia.
 - Usa comentarios para construir oportunidades de mejora concretas.
 - Incluye riesgos operativos y acciones priorizadas por impacto.
 - Si hay pocos datos, dilo explicitamente y sugiere mejoras de captura.
@@ -1549,6 +1653,15 @@ ${JSON.stringify(payload)}
               >
                 {isGeneratingAnalitic ? 'Generando analisis...' : 'Generar Analitic Komet'}
               </button>
+              <select
+                value={analysisDepth}
+                onChange={(e) => setAnalysisDepth(e.target.value)}
+                className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="rapido">Profundidad: Rapido</option>
+                <option value="estandar">Profundidad: Estandar</option>
+                <option value="profundo">Profundidad: Profundo</option>
+              </select>
               <span className="text-xs text-slate-500">
                 Filtros activos: {selectedCampus} · {selectedLevel} · {selectedCenter} · {selectedProgram}
               </span>
@@ -1603,9 +1716,66 @@ ${JSON.stringify(payload)}
                 <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.resumenEjecutivo}</p>
               </ChartCard>
 
+              {analiticOutput.metodologia && (
+                <ChartCard title="Metodologia" subtitle="Enfoque analitico y criterios de interpretacion" span={2}>
+                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.metodologia}</p>
+                </ChartCard>
+              )}
+
               <ChartCard title="Lectura de graficas" subtitle="Interpretacion de tendencias y comparativos" span={2}>
                 <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.lecturaGraficas}</p>
               </ChartCard>
+
+              {analiticOutput.calidadDato && (
+                <ChartCard title="Calidad del dato" subtitle="Confiabilidad del analisis y limitaciones de captura" span={2}>
+                  <p className="text-sm text-slate-700 mb-3 whitespace-pre-line leading-relaxed">{String(analiticOutput.calidadDato?.diagnostico || '')}</p>
+                  <p className="text-xs text-slate-500 mb-2">Confiabilidad: <span className="font-bold text-slate-700">{String(analiticOutput.calidadDato?.confiabilidad || 'No definida')}</span></p>
+                  {Array.isArray(analiticOutput.calidadDato?.limitaciones) && analiticOutput.calidadDato.limitaciones.length > 0 && (
+                    <ul className="space-y-1 text-sm text-slate-700 list-disc pl-5">
+                      {analiticOutput.calidadDato.limitaciones.map((lim, idx) => (
+                        <li key={idx}>{String(lim)}</li>
+                      ))}
+                    </ul>
+                  )}
+                </ChartCard>
+              )}
+
+              {analiticOutput.benchmarking && (
+                <ChartCard title="Benchmarking" subtitle="Comparativos entre programas, centros y promedio global" span={2}>
+                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.benchmarking}</p>
+                </ChartCard>
+              )}
+
+              {analiticOutput.analisisPorCriterio?.length > 0 && (
+                <ChartCard title="Analisis por criterio" subtitle="Cobertura completa de criterios del instrumento con enfoque normativo" span={2}>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-200">
+                          <th className="py-2 text-left">Criterio</th>
+                          <th className="py-2 text-left">Estado 0273</th>
+                          <th className="py-2 text-left">Evidencia cuantitativa</th>
+                          <th className="py-2 text-left">Evidencia cualitativa</th>
+                          <th className="py-2 text-left">Brecha</th>
+                          <th className="py-2 text-left">Recomendacion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analiticOutput.analisisPorCriterio.map((item, idx) => (
+                          <tr key={idx} className="border-b border-slate-100 align-top">
+                            <td className="py-2 font-semibold text-slate-800 min-w-[180px]">{String(item?.criterio || '')}</td>
+                            <td className="py-2 text-slate-700">{String(item?.estado0273 || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[220px]">{String(item?.evidenciaCuantitativa || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[220px]">{String(item?.evidenciaCualitativa || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[120px]">{String(item?.brecha || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[240px]">{String(item?.recomendacion || '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </ChartCard>
+              )}
 
               <ChartCard title="Hallazgos clave" subtitle="Puntos criticos identificados por Analitic Komet">
                 {analiticOutput.hallazgosClave?.length ? (
@@ -1631,6 +1801,37 @@ ${JSON.stringify(payload)}
                 )}
               </ChartCard>
 
+              {analiticOutput.riesgosPriorizados?.length > 0 && (
+                <ChartCard title="Riesgos priorizados" subtitle="Matriz de riesgos con evidencia y contencion" span={2}>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-200">
+                          <th className="py-2 text-left">Riesgo</th>
+                          <th className="py-2 text-left">Tipo</th>
+                          <th className="py-2 text-left">Severidad</th>
+                          <th className="py-2 text-left">Impacto</th>
+                          <th className="py-2 text-left">Evidencia</th>
+                          <th className="py-2 text-left">Accion de contencion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analiticOutput.riesgosPriorizados.map((risk, idx) => (
+                          <tr key={idx} className="border-b border-slate-100 align-top">
+                            <td className="py-2 font-semibold text-slate-800 min-w-[180px]">{String(risk?.riesgo || '')}</td>
+                            <td className="py-2 text-slate-700">{String(risk?.tipo || '')}</td>
+                            <td className="py-2 text-slate-700">{String(risk?.severidad || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[180px]">{String(risk?.impacto || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[220px]">{String(risk?.evidencia || '')}</td>
+                            <td className="py-2 text-slate-700 min-w-[220px]">{String(risk?.accionContencion || '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </ChartCard>
+              )}
+
               <ChartCard title="Aspectos de mejora" subtitle="Plan de accion sugerido desde comentarios y metricas" span={2}>
                 {analiticOutput.mejorasPriorizadas?.length ? (
                   <div className="overflow-x-auto">
@@ -1641,6 +1842,8 @@ ${JSON.stringify(payload)}
                           <th className="py-2 text-left">Prioridad</th>
                           <th className="py-2 text-left">Horizonte</th>
                           <th className="py-2 text-left">Responsable</th>
+                          <th className="py-2 text-left">KPI</th>
+                          <th className="py-2 text-left">Criterio objetivo</th>
                           <th className="py-2 text-left">Justificacion</th>
                         </tr>
                       </thead>
@@ -1651,6 +1854,8 @@ ${JSON.stringify(payload)}
                             <td className="py-2 text-slate-700">{String(m?.prioridad || '')}</td>
                             <td className="py-2 text-slate-700">{String(m?.horizonte || '')}</td>
                             <td className="py-2 text-slate-700">{String(m?.responsableSugerido || '')}</td>
+                            <td className="py-2 text-slate-700">{String(m?.kpiSeguimiento || '')}</td>
+                            <td className="py-2 text-slate-700">{String(m?.criterioObjetivo || '')}</td>
                             <td className="py-2 text-slate-700 min-w-[260px]">{String(m?.justificacion || '')}</td>
                           </tr>
                         ))}
