@@ -348,6 +348,32 @@ export default function Estadistica() {
       .map((d, i) => ({ ...d, rank: i + 1 }));
   }, [byCenter]);
 
+  const programComparison = useMemo(() => {
+    const sorted = [...byProgramExtended].sort((a, b) => b.score - a.score);
+    const total = sorted.length || 1;
+    return sorted.map((row, idx) => ({
+      ...row,
+      rank: idx + 1,
+      percentile: Number((((total - idx) / total) * 100).toFixed(1)),
+      gapToThreshold: Number((row.score - 3.7).toFixed(2)),
+      gapToGlobal: Number((row.score - kpis.globalScore).toFixed(2)),
+      estado0273: row.score >= 4.0 ? 'Fortaleza' : row.score >= 3.7 ? 'Cumple' : row.score >= 3.2 ? 'Vigilancia' : 'Intervencion'
+    }));
+  }, [byProgramExtended, kpis.globalScore]);
+
+  const centerComparison = useMemo(() => {
+    const sorted = [...byCenter].sort((a, b) => b.score - a.score);
+    const total = sorted.length || 1;
+    return sorted.map((row, idx) => ({
+      ...row,
+      rank: idx + 1,
+      percentile: Number((((total - idx) / total) * 100).toFixed(1)),
+      gapToThreshold: Number((row.score - 3.7).toFixed(2)),
+      gapToGlobal: Number((row.score - kpis.globalScore).toFixed(2)),
+      estado0273: row.score >= 4.0 ? 'Fortaleza' : row.score >= 3.7 ? 'Cumple' : row.score >= 3.2 ? 'Vigilancia' : 'Intervencion'
+    }));
+  }, [byCenter, kpis.globalScore]);
+
   const centerComments = useMemo(() => {
     const source = selectedCenterView === 'Todos'
       ? filtered
@@ -431,12 +457,24 @@ export default function Estadistica() {
           centro: selectedCenter,
           programa: selectedProgram
         },
+        marcoNormativo: {
+          resolucion: 'MEN 00273 de 2021',
+          umbralMinimo: 3.7,
+          zonas: {
+            fortaleza: '>=4.0',
+            cumple: '3.7 a 3.99',
+            vigilancia: '3.2 a 3.69',
+            intervencion: '<3.2'
+          }
+        },
         kpis,
         tendenciaMensual: monthlyTrend,
         funnel: funnelData,
         programasTop: byProgramExtended.slice(0, 10),
+        comparativoProgramas: programComparison.slice(0, 15),
         centrosTopVolumen: topCentersByVolume.slice(0, 10),
         centrosTopPromedio: byCenter.slice(0, 10),
+        comparativoCentros: centerComparison.slice(0, 15),
         roles: byRole,
         secciones: bySectionRaw,
         paretoSecciones: paretoSections,
@@ -474,6 +512,9 @@ Devuelve exclusivamente JSON con esta estructura exacta:
 
 Reglas:
 - Interpreta tendencias, dispersion y comparativos entre centros, programas, roles y secciones.
+- Compara explicitamente cada programa frente al promedio global y frente al umbral 3.7.
+- Si hay un programa seleccionado, comparalo contra los demas programas del dataset filtrado.
+- Usa el marco del algoritmo MEN 00273 de 2021 para clasificar el nivel de riesgo por programa y centro.
 - Usa comentarios para construir oportunidades de mejora concretas.
 - Incluye riesgos operativos y acciones priorizadas por impacto.
 - Si hay pocos datos, dilo explicitamente y sugiere mejoras de captura.
@@ -1517,6 +1558,44 @@ ${JSON.stringify(payload)}
             </div>
             {analiticError && <p className="text-sm text-red-600 mt-3">{analiticError}</p>}
           </ChartCard>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <ChartCard
+              title="Comparativo normativo por programa"
+              subtitle="Promedio por programa con referencia al umbral 3.7 de MEN 00273"
+            >
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={programComparison.slice(0, 10)} barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={65} />
+                  <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
+                  <Tooltip content={<ScoreTooltip />} />
+                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
+                    {programComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            <ChartCard
+              title="Comparativo normativo por centro"
+              subtitle="Ranking de centros por brecha respecto al umbral y promedio global"
+            >
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={centerComparison.slice(0, 10)} layout="vertical" barSize={16}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                  <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 10 }} />
+                  <Tooltip content={<ScoreTooltip />} />
+                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
+                    {centerComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </div>
 
           {analiticOutput && (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

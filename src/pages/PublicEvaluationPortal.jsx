@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
@@ -32,6 +32,15 @@ export default function PublicEvaluationPortal() {
   const selectedCampusId = sharedSurveyId ? sharedSurvey?.campus_id || null : userData?.campus_id || null;
 
   const filteredProgramOptions = programOptions.length ? programOptions : allProgramOptions;
+  const filteredCenters = useMemo(() => {
+    const query = norm(centerSearchQuery).toLowerCase();
+    if (!query) return centers;
+    return centers.filter((center) => norm(center.name).toLowerCase().includes(query));
+  }, [centers, centerSearchQuery]);
+
+  function norm(value = '') {
+    return String(value || '').trim();
+  }
 
   const capitalize = (value = '') => String(value)
     .split(/\s+/)
@@ -529,7 +538,7 @@ export default function PublicEvaluationPortal() {
 
               <div className="md:col-span-2">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Sitio de práctica a evaluar</label>
-                <div className="relative">
+                <div className="space-y-3">
                   <input
                     type="text"
                     value={centerSearchQuery}
@@ -537,37 +546,26 @@ export default function PublicEvaluationPortal() {
                     placeholder="Buscar sitio de práctica..."
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
                   />
-                  {centerSearchQuery && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-lg z-10 max-h-48 overflow-y-auto">
-                      {centers
-                        .filter((center) =>
-                          center.name.toLowerCase().includes(centerSearchQuery.toLowerCase())
-                        )
-                        .map((center) => (
-                          <button
-                            key={center.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedCenterId(center.id);
-                              setCenterSearchQuery(center.name);
-                            }}
-                            className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b border-slate-100 last:border-b-0 transition-colors"
-                          >
-                            <p className="text-sm font-semibold text-slate-900">{center.name}</p>
-                          </button>
-                        ))}
-                      {centers.filter((center) =>
-                        center.name.toLowerCase().includes(centerSearchQuery.toLowerCase())
-                      ).length === 0 && (
-                        <div className="px-4 py-3 text-sm text-slate-500">No se encontraron resultados</div>
-                      )}
-                    </div>
-                  )}
-                  {selectedCenterId && !centerSearchQuery && (
-                    <div className="mt-2 p-3 rounded-xl bg-blue-50 border border-blue-100">
-                      <p className="text-sm font-semibold text-blue-900">{centers.find((c) => c.id === selectedCenterId)?.name || ''}</p>
-                    </div>
-                  )}
+                  <select
+                    value={selectedCenterId}
+                    onChange={(e) => {
+                      const centerId = e.target.value;
+                      setSelectedCenterId(centerId);
+                      const selected = centers.find((c) => c.id === centerId);
+                      setCenterSearchQuery(selected?.name || centerSearchQuery);
+                    }}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-blue-500"
+                  >
+                    <option value="">Selecciona un sitio de práctica</option>
+                    {filteredCenters.map((center) => (
+                      <option key={center.id} value={center.id}>
+                        {center.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500">
+                    Mostrando {filteredCenters.length} de {centers.length} centros disponibles.
+                  </p>
                 </div>
               </div>
             </div>
