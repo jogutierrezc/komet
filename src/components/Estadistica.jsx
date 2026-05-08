@@ -149,6 +149,7 @@ function parseAnaliticKometResponse(rawText = '') {
     riesgosPriorizados: [],
     mejorasPriorizadas: [],
     alertasTempranas: [],
+    analisisCualitativoPorCentro: [],
     conclusion: ''
   };
 
@@ -174,6 +175,7 @@ function parseAnaliticKometResponse(rawText = '') {
       riesgosPriorizados: Array.isArray(parsed?.riesgosPriorizados) ? parsed.riesgosPriorizados : [],
       mejorasPriorizadas: Array.isArray(parsed?.mejorasPriorizadas) ? parsed.mejorasPriorizadas : [],
       alertasTempranas: Array.isArray(parsed?.alertasTempranas) ? parsed.alertasTempranas : [],
+      analisisCualitativoPorCentro: Array.isArray(parsed?.analisisCualitativoPorCentro) ? parsed.analisisCualitativoPorCentro : [],
       conclusion: String(parsed?.conclusion || '')
     };
   } catch {
@@ -438,6 +440,40 @@ export default function Estadistica() {
     return snippets.slice(0, 50);
   }, [filtered]);
 
+  // agrupacion de comentarios abiertos por centro de practica (todos los roles)
+  const comentariosPorCentro = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((row) => {
+      const center = norm(row.center || 'Sin sitio');
+      const cur = map.get(center) || { center, comments: [], studentComments: [], scores: [], roles: new Set() };
+      const role = norm(row.role || 'Sin rol');
+      cur.roles.add(role);
+      const s = row.scoreSummary?.globalScore;
+      if (typeof s === 'number') cur.scores.push(s);
+      extractOpenTextResponses(row).forEach((item) => {
+        const snippet = { question: item.question, text: item.text, role, program: resolveProgram(row) };
+        cur.comments.push(snippet);
+        const roleLow = role.toLowerCase();
+        if (roleLow.includes('stud') || roleLow.includes('student') || roleLow.includes('estudiante') || roleLow.includes('practicante')) {
+          cur.studentComments.push(snippet);
+        }
+      });
+      map.set(center, cur);
+    });
+    return [...map.values()]
+      .map((d) => ({
+        center: d.center,
+        promedio: avg(d.scores),
+        totalComentarios: d.comments.length,
+        comentariosEstudiante: d.studentComments.length,
+        roles: [...d.roles],
+        comentarios: d.comments.slice(0, 30),
+        comentariosEstudianteDetalle: d.studentComments.slice(0, 20),
+      }))
+      .sort((a, b) => b.totalComentarios - a.totalComentarios)
+      .slice(0, 15);
+  }, [filtered]);
+
   const dataQualitySummary = useMemo(() => {
     const statusCounts = filtered.reduce((acc, row) => {
       const key = norm(row.status || 'Pendiente');
@@ -549,7 +585,8 @@ export default function Estadistica() {
         roles: byRole,
         secciones: bySectionRaw,
         paretoSecciones: paretoSections,
-        comentarios: aiComments
+        comentarios: aiComments,
+        escenariosPractica: comentariosPorCentro
       };
 
       const systemPrompt = [
@@ -609,6 +646,17 @@ Devuelve exclusivamente JSON con esta estructura exacta:
     }
   ],
   "alertasTempranas": ["..."],
+  "analisisCualitativoPorCentro": [
+    {
+      "centro": "Nombre del escenario de practica",
+      "promedio": 4.2,
+      "fortalezas": ["Descripcion de fortaleza 1 identificada en los comentarios", "Fortaleza 2"],
+      "aspectosMejora": ["Aspecto a mejorar 1 con detalle", "Aspecto 2"],
+      "tematicasRecurrentes": ["Tematica o patron recurrente en los comentarios", "Otro patron"],
+      "vocesEstudiantes": "Sintesis amplia de las observaciones y voces literales de los estudiantes/practicantes sobre este escenario. Debe ser un parrafo descriptivo extenso que recoja el sentir general.",
+      "descripcionAmplia": "Analisis cualitativo profundo del escenario de practica. Minimo 3 parrafos. Integra comentarios de todos los roles. Describe el ambiente de aprendizaje, la relacion docencia-servicio, aspectos criticos y oportunidades de desarrollo identificados en los textos."
+    }
+  ],
   "conclusion": "..."
 }
 
@@ -622,6 +670,7 @@ Reglas:
 - Usa comentarios para construir oportunidades de mejora concretas.
 - Incluye riesgos operativos y acciones priorizadas por impacto.
 - Si hay pocos datos, dilo explicitamente y sugiere mejoras de captura.
+- ANALISIS CUALITATIVO POR ESCENARIO (analisisCualitativoPorCentro): Para CADA escenario/centro presente en escenariosPractica, genera un objeto con: fortalezas (lista de puntos positivos identificados en los comentarios), aspectosMejora (lista de debilidades o areas criticas), tematicasRecurrentes (patrones o temas que aparecen en multiples comentarios), vocesEstudiantes (sintesis literal y amplia de lo que dijeron los estudiantes/practicantes, citando ideas clave sin inventar), descripcionAmplia (analisis cualitativo completo del escenario con minimo 3 parrafos que describan el ambiente formativo, la calidad de la relacion docencia-servicio, los aspectos criticos y las oportunidades de mejora identificadas). Si un escenario no tiene comentarios de estudiantes, indicalos con "Sin observaciones de estudiantes disponibles". No omitas ningun escenario presente en escenariosPractica.
 
 Dataset filtrado:
 ${JSON.stringify(payload)}
@@ -1800,6 +1849,76 @@ ${JSON.stringify(payload)}
                   <p className="text-sm text-slate-400">Sin alertas reportadas.</p>
                 )}
               </ChartCard>
+
+              {analiticOutput.analisisCualitativoPorCentro?.length > 0 && (
+                <ChartCard title="Analisis cualitativo por escenario de practica" subtitle="Fortalezas, aspectos de mejora y voces de estudiantes por sitio de practica — generado por Analitic Komet" span={2}>
+                  <div className="space-y-8">
+                    {analiticOutput.analisisCualitativoPorCentro.map((escenario, idx) => (
+                      <div key={idx} className="border border-slate-200 rounded-xl p-5 bg-slate-50">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <h4 className="font-bold text-slate-800 text-base">{String(escenario?.centro || 'Escenario')}</h4>
+                            {typeof escenario?.promedio === 'number' && (
+                              <span className={`inline-block mt-1 text-xs font-semibold px-2 py-0.5 rounded-full ${escenario.promedio >= 4.0 ? 'bg-emerald-100 text-emerald-700' : escenario.promedio >= 3.7 ? 'bg-blue-100 text-blue-700' : escenario.promedio >= 3.2 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                                Promedio: {escenario.promedio.toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {escenario?.tematicasRecurrentes?.length > 0 && (
+                          <div className="mb-4">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tematicas recurrentes</p>
+                            <div className="flex flex-wrap gap-2">
+                              {escenario.tematicasRecurrentes.map((t, ti) => (
+                                <span key={ti} className="text-xs bg-blue-100 text-blue-700 rounded-full px-3 py-1">{String(t)}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                          {escenario?.fortalezas?.length > 0 && (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Fortalezas</p>
+                              <ul className="space-y-1.5 text-sm text-emerald-900">
+                                {escenario.fortalezas.map((f, fi) => (
+                                  <li key={fi} className="flex gap-2"><span className="text-emerald-500 shrink-0">✓</span>{String(f)}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {escenario?.aspectosMejora?.length > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Aspectos a mejorar</p>
+                              <ul className="space-y-1.5 text-sm text-amber-900">
+                                {escenario.aspectosMejora.map((a, ai) => (
+                                  <li key={ai} className="flex gap-2"><span className="text-amber-500 shrink-0">→</span>{String(a)}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+
+                        {escenario?.vocesEstudiantes && (
+                          <div className="mb-4 bg-violet-50 border border-violet-200 rounded-lg p-4">
+                            <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-2">Voces de los estudiantes / practicantes</p>
+                            <p className="text-sm text-violet-900 whitespace-pre-line leading-relaxed">{String(escenario.vocesEstudiantes)}</p>
+                          </div>
+                        )}
+
+                        {escenario?.descripcionAmplia && (
+                          <div className="bg-white border border-slate-200 rounded-lg p-4">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Descripcion cualitativa amplia</p>
+                            <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{String(escenario.descripcionAmplia)}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </ChartCard>
+              )}
 
               {analiticOutput.riesgosPriorizados?.length > 0 && (
                 <ChartCard title="Riesgos priorizados" subtitle="Matriz de riesgos con evidencia y contencion" span={2}>
