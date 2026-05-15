@@ -7,6 +7,7 @@ export default function Topbar({ activeTab, toggleMobileMenu }) {
       'convenios': 'Convenios',
       'evaluaciones': 'Evaluaciones',
       'reportes': 'Reportes',
+      'presenta': 'Komet Presenta',
       'sistema': 'Sistema'
     };
     return titles[activeTab] || activeTab;

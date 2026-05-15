@@ -6,6 +6,7 @@ import {
   ClipboardCheck, 
   BarChart3,
   LineChart,
+  Presentation,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -52,6 +53,7 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
               <SidebarItem collapsed={isCollapsed} icon={ClipboardCheck} label="Evaluaciones" active={activeTab === 'evaluaciones'} onClick={() => setActiveTab('evaluaciones')} badge="!" />
               <SidebarItem collapsed={isCollapsed} icon={BarChart3} label="Informe" active={activeTab === 'reportes'} onClick={() => setActiveTab('reportes')} />
               <SidebarItem collapsed={isCollapsed} icon={LineChart} label="Estadística" active={activeTab === 'estadistica'} onClick={() => setActiveTab('estadistica')} />
+              <SidebarItem collapsed={isCollapsed} icon={Presentation} label="Komet Presenta" active={activeTab === 'presenta'} onClick={() => setActiveTab('presenta')} />
               <SidebarItem collapsed={isCollapsed} icon={Settings} label="Sistema" active={activeTab === 'sistema'} onClick={() => setActiveTab('sistema')} />
             </nav>
           </div>
@@ -94,6 +96,7 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
               <SidebarItem icon={ClipboardCheck} label="Evaluaciones" active={activeTab === 'evaluaciones'} onClick={() => {setActiveTab('evaluaciones'); toggleMobileMenu();}} />
               <SidebarItem icon={BarChart3} label="Informe" active={activeTab === 'reportes'} onClick={() => {setActiveTab('reportes'); toggleMobileMenu();}} />
               <SidebarItem icon={LineChart} label="Estadística" active={activeTab === 'estadistica'} onClick={() => {setActiveTab('estadistica'); toggleMobileMenu();}} />
+              <SidebarItem icon={Presentation} label="Komet Presenta" active={activeTab === 'presenta'} onClick={() => {setActiveTab('presenta'); toggleMobileMenu();}} />
               <SidebarItem icon={Settings} label="Sistema" active={activeTab === 'sistema'} onClick={() => {setActiveTab('sistema'); toggleMobileMenu();}} />
               <button onClick={onLogout} className="w-full text-left text-gray-400 hover:text-red-400 px-4 py-3 text-sm font-medium">Salir</button>
             </nav>

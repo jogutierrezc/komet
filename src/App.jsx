@@ -8,6 +8,7 @@ import Profesores from './components/Profesores';
 import Evaluaciones from './components/Evaluaciones';
 import Reportes from './components/Reportes';
 import Estadistica from './components/Estadistica';
+import KometPresenta from './components/KometPresenta';
 import Sistema from './components/Sistema';
 
 export default function App({ onLogout }) {
@@ -33,6 +34,8 @@ export default function App({ onLogout }) {
         return <Reportes />;
       case 'estadistica':
         return <Estadistica />;
+      case 'presenta':
+        return <KometPresenta />;
       case 'sistema':
         return <Sistema />;
       default:

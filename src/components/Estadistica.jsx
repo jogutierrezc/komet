@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis,
@@ -6,7 +6,7 @@ import {
   LineChart, Line, FunnelChart, Funnel,
   LabelList
 } from 'recharts';
-import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain } from 'lucide-react';
+import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -102,12 +102,47 @@ function resolveLevel(row = {}) {
   return '';
 }
 
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function slugify(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-_]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function getSvgDimensions(svg) {
+  const width = svg.clientWidth || svg.viewBox.baseVal.width || 800;
+  const height = svg.clientHeight || svg.viewBox.baseVal.height || 600;
+  return {
+    width: Math.max(200, width),
+    height: Math.max(200, height)
+  };
+}
+
 function alertColor(score) {
   if (typeof score !== 'number') return '#94a3b8';
   if (score >= 4.0) return '#22c55e';
   if (score >= 3.5) return '#eab308';
   if (score >= 2.5) return '#f97316';
   return '#ef4444';
+}
+
+function heatColor(score) {
+  if (typeof score !== 'number' || Number.isNaN(score) || score <= 0) return '#e2e8f0';
+  const clamped = Math.max(1, Math.min(5, score));
+  const pct = (clamped - 1) / 4;
+  const hue = Math.round(pct * 120); // 0=rojo,120=verde
+  return `hsl(${hue}, 74%, 46%)`;
 }
 
 // Paleta de colores para roles / programas
@@ -189,7 +224,7 @@ function parseAnaliticKometResponse(rawText = '') {
 // ─── sección card wrapper ────────────────────────────────────────────────────
 function ChartCard({ title, subtitle, children, span = 1 }) {
   return (
-    <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-6 ${span === 2 ? 'col-span-1 xl:col-span-2' : ''}`}>
+    <div data-chart-title={title} className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-6 ${span === 2 ? 'col-span-1 xl:col-span-2' : ''}`}>
       <div className="mb-4">
         <h3 className="font-bold text-slate-800 text-base">{title}</h3>
         {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
@@ -214,6 +249,8 @@ export default function Estadistica() {
   const [analiticOutput, setAnaliticOutput] = useState(null);
   const [analiticGeneratedAt, setAnaliticGeneratedAt] = useState('');
   const [analysisDepth, setAnalysisDepth] = useState('profundo');
+  const [isExportingCharts, setIsExportingCharts] = useState(false);
+  const chartAreaRef = useRef(null);
 
   useEffect(() => {
     setLoading(true);
@@ -543,6 +580,196 @@ export default function Estadistica() {
       .slice(0, 10);
   }, [centerComments]);
 
+  const wordCloudData = useMemo(() => {
+    const stop = new Set(['para', 'como', 'esta', 'este', 'desde', 'entre', 'sobre', 'donde', 'cuando', 'porque', 'tambien', 'pero', 'muy', 'que', 'con', 'sin', 'por', 'del', 'las', 'los', 'una', 'uno', 'unos', 'unas', 'han', 'hay', 'fue', 'son', 'sus', 'al', 'el', 'la', 'en', 'de', 'y', 'o', 'mas', 'menos', 'falta', 'faltan', 'tener']);
+    const counter = new Map();
+
+    centerComments.forEach((item) => {
+      item.text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !stop.has(w))
+        .forEach((w) => {
+          counter.set(w, (counter.get(w) || 0) + 1);
+        });
+    });
+
+    const words = [...counter.entries()]
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 36);
+
+    const maxCount = words[0]?.count || 1;
+    return words.map((item) => ({
+      ...item,
+      size: Math.max(12, Math.min(34, 12 + (item.count / maxCount) * 22))
+    }));
+  }, [centerComments]);
+
+  const sentimentSummary = useMemo(() => {
+    const positiveLexicon = ['excelente', 'bueno', 'adecuado', 'oportuno', 'amable', 'calidad', 'cumple', 'apoyo', 'acompanamiento', 'satisfecho'];
+    const negativeLexicon = ['malo', 'deficiente', 'demora', 'retraso', 'insuficiente', 'falta', 'riesgo', 'inseguro', 'inadecuado', 'queja'];
+
+    let positive = 0;
+    let negative = 0;
+    let neutral = 0;
+
+    centerComments.forEach((item) => {
+      const normalized = item.text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ');
+
+      const posHits = positiveLexicon.reduce((acc, token) => acc + (normalized.includes(token) ? 1 : 0), 0);
+      const negHits = negativeLexicon.reduce((acc, token) => acc + (normalized.includes(token) ? 1 : 0), 0);
+
+      if (posHits > negHits) positive += 1;
+      else if (negHits > posHits) negative += 1;
+      else neutral += 1;
+    });
+
+    const total = positive + negative + neutral;
+    return {
+      positive,
+      negative,
+      neutral,
+      total,
+      positivePct: total ? Number(((positive / total) * 100).toFixed(1)) : 0,
+      negativePct: total ? Number(((negative / total) * 100).toFixed(1)) : 0,
+      neutralPct: total ? Number(((neutral / total) * 100).toFixed(1)) : 0,
+    };
+  }, [centerComments]);
+
+  const radarCampusVsInstitution = useMemo(() => {
+    const scopedRows = rows.filter((row) => {
+      if (selectedLevel !== 'Todos') {
+        const level = resolveLevel(row);
+        if (level && level !== selectedLevel) return false;
+      }
+      if (selectedCenter !== 'Todos' && norm(row.center || 'Sin sitio') !== selectedCenter) return false;
+      if (selectedProgram !== 'Todos' && resolveProgram(row) !== selectedProgram) return false;
+      return true;
+    });
+
+    const campusCandidates = [...new Set(scopedRows.map((row) => norm(row.campus || 'Sin campus')).filter(Boolean))];
+    const campusName = selectedCampus !== 'Todos'
+      ? selectedCampus
+      : (campusCandidates[0] || 'Campus seleccionado');
+
+    const campusRows = scopedRows.filter((row) => norm(row.campus || 'Sin campus') === campusName);
+
+    const institutionalMap = new Map();
+    scopedRows.forEach((row) => {
+      (row.scoreSummary?.sectionScores || []).forEach((sec) => {
+        const key = norm(sec.title || sec.seccion || 'Sección');
+        const cur = institutionalMap.get(key) || { name: key, values: [], count: 0 };
+        if (typeof sec.score === 'number') cur.values.push(sec.score);
+        cur.count += 1;
+        institutionalMap.set(key, cur);
+      });
+    });
+
+    const topDimensions = [...institutionalMap.values()]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map((item) => item.name);
+
+    const campusMap = new Map();
+    campusRows.forEach((row) => {
+      (row.scoreSummary?.sectionScores || []).forEach((sec) => {
+        const key = norm(sec.title || sec.seccion || 'Sección');
+        const cur = campusMap.get(key) || [];
+        if (typeof sec.score === 'number') cur.push(sec.score);
+        campusMap.set(key, cur);
+      });
+    });
+
+    const data = topDimensions.map((dimension) => ({
+      dimension: dimension.length > 28 ? dimension.slice(0, 28) + '…' : dimension,
+      institucional: avg(institutionalMap.get(dimension)?.values || []),
+      campus: avg(campusMap.get(dimension) || [])
+    }));
+
+    return {
+      campusName,
+      data
+    };
+  }, [rows, selectedCampus, selectedLevel, selectedCenter, selectedProgram]);
+
+  const divergentLikertBySection = useMemo(() => {
+    const map = new Map();
+
+    filtered.forEach((row) => {
+      (row.scoreSummary?.sectionScores || []).forEach((sec) => {
+        const key = norm(sec.title || sec.seccion || 'Sección');
+        const cur = map.get(key) || { name: key, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 };
+        const rounded = Math.round(Number(sec.score || 0));
+        if (rounded >= 1 && rounded <= 5) {
+          cur[`r${rounded}`] += 1;
+          cur.total += 1;
+        }
+        map.set(key, cur);
+      });
+    });
+
+    return [...map.values()]
+      .filter((row) => row.total > 0)
+      .map((row) => {
+        const p1 = Number(((row.r1 / row.total) * 100).toFixed(1));
+        const p2 = Number(((row.r2 / row.total) * 100).toFixed(1));
+        const p3 = Number(((row.r3 / row.total) * 100).toFixed(1));
+        const p4 = Number(((row.r4 / row.total) * 100).toFixed(1));
+        const p5 = Number(((row.r5 / row.total) * 100).toFixed(1));
+        return {
+          name: row.name.length > 25 ? row.name.slice(0, 25) + '…' : row.name,
+          r1Neg: -p1,
+          r2Neg: -p2,
+          r3Neg: -Number((p3 / 2).toFixed(1)),
+          r3Pos: Number((p3 / 2).toFixed(1)),
+          r4Pos: p4,
+          r5Pos: p5,
+          neutralPct: p3,
+          total: row.total
+        };
+      })
+      .sort((a, b) => a.r5Pos + a.r4Pos - (b.r5Pos + b.r4Pos))
+      .slice(0, 10);
+  }, [filtered]);
+
+  const impactVsSatisfaction = useMemo(() => {
+    const map = new Map();
+
+    filtered.forEach((row) => {
+      const center = norm(row.center || 'Sin sitio');
+      const cur = map.get(center) || { name: center, total: 0, studentImpact: 0, scores: [], campus: norm(row.campus || 'Sin campus') };
+      cur.total += 1;
+      const role = norm(row.role || '').toLowerCase();
+      if (role.includes('estudiante') || role.includes('student') || role.includes('practicante')) {
+        cur.studentImpact += 1;
+      }
+      const score = row.scoreSummary?.globalScore;
+      if (typeof score === 'number') cur.scores.push(score);
+      map.set(center, cur);
+    });
+
+    return [...map.values()]
+      .map((item) => ({
+        name: item.name,
+        campus: item.campus,
+        x: item.studentImpact || item.total,
+        y: avg(item.scores),
+        z: item.total,
+        total: item.total,
+        students: item.studentImpact || item.total,
+      }))
+      .sort((a, b) => b.x - a.x)
+      .slice(0, 18);
+  }, [filtered]);
+
   async function generateAnaliticKomet() {
     try {
       setIsGeneratingAnalitic(true);
@@ -599,82 +826,25 @@ export default function Estadistica() {
         'Obligatorio: responde solo JSON valido sin markdown.'
       ].join(' ');
 
-      const prompt = `
-Genera un analisis institucional llamado "Analitic Komet" con base en los datos filtrados.
+      const templateStructure = {
+        resumenEjecutivo: "...",
+        metodologia: "...",
+        lecturaGraficas: "...",
+        calidadDato: { diagnostico: "...", limitaciones: ["..."], confiabilidad: "Alta|Media|Baja" },
+        analisisPorCriterio: [{ criterio: "...", estado0273: "Fortaleza|Cumple|Vigilancia|Intervencion", evidenciaCuantitativa: "...", evidenciaCualitativa: "...", brecha: "...", recomendacion: "..." }],
+        benchmarking: "...",
+        hallazgosClave: ["..."],
+        riesgosPriorizados: [{ riesgo: "...", tipo: "Normativo|Operativo|Pedagogico|Experiencia", severidad: "Alta|Media|Baja", impacto: "...", evidencia: "...", accionContencion: "..." }],
+        mejorasPriorizadas: [{ accion: "...", prioridad: "Alta|Media|Baja", horizonte: "30 dias|60 dias|90 dias", responsableSugerido: "...", kpiSeguimiento: "...", criterioObjetivo: "...", justificacion: "..." }],
+        alertasTempranas: ["..."],
+        analisisCualitativoPorCentro: [{ centro: "Nombre del escenario de practica", promedio: 4.2, fortalezas: ["..."], aspectosMejora: ["..."], tematicasRecurrentes: ["..."], vocesEstudiantes: "...", descripcionAmplia: "..." }],
+        conclusion: "..."
+      };
 
-Devuelve exclusivamente JSON con esta estructura exacta:
-{
-  "resumenEjecutivo": "...",
-  "metodologia": "...",
-  "lecturaGraficas": "...",
-  "calidadDato": {
-    "diagnostico": "...",
-    "limitaciones": ["..."],
-    "confiabilidad": "Alta|Media|Baja"
-  },
-  "analisisPorCriterio": [
-    {
-      "criterio": "...",
-      "estado0273": "Fortaleza|Cumple|Vigilancia|Intervencion",
-      "evidenciaCuantitativa": "...",
-      "evidenciaCualitativa": "...",
-      "brecha": "...",
-      "recomendacion": "..."
-    }
-  ],
-  "benchmarking": "...",
-  "hallazgosClave": ["..."],
-  "riesgosPriorizados": [
-    {
-      "riesgo": "...",
-      "tipo": "Normativo|Operativo|Pedagogico|Experiencia",
-      "severidad": "Alta|Media|Baja",
-      "impacto": "...",
-      "evidencia": "...",
-      "accionContencion": "..."
-    }
-  ],
-  "mejorasPriorizadas": [
-    {
-      "accion": "...",
-      "prioridad": "Alta|Media|Baja",
-      "horizonte": "30 dias|60 dias|90 dias",
-      "responsableSugerido": "...",
-      "kpiSeguimiento": "...",
-      "criterioObjetivo": "...",
-      "justificacion": "..."
-    }
-  ],
-  "alertasTempranas": ["..."],
-  "analisisCualitativoPorCentro": [
-    {
-      "centro": "Nombre del escenario de practica",
-      "promedio": 4.2,
-      "fortalezas": ["Descripcion de fortaleza 1 identificada en los comentarios", "Fortaleza 2"],
-      "aspectosMejora": ["Aspecto a mejorar 1 con detalle", "Aspecto 2"],
-      "tematicasRecurrentes": ["Tematica o patron recurrente en los comentarios", "Otro patron"],
-      "vocesEstudiantes": "Sintesis amplia de las observaciones y voces literales de los estudiantes/practicantes sobre este escenario. Debe ser un parrafo descriptivo extenso que recoja el sentir general.",
-      "descripcionAmplia": "Analisis cualitativo profundo del escenario de practica. Minimo 3 parrafos. Integra comentarios de todos los roles. Describe el ambiente de aprendizaje, la relacion docencia-servicio, aspectos criticos y oportunidades de desarrollo identificados en los textos."
-    }
-  ],
-  "conclusion": "..."
-}
-
-Reglas:
-- Interpreta tendencias, dispersion y comparativos entre centros, programas, roles y secciones.
-- Compara explicitamente cada programa frente al promedio global y frente al umbral 3.7.
-- Si hay un programa seleccionado, comparalo contra los demas programas del dataset filtrado.
-- Usa el marco del algoritmo MEN 00273 de 2021 para clasificar el nivel de riesgo por programa y centro.
-- Analiza todos los criterios presentes en criterioPorSeccion y reporta cada uno en analisisPorCriterio.
-- Si hay conflictos entre datos cuantitativos y comentarios, explicalos como tension de evidencia.
-- Usa comentarios para construir oportunidades de mejora concretas.
-- Incluye riesgos operativos y acciones priorizadas por impacto.
-- Si hay pocos datos, dilo explicitamente y sugiere mejoras de captura.
-- ANALISIS CUALITATIVO POR ESCENARIO (analisisCualitativoPorCentro): Para CADA escenario/centro presente en escenariosPractica, genera un objeto con: fortalezas (lista de puntos positivos identificados en los comentarios), aspectosMejora (lista de debilidades o areas criticas), tematicasRecurrentes (patrones o temas que aparecen en multiples comentarios), vocesEstudiantes (sintesis literal y amplia de lo que dijeron los estudiantes/practicantes, citando ideas clave sin inventar), descripcionAmplia (analisis cualitativo completo del escenario con minimo 3 parrafos que describan el ambiente formativo, la calidad de la relacion docencia-servicio, los aspectos criticos y las oportunidades de mejora identificadas). Si un escenario no tiene comentarios de estudiantes, indicalos con "Sin observaciones de estudiantes disponibles". No omitas ningun escenario presente en escenariosPractica.
-
-Dataset filtrado:
-${JSON.stringify(payload)}
-      `.trim();
+      const prompt = 'Genera un analisis institucional llamado "Analitic Komet" con base en los datos filtrados.\n\nDevuelve exclusivamente JSON con esta estructura exacta:\n' +
+        JSON.stringify(templateStructure, null, 2) +
+        '\n\nReglas:\n- Interpreta tendencias, dispersion y comparativos entre centros, programas, roles y secciones.\n- Compara explicitamente cada programa frente al promedio global y frente al umbral 3.7.\n- Si hay un programa seleccionado, comparalo contra los demas programas del dataset filtrado.\n- Usa el marco del algoritmo MEN 00273 de 2021 para clasificar el nivel de riesgo.\n- Analiza todos los criterios presentes en criterioPorSeccion.\n- Si hay conflictos entre datos cuantitativos y comentarios, explicalos como tension de evidencia.\n- Usa comentarios para construir oportunidades de mejora concretas.\n- No omitas ningun escenario presente en escenariosPractica.\n\nDataset filtrado:\n' +
+        JSON.stringify(payload);
 
       const raw = await runOpenRouterPrompt({
         apiKey: trimmedApiKey,
@@ -692,9 +862,6 @@ ${JSON.stringify(payload)}
       setIsGeneratingAnalitic(false);
     }
   }
-
-  // scatter: total vs score por centro
-  const scatterData = useMemo(() => byCenter.map((d) => ({ name: d.name, x: d.total, y: d.score, z: d.total })), [byCenter]);
 
   // ── por rol ───────────────────────────────────────────────────────────────
   const byRole = useMemo(() => {
@@ -875,7 +1042,7 @@ ${JSON.stringify(payload)}
     const centerMap = new Map();
     filtered.forEach((row) => {
       const center = norm(row.center || 'Sin sitio');
-      const cur = centerMap.get(center) || { center, sections: new Map(), total: 0 };
+      const cur = centerMap.get(center) || { center, campus: norm(row.campus || 'Sin campus'), sections: new Map(), total: 0 };
       cur.total += 1;
       (row.scoreSummary?.sectionScores || []).forEach((sec) => {
         const key = norm(sec.title || sec.seccion || 'Sección');
@@ -888,7 +1055,7 @@ ${JSON.stringify(payload)}
 
     const topCenters = [...centerMap.values()]
       .sort((a, b) => b.total - a.total)
-      .slice(0, 8);
+      .slice(0, 12);
 
     // recopilar todas las secciones
     const allSections = new Set();
@@ -897,12 +1064,153 @@ ${JSON.stringify(payload)}
 
     return {
       centers: topCenters.map((c) => ({
+        campus: c.campus,
         center: c.center.length > 24 ? c.center.slice(0, 24) + '…' : c.center,
         sections: Object.fromEntries(sections.map((s) => [s, avg(c.sections.get(s) || [])])),
       })),
       sections,
     };
   }, [filtered]);
+
+  function buildFilteredExportRows(rows) {
+    const sectionNames = [...new Set(
+      rows.flatMap((row) =>
+        (row.scoreSummary?.sectionScores || [])
+          .map((sec) => norm(sec.title || sec.seccion || 'Seccion'))
+          .filter(Boolean)
+      )
+    )].sort((a, b) => a.localeCompare(b, 'es'));
+
+    return rows.map((row) => {
+      const comments = extractOpenTextResponses(row).slice(0, 2).map((item) => item.text);
+      const sectionScoreMap = new Map(
+        (row.scoreSummary?.sectionScores || []).map((sec) => [
+          norm(sec.title || sec.seccion || 'Seccion'),
+          typeof sec.score === 'number' ? sec.score : null
+        ])
+      );
+
+      const sectionColumns = sectionNames.reduce((acc, sectionName) => {
+        const value = sectionScoreMap.get(sectionName);
+        acc[`puntaje_categoria_${sectionName}`] = typeof value === 'number' ? value.toFixed(2) : '';
+        return acc;
+      }, {});
+
+      return {
+        centro: norm(row.center || 'Sin sitio'),
+        campus: norm(row.campus || 'Sin campus'),
+        programa: resolveProgram(row),
+        rol: norm(row.role || 'Sin rol'),
+        estado: norm(row.status || 'Pendiente'),
+        puntaje_global: typeof row.scoreSummary?.globalScore === 'number' ? row.scoreSummary.globalScore.toFixed(2) : '',
+        ...sectionColumns,
+        completada: row.status === 'Completada' ? 'Sí' : 'No',
+        fecha_completado: row.completed_at || '',
+        fecha_creacion: row.created_at || '',
+        comentario_1: comments[0] || '',
+        comentario_2: comments[1] || ''
+      };
+    });
+  }
+
+  function downloadExcelFile(rows) {
+    const exportRows = buildFilteredExportRows(rows);
+    const headers = Object.keys(exportRows[0] || {
+      centro: '', campus: '', programa: '', rol: '', estado: '', puntaje_global: '', completada: '', fecha_completado: '', fecha_creacion: '', comentario_1: '', comentario_2: ''
+    });
+    
+    // Construir HTML de tabla
+    let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><table border="1"><thead><tr>';
+    headers.forEach((h) => {
+      html += '<th>' + escapeHtml(h) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    
+    exportRows.forEach((row) => {
+      html += '<tr>';
+      headers.forEach((key) => {
+        html += '<td>' + escapeHtml(row[key] || '') + '</td>';
+      });
+      html += '</tr>';
+    });
+    
+    html += '</tbody></table></body></html>';
+    
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const anchor = document.createElement('a');
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = `estadistica-datos-sin-personales-${Date.now()}.xls`;
+    anchor.click();
+    URL.revokeObjectURL(anchor.href);
+  }
+
+  async function downloadSvgAsPng(svg, filename) {
+    if (!svg) return;
+    return new Promise((resolve) => {
+      const { width, height } = getSvgDimensions(svg);
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(image, 0, 0, width, height);
+          canvas.toBlob((pngBlob) => {
+            if (pngBlob) {
+              const downloadLink = document.createElement('a');
+              downloadLink.href = URL.createObjectURL(pngBlob);
+              downloadLink.download = filename;
+              downloadLink.click();
+              URL.revokeObjectURL(downloadLink.href);
+            }
+            URL.revokeObjectURL(url);
+            resolve();
+          }, 'image/png');
+        } else {
+          URL.revokeObjectURL(url);
+          resolve();
+        }
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      image.src = url;
+    });
+  }
+
+  async function downloadFilteredExcel() {
+    if (!filtered.length) {
+      alert('No hay datos en el filtro actual para exportar.');
+      return;
+    }
+    downloadExcelFile(filtered);
+  }
+
+  async function downloadFilteredCharts() {
+    if (!chartAreaRef.current) return;
+    const chartCards = Array.from(chartAreaRef.current.querySelectorAll('[data-chart-title]'));
+    if (!chartCards.length) {
+      alert('No se encontraron gráficos para exportar en la vista actual.');
+      return;
+    }
+
+    setIsExportingCharts(true);
+    for (let index = 0; index < chartCards.length; index += 1) {
+      const card = chartCards[index];
+      const svg = card.querySelector('svg');
+      const title = card.getAttribute('data-chart-title') || `grafica-${index + 1}`;
+      if (!svg) continue;
+      await downloadSvgAsPng(svg, `estadistica-${activeTab}-${slugify(title)}.png`);
+    }
+    setIsExportingCharts(false);
+  }
 
   // ── tab nav ───────────────────────────────────────────────────────────────
   const TABS = [
@@ -967,6 +1275,25 @@ ${JSON.stringify(payload)}
             {programOptions.map((p) => <option key={p} value={p}>{p === 'Todos' ? 'Todos los programas' : p}</option>)}
           </select>
         </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={downloadFilteredExcel}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Download size={16} /> Exportar datos Excel
+          </button>
+          <button
+            type="button"
+            onClick={downloadFilteredCharts}
+            disabled={isExportingCharts}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Download size={16} /> {isExportingCharts ? 'Exportando gráficos...' : 'Exportar gráficos PNG'}
+          </button>
+        </div>
+
       </div>
 
       {/* KPI cards */}
@@ -1003,998 +1330,1092 @@ ${JSON.stringify(payload)}
         ))}
       </div>
 
-      {/* ── TAB: GENERAL ── */}
-      {activeTab === 'general' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div ref={chartAreaRef}>
+        {/* ── TAB: GENERAL ── */}
+        {activeTab === 'general' && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-          {/* Histograma distribución de puntajes */}
-          <ChartCard
-            title="Distribución de calificaciones"
-            subtitle="Frecuencia de respuestas por valor (1 a 5) en todas las secciones"
-          >
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={histogram} barSize={48}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="score" tick={{ fontSize: 13, fontWeight: 700 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip
-                  content={({ active, payload }) =>
-                    active && payload?.length ? (
-                      <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
-                        <p>Calificación <strong>{payload[0].payload.score}</strong></p>
-                        <p>Respuestas: <strong>{payload[0].value}</strong></p>
-                      </div>
-                    ) : null
-                  }
-                />
-                <Bar dataKey="count" name="Respuestas" radius={[6, 6, 0, 0]}>
-                  {histogram.map((entry, i) => (
-                    <Cell key={i} fill={['#ef4444', '#f97316', '#eab308', '#22c55e', '#2563eb'][i]} />
-                  ))}
-                  <LabelList dataKey="count" position="top" style={{ fontSize: 12, fontWeight: 700 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Promedio global por campus */}
-          <ChartCard
-            title="Promedio por campus"
-            subtitle="Puntaje promedio de evaluaciones agrupadas por sede"
-          >
-            {(() => {
-              const campusData = (() => {
-                const m = new Map();
-                filtered.forEach((r) => {
-                  const k = norm(r.campus || 'Sin campus');
-                  const c = m.get(k) || { name: k, scores: [], total: 0 };
-                  c.total += 1;
-                  const s = r.scoreSummary?.globalScore;
-                  if (typeof s === 'number') c.scores.push(s);
-                  m.set(k, c);
-                });
-                return [...m.values()].map((d) => ({ name: d.name, score: avg(d.scores), total: d.total }));
-              })();
-              return (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={campusData} layout="vertical" barSize={22}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} />
-                    <Tooltip content={<ScoreTooltip />} />
-                    <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: '3.7', position: 'top', fontSize: 11, fill: '#f97316' }} />
-                    <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
-                      {campusData.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              );
-            })()}
-          </ChartCard>
-
-          {/* Donut estado completadas / pendientes */}
-          <ChartCard title="Estado de evaluaciones" subtitle="Completadas vs pendientes en el corte actual">
-            {(() => {
-              const completed = filtered.filter((r) => r.status === 'Completada').length;
-              const pending = filtered.length - completed;
-              const data = [
-                { name: 'Completadas', value: completed, pct: filtered.length ? ((completed / filtered.length) * 100).toFixed(1) : '0' },
-                { name: 'Pendientes', value: pending, pct: filtered.length ? ((pending / filtered.length) * 100).toFixed(1) : '0' },
-              ];
-              return (
-                <div className="flex items-center gap-6">
-                  <ResponsiveContainer width="50%" height={220}>
-                    <PieChart>
-                      <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={3}>
-                        {data.map((_, i) => <Cell key={i} fill={['#22c55e', '#e2e8f0'][i]} />)}
-                      </Pie>
-                      <Tooltip content={<PieTooltip />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="space-y-3 text-sm">
-                    {data.map((d, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full shrink-0" style={{ background: ['#22c55e', '#e2e8f0'][i] }} />
-                        <span className="text-slate-600">{d.name}</span>
-                        <span className="font-bold text-slate-800">{d.value} ({d.pct}%)</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-          </ChartCard>
-
-          {/* Radar secciones × rol (top 3 roles) */}
-          <ChartCard title="Radar por sección y rol" subtitle="Comparativa de los 3 roles con más evaluaciones en cada sección del instrumento">
-            {radarData.data.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center mt-10">Sin datos de secciones</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <RadarChart data={radarData.data} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
-                  <PolarGrid stroke="#e2e8f0" />
-                  <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
-                  {radarData.roles.map((role, i) => (
-                    <Radar key={role} name={role} dataKey={role} stroke={PALETTE[i]} fill={PALETTE[i]} fillOpacity={0.15} dot={{ r: 3 }} />
-                  ))}
-                  <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-                  <Tooltip formatter={(v) => Number(v).toFixed(2)} />
-                </RadarChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
-
-          <ChartCard
-            title="Tendencia mensual de desempeño"
-            subtitle="Evolución del puntaje promedio y porcentaje de completitud por mes"
-            span={2}
-          >
-            {monthlyTrend.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center mt-10">Sin fechas suficientes para construir tendencia</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={290}>
-                <LineChart data={monthlyTrend} margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
+            {/* Histograma distribución de puntajes */}
+            <ChartCard
+              title="Distribución de calificaciones"
+              subtitle="Frecuencia de respuestas por valor (1 a 5) en todas las secciones"
+            >
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={histogram} barSize={48}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis yAxisId="score" domain={[0, 5]} tick={{ fontSize: 11 }} />
-                  <YAxis yAxisId="pct" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                  <XAxis dataKey="score" tick={{ fontSize: 13, fontWeight: 700 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip
                     content={({ active, payload }) =>
                       active && payload?.length ? (
                         <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
-                          <p className="font-semibold text-slate-800">{payload[0]?.payload?.month}</p>
-                          <p>Promedio: <strong>{Number(payload[0]?.payload?.score || 0).toFixed(2)}</strong></p>
-                          <p>Completitud: <strong>{payload[0]?.payload?.completionPct}%</strong></p>
-                          <p>Evaluaciones: <strong>{payload[0]?.payload?.total}</strong></p>
+                          <p>Calificación <strong>{payload[0].payload.score}</strong></p>
+                          <p>Respuestas: <strong>{payload[0].value}</strong></p>
                         </div>
                       ) : null
                     }
                   />
-                  <ReferenceLine yAxisId="score" y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                  <Line yAxisId="score" type="monotone" dataKey="score" name="Promedio" stroke="#2563eb" strokeWidth={3} dot={{ r: 3 }} />
-                  <Line yAxisId="pct" type="monotone" dataKey="completionPct" name="Completitud %" stroke="#14b8a6" strokeWidth={2} dot={{ r: 2 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
-
-          <ChartCard
-            title="Embudo de avance"
-            subtitle="Flujo de evaluaciones: asignadas, iniciadas y completadas"
-          >
-            <div className="flex items-center gap-4">
-              <ResponsiveContainer width="55%" height={250}>
-                <FunnelChart>
-                  <Tooltip />
-                  <Funnel dataKey="value" data={funnelData} isAnimationActive>
-                    <LabelList position="right" fill="#334155" stroke="none" dataKey="name" />
-                  </Funnel>
-                </FunnelChart>
-              </ResponsiveContainer>
-              <div className="space-y-2 text-sm">
-                {funnelData.map((step) => (
-                  <div key={step.name} className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full" style={{ background: step.fill }} />
-                    <span className="text-slate-600">{step.name}:</span>
-                    <span className="font-bold text-slate-800">{step.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </ChartCard>
-
-          <ChartCard
-            title="Pareto de secciones críticas"
-            subtitle="Impacto negativo acumulado frente al umbral 3.7 (priorización 80/20)"
-          >
-            {paretoSections.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center mt-10">Sin datos suficientes para análisis de pareto</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={paretoSections}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={60} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
-                  <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar yAxisId="left" dataKey="impact" name="Impacto" fill="#f97316" radius={[6, 6, 0, 0]} />
-                  <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="Acumulado %" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
-                  <ReferenceLine yAxisId="right" y={80} stroke="#dc2626" strokeDasharray="4 3" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
-        </div>
-      )}
-
-      {/* ── TAB: PROGRAMAS ── */}
-      {activeTab === 'programas' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <ChartCard title="Promedio por programa" subtitle="Ordenado de mayor a menor — línea naranja = umbral 3.7" span={2}>
-            <ResponsiveContainer width="100%" height={Math.max(280, byProgram.length * 38)}>
-              <BarChart data={byProgram} layout="vertical" barSize={20}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
-                <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 12 }} />
-                <Tooltip content={<ScoreTooltip />} />
-                <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'insideTopRight', fontSize: 11, fill: '#f97316' }} />
-                <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
-                  {byProgram.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
-                  <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 12, fontWeight: 600 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Volumen de evaluaciones por programa */}
-          <ChartCard title="Volumen de evaluaciones" subtitle="Cantidad de evaluaciones registradas por programa">
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={[...byProgram].sort((a, b) => b.total - a.total).slice(0, 10)} barSize={20}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip content={({ active, payload }) => active && payload?.length ? (
-                  <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
-                    <p className="font-semibold">{payload[0].payload.name}</p>
-                    <p>Evaluaciones: <strong>{payload[0].value}</strong></p>
-                  </div>
-                ) : null} />
-                <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[6, 6, 0, 0]}>
-                  <LabelList dataKey="total" position="top" style={{ fontSize: 11, fontWeight: 600 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Donut participación programas */}
-          <ChartCard title="Participación por programa" subtitle="Distribución porcentual del total de evaluaciones">
-            <div className="flex items-center gap-4">
-              <ResponsiveContainer width="45%" height={220}>
-                <PieChart>
-                  <Pie data={byProgram.slice(0, 8).map((d) => ({ ...d, name: d.name, value: d.total, pct: filtered.length ? ((d.total / filtered.length) * 100).toFixed(1) : '0' }))} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={2}>
-                    {byProgram.slice(0, 8).map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                  </Pie>
-                  <Tooltip content={<PieTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-2 text-xs flex-1">
-                {byProgram.slice(0, 8).map((d, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
-                    <span className="text-slate-600 truncate flex-1">{d.name}</span>
-                    <span className="font-bold text-slate-700 shrink-0">{d.total}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </ChartCard>
-
-          <ChartCard title="Calidad vs volumen por programa" subtitle="Eje X = evaluaciones · Eje Y = promedio · Tamaño = cobertura en centros">
-            <ResponsiveContainer width="100%" height={280}>
-              <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="x" type="number" name="Evaluaciones" tick={{ fontSize: 11 }} />
-                <YAxis dataKey="y" type="number" name="Promedio" domain={[0, 5]} tick={{ fontSize: 11 }} />
-                <ZAxis dataKey="z" range={[40, 320]} />
-                <Tooltip
-                  content={({ active, payload }) =>
-                    active && payload?.length ? (
-                      <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
-                        <p className="font-semibold">{payload[0]?.payload?.name}</p>
-                        <p>Evaluaciones: <strong>{payload[0]?.payload?.x}</strong></p>
-                        <p>Promedio: <strong>{Number(payload[0]?.payload?.y || 0).toFixed(2)}</strong></p>
-                        <p>Centros: <strong>{payload[0]?.payload?.centers}</strong></p>
-                      </div>
-                    ) : null
-                  }
-                />
-                <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                <Scatter
-                  data={byProgramExtended.map((p) => ({ name: p.name, x: p.total, y: p.score, z: p.centerCount, centers: p.centerCount }))}
-                  fill="#2563eb"
-                  fillOpacity={0.75}
-                />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          <ChartCard title="Cumplimiento por programa" subtitle="Porcentaje de evaluaciones completadas en los programas con más volumen">
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={byProgramExtended.slice(0, 10)} barSize={18}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={65} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
-                <Tooltip formatter={(v) => `${v}%`} />
-                <Bar dataKey="completionPct" name="Cumplimiento" fill="#14b8a6" radius={[6, 6, 0, 0]}>
-                  <LabelList dataKey="completionPct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 10, fontWeight: 600 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-        </div>
-      )}
-
-      {/* ── TAB: CENTROS ── */}
-      {activeTab === 'centros' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          {/* Promedio por centro — barras horizontales con semáforo */}
-          <ChartCard title="Promedio por centro de convenio" subtitle="Línea naranja = umbral 3.7 (MEN 00273)" span={2}>
-            <ResponsiveContainer width="100%" height={Math.max(300, byCenter.length * 42)}>
-              <BarChart data={byCenter} layout="vertical" barSize={18}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
-                <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
-                <Tooltip content={<ScoreTooltip />} />
-                <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral', position: 'top', fontSize: 10, fill: '#f97316' }} />
-                <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
-                  {byCenter.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
-                  <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 11, fontWeight: 600 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Scatter: volumen vs promedio */}
-          <ChartCard title="Volumen vs Calidad por centro" subtitle="Eje X = cantidad de evaluaciones · Eje Y = promedio · Tamaño = volumen">
-            <ResponsiveContainer width="100%" height={280}>
-              <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="x" name="Evaluaciones" type="number" tick={{ fontSize: 11 }} label={{ value: 'N° Evaluaciones', position: 'insideBottomRight', offset: -10, fontSize: 11 }} />
-                <YAxis dataKey="y" name="Promedio" type="number" domain={[0, 5]} tick={{ fontSize: 11 }} label={{ value: 'Promedio', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-                <ZAxis dataKey="z" range={[40, 300]} />
-                <Tooltip
-                  content={({ active, payload }) =>
-                    active && payload?.length ? (
-                      <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
-                        <p className="font-semibold">{payload[0]?.payload?.name}</p>
-                        <p>Evaluaciones: <strong>{payload[0]?.payload?.x}</strong></p>
-                        <p>Promedio: <strong>{Number(payload[0]?.payload?.y || 0).toFixed(2)}</strong></p>
-                      </div>
-                    ) : null
-                  }
-                />
-                <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                <Scatter data={scatterData} fill="#2563eb" fillOpacity={0.7} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* % Cumplimiento por centro */}
-          <ChartCard title="% Cumplimiento por centro" subtitle="Porcentaje de evaluaciones completadas por cada centro">
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={[...byCenter].sort((a, b) => b.completionPct - a.completionPct).slice(0, 10)} barSize={18}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-35} textAnchor="end" height={70} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
-                <Tooltip formatter={(v) => `${v}%`} />
-                <Bar dataKey="completionPct" name="Cumplimiento" fill="#14b8a6" radius={[6, 6, 0, 0]}>
-                  <LabelList dataKey="completionPct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 10, fontWeight: 600 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          <ChartCard title="Centros con más evaluaciones" subtitle="Ranking por volumen total y su desempeño asociado" span={2}>
-            {topCentersByVolume.length === 0 ? (
-              <p className="text-sm text-slate-400">Sin datos disponibles para ranking de centros</p>
-            ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <ResponsiveContainer width="100%" height={Math.max(280, topCentersByVolume.length * 30)}>
-                  <BarChart data={topCentersByVolume} layout="vertical" barSize={16}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11 }} />
-                    <YAxis type="category" dataKey="name" width={220} tick={{ fontSize: 11 }} />
-                    <Tooltip content={<ScoreTooltip />} />
-                    <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[0, 6, 6, 0]}>
-                      <LabelList dataKey="total" position="right" style={{ fontSize: 11, fontWeight: 600 }} />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-slate-500 border-b border-slate-200">
-                        <th className="py-2 text-left">#</th>
-                        <th className="py-2 text-left">Centro</th>
-                        <th className="py-2 text-right">Eval.</th>
-                        <th className="py-2 text-right">Prom.</th>
-                        <th className="py-2 text-right">Cumpl.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topCentersByVolume.slice(0, 10).map((c) => (
-                        <tr key={c.name} className="border-b border-slate-100">
-                          <td className="py-2 font-semibold text-slate-600">{c.rank}</td>
-                          <td className="py-2 text-slate-700 max-w-[260px] truncate" title={c.name}>{c.name}</td>
-                          <td className="py-2 text-right font-semibold">{c.total}</td>
-                          <td className="py-2 text-right font-semibold" style={{ color: alertColor(c.score) }}>{c.score.toFixed(2)}</td>
-                          <td className="py-2 text-right text-slate-600">{c.completionPct}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </ChartCard>
-
-          <ChartCard title="Comentarios y respuestas escritas por centro" subtitle="Extracción de texto abierto para lectura cualitativa" span={2}>
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <label className="text-sm text-slate-600 font-semibold">Centro para detalle:</label>
-              <select
-                value={selectedCenterView}
-                onChange={(e) => setSelectedCenterView(e.target.value)}
-                className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {centerViewOptions.map((c) => <option key={c} value={c}>{c === 'Todos' ? 'Todos los centros' : c}</option>)}
-              </select>
-              <span className="text-xs text-slate-500">Registros encontrados: {centerComments.length}</span>
-            </div>
-
-            {centerComments.length === 0 ? (
-              <p className="text-sm text-slate-400">No se encontraron comentarios escritos para el filtro seleccionado.</p>
-            ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-                <div className="xl:col-span-2 overflow-x-auto max-h-[420px]">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-white">
-                      <tr className="text-slate-500 border-b border-slate-200">
-                        <th className="py-2 text-left">Fecha</th>
-                        <th className="py-2 text-left">Centro</th>
-                        <th className="py-2 text-left">Programa / Rol</th>
-                        <th className="py-2 text-left">Pregunta</th>
-                        <th className="py-2 text-left">Comentario</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {centerComments.map((item, i) => (
-                        <tr key={`${item.center}-${item.person}-${i}`} className="border-b border-slate-100 align-top">
-                          <td className="py-2 text-xs text-slate-500 whitespace-nowrap">{item.date ? new Date(item.date).toLocaleDateString() : 'Sin fecha'}</td>
-                          <td className="py-2 text-slate-700 max-w-[180px] truncate" title={item.center}>{item.center}</td>
-                          <td className="py-2">
-                            <div className="text-slate-700 max-w-[150px] truncate" title={item.program}>{item.program}</div>
-                            <div className="text-xs text-slate-500">{item.role}</div>
-                          </td>
-                          <td className="py-2 text-xs text-slate-600 max-w-[180px] truncate" title={item.question}>{item.question}</td>
-                          <td className="py-2 text-slate-700 min-w-[260px]">{item.text}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold text-slate-700 mb-2">Palabras más frecuentes</h4>
-                  {commentKeywords.length === 0 ? (
-                    <p className="text-xs text-slate-400">Sin palabras relevantes</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {commentKeywords.map((k) => (
-                        <div key={k.word} className="flex items-center justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                          <span className="font-medium text-slate-700">{k.word}</span>
-                          <span className="font-bold text-blue-700">{k.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </ChartCard>
-
-          {/* Heatmap centros × secciones */}
-          <ChartCard title="Mapa de calor: Centros × Secciones" subtitle="Color indica puntaje promedio por sección en cada centro" span={2}>
-            {heatmap.centers.length === 0 ? (
-              <p className="text-sm text-slate-400">Sin datos suficientes</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr>
-                      <th className="text-left p-2 text-slate-500 font-semibold min-w-[150px]">Centro</th>
-                      {heatmap.sections.map((s) => (
-                        <th key={s} className="p-2 text-slate-500 font-semibold text-center max-w-[90px]">
-                          <span className="block truncate max-w-[88px]" title={s}>{s.length > 14 ? s.slice(0, 14) + '…' : s}</span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {heatmap.centers.map((row) => (
-                      <tr key={row.center} className="border-t border-slate-100">
-                        <td className="p-2 text-slate-700 font-medium truncate max-w-[150px]" title={row.center}>{row.center}</td>
-                        {heatmap.sections.map((s) => {
-                          const val = row.sections[s] || 0;
-                          const color = alertColor(val || null);
-                          return (
-                            <td key={s} className="p-1 text-center">
-                              <div
-                                className="rounded-lg py-1.5 px-2 font-bold text-white text-xs"
-                                style={{ background: val > 0 ? color : '#e2e8f0', color: val > 0 ? '#fff' : '#94a3b8' }}
-                              >
-                                {val > 0 ? val.toFixed(1) : '–'}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
+                  <Bar dataKey="count" name="Respuestas" radius={[6, 6, 0, 0]}>
+                    {histogram.map((entry, i) => (
+                      <Cell key={i} fill={['#ef4444', '#f97316', '#eab308', '#22c55e', '#2563eb'][i]} />
                     ))}
-                  </tbody>
-                </table>
-                <div className="flex gap-4 mt-4 text-xs text-slate-500">
-                  {[['≥4.0', '#22c55e', 'Verde'], ['≥3.5', '#eab308', 'Amarillo'], ['≥2.5', '#f97316', 'Naranja'], ['<2.5', '#ef4444', 'Rojo']].map(([range, color, label]) => (
-                    <div key={label} className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded" style={{ background: color }} />
-                      <span>{range} — {label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </ChartCard>
-        </div>
-      )}
-
-      {/* ── TAB: ROLES ── */}
-      {activeTab === 'roles' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-
-          {/* Donut distribución por rol */}
-          <ChartCard title="Distribución por rol evaluador" subtitle="Participación porcentual de cada perfil en las evaluaciones">
-            <div className="flex items-center gap-6">
-              <ResponsiveContainer width="50%" height={240}>
-                <PieChart>
-                  <Pie
-                    data={roleDonut.map((d) => ({ ...d, value: d.total, pct: d.pct }))}
-                    cx="50%" cy="50%" innerRadius={60} outerRadius={90}
-                    dataKey="value" paddingAngle={3}
-                  >
-                    {roleDonut.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                  </Pie>
-                  <Tooltip content={<PieTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-3 text-sm flex-1">
-                {roleDonut.map((d, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
-                    <span className="text-slate-600 flex-1">{d.name}</span>
-                    <span className="font-bold text-slate-800">{d.total} ({d.pct}%)</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </ChartCard>
-
-          {/* Promedio por rol */}
-          <ChartCard title="Promedio por rol evaluador" subtitle="Puntaje promedio de las evaluaciones completadas por cada perfil">
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={byRole} barSize={36}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis domain={[0, 5]} tick={{ fontSize: 12 }} />
-                <Tooltip content={<ScoreTooltip />} />
-                <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
-                  {byRole.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                  <LabelList dataKey="score" position="top" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 12, fontWeight: 700 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Barras agrupadas secciones × rol */}
-          <ChartCard title="Puntaje por sección y rol" subtitle="Comparativa de cada sección del instrumento entre los distintos roles evaluadores" span={2}>
-            {sectionByRole.data.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center mt-8">Sin datos de secciones</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={sectionByRole.data} barGap={2} barCategoryGap="20%">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={55} />
-                  <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => Number(v).toFixed(2)} />
-                  <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                  {sectionByRole.roles.map((role, i) => (
-                    <Bar key={role} dataKey={role} name={role} fill={PALETTE[i % PALETTE.length]} radius={[4, 4, 0, 0]} barSize={16} />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
-        </div>
-      )}
-
-      {/* ── TAB: SECCIONES ── */}
-      {activeTab === 'secciones' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-
-          {/* Semáforo por sección */}
-          <ChartCard title="Semáforo normativo por sección" subtitle="Verde ≥4.0 · Amarillo ≥3.5 · Naranja ≥2.5 · Rojo <2.5">
-            <div className="space-y-3">
-              {bySectionRaw.map((sec) => {
-                const color = alertColor(sec.score);
-                const pct = Math.max(0, Math.min(100, (sec.score / 5) * 100));
-                return (
-                  <div key={sec.name}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-slate-700 font-medium truncate max-w-[70%]">{sec.name}</span>
-                      <span className="font-bold" style={{ color }}>{sec.score.toFixed(2)}</span>
-                    </div>
-                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </ChartCard>
-
-          {/* Barras secciones con colores */}
-          <ChartCard title="Promedio global por sección" subtitle="Línea = umbral mínimo aceptable (3.7)">
-            <ResponsiveContainer width="100%" height={Math.max(280, bySectionRaw.length * 38)}>
-              <BarChart data={bySectionRaw} layout="vertical" barSize={18}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
-                <YAxis type="category" dataKey="name" width={170} tick={{ fontSize: 11 }} />
-                <Tooltip content={<ScoreTooltip />} />
-                <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
-                  {bySectionRaw.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
-                  <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 11, fontWeight: 600 }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          {/* Distribución 1–5 apilada por sección */}
-          <ChartCard title="Distribución de respuestas por sección" subtitle="Barras apiladas: proporción de calificaciones 1 a 5 por sección" span={2}>
-            {(() => {
-              const distData = (() => {
-                const m = new Map();
-                filtered.forEach((row) => {
-                  (row.scoreSummary?.sectionScores || []).forEach((sec) => {
-                    const key = norm(sec.title || sec.seccion || 'Sección');
-                    const cur = m.get(key) || { name: key.length > 20 ? key.slice(0, 20) + '…' : key, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0 };
-                    const r = Math.round(sec.score || 0);
-                    if (r >= 1 && r <= 5) cur[`r${r}`] += 1;
-                    m.set(key, cur);
-                  });
-                });
-                return [...m.values()];
-              })();
-              return (
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={distData} barSize={28}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={65} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="r1" name="1" stackId="a" fill="#ef4444" />
-                    <Bar dataKey="r2" name="2" stackId="a" fill="#f97316" />
-                    <Bar dataKey="r3" name="3" stackId="a" fill="#eab308" />
-                    <Bar dataKey="r4" name="4" stackId="a" fill="#22c55e" />
-                    <Bar dataKey="r5" name="5" stackId="a" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              );
-            })()}
-          </ChartCard>
-        </div>
-      )}
-
-      {/* ── TAB: ANALITIC KOMET ── */}
-      {activeTab === 'analitic' && (
-        <div className="space-y-6">
-          <ChartCard
-            title="Analitic Komet"
-            subtitle="Analitica IA dinamica usando los filtros superiores y modelos gratuitos en OpenRouter"
-            span={2}
-          >
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={generateAnaliticKomet}
-                disabled={isGeneratingAnalitic}
-                className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {isGeneratingAnalitic ? 'Generando analisis...' : 'Generar Analitic Komet'}
-              </button>
-              <select
-                value={analysisDepth}
-                onChange={(e) => setAnalysisDepth(e.target.value)}
-                className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="rapido">Profundidad: Rapido</option>
-                <option value="estandar">Profundidad: Estandar</option>
-                <option value="profundo">Profundidad: Profundo</option>
-              </select>
-              <span className="text-xs text-slate-500">
-                Filtros activos: {selectedCampus} · {selectedLevel} · {selectedCenter} · {selectedProgram}
-              </span>
-              {analiticGeneratedAt && (
-                <span className="text-xs text-slate-500">Ultima generacion: {analiticGeneratedAt}</span>
-              )}
-            </div>
-            {analiticError && <p className="text-sm text-red-600 mt-3">{analiticError}</p>}
-          </ChartCard>
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <ChartCard
-              title="Comparativo normativo por programa"
-              subtitle="Promedio por programa con referencia al umbral 3.7 de MEN 00273"
-            >
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={programComparison.slice(0, 10)} barSize={18}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={65} />
-                  <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
-                  <Tooltip content={<ScoreTooltip />} />
-                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                  <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
-                    {programComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    <LabelList dataKey="count" position="top" style={{ fontSize: 12, fontWeight: 700 }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
 
+            {/* Promedio global por campus */}
             <ChartCard
-              title="Comparativo normativo por centro"
-              subtitle="Ranking de centros por brecha respecto al umbral y promedio global"
+              title="Promedio por campus"
+              subtitle="Puntaje promedio de evaluaciones agrupadas por sede"
             >
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={centerComparison.slice(0, 10)} layout="vertical" barSize={16}>
+              {(() => {
+                const campusData = (() => {
+                  const m = new Map();
+                  filtered.forEach((r) => {
+                    const k = norm(r.campus || 'Sin campus');
+                    const c = m.get(k) || { name: k, scores: [], total: 0 };
+                    c.total += 1;
+                    const s = r.scoreSummary?.globalScore;
+                    if (typeof s === 'number') c.scores.push(s);
+                    m.set(k, c);
+                  });
+                  return [...m.values()].map((d) => ({ name: d.name, score: avg(d.scores), total: d.total }));
+                })();
+                return (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={campusData} layout="vertical" barSize={22}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                      <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
+                      <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} />
+                      <Tooltip content={<ScoreTooltip />} />
+                      <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: '3.7', position: 'top', fontSize: 11, fill: '#f97316' }} />
+                      <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
+                        {campusData.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                );
+              })()}
+            </ChartCard>
+
+            {/* Donut estado completadas / pendientes */}
+            <ChartCard title="Estado de evaluaciones" subtitle="Completadas vs pendientes en el corte actual">
+              {(() => {
+                const completed = filtered.filter((r) => r.status === 'Completada').length;
+                const pending = filtered.length - completed;
+                const data = [
+                  { name: 'Completadas', value: completed, pct: filtered.length ? ((completed / filtered.length) * 100).toFixed(1) : '0' },
+                  { name: 'Pendientes', value: pending, pct: filtered.length ? ((pending / filtered.length) * 100).toFixed(1) : '0' },
+                ];
+                return (
+                  <div className="flex items-center gap-6">
+                    <ResponsiveContainer width="50%" height={220}>
+                      <PieChart>
+                        <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={3}>
+                          {data.map((_, i) => <Cell key={i} fill={['#22c55e', '#e2e8f0'][i]} />)}
+                        </Pie>
+                        <Tooltip content={<PieTooltip />} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="space-y-3 text-sm">
+                      {data.map((d, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full shrink-0" style={{ background: ['#22c55e', '#e2e8f0'][i] }} />
+                          <span className="text-slate-600">{d.name}</span>
+                          <span className="font-bold text-slate-800">{d.value} ({d.pct}%)</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </ChartCard>
+
+            {/* Radar secciones × rol (top 3 roles) */}
+            <ChartCard title="Radar por sección y rol" subtitle="Comparativa de los 3 roles con más evaluaciones en cada sección del instrumento">
+              {radarData.data.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center mt-10">Sin datos de secciones</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <RadarChart data={radarData.data} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+                    <PolarGrid stroke="#e2e8f0" />
+                    <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
+                    {radarData.roles.map((role, i) => (
+                      <Radar key={role} name={role} dataKey={role} stroke={PALETTE[i]} fill={PALETTE[i]} fillOpacity={0.15} dot={{ r: 3 }} />
+                    ))}
+                    <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                    <Tooltip formatter={(v) => Number(v).toFixed(2)} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Radar por dimensiones de calidad"
+              subtitle={`Comparativo ${radarCampusVsInstitution.campusName} vs Promedio institucional`}
+            >
+              {radarCampusVsInstitution.data.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center mt-10">No hay dimensiones suficientes para comparar campus vs institucional</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={290}>
+                  <RadarChart data={radarCampusVsInstitution.data} margin={{ top: 10, right: 20, bottom: 10, left: 20 }}>
+                    <PolarGrid stroke="#e2e8f0" />
+                    <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
+                    <Radar name="Promedio institucional" dataKey="institucional" stroke="#0ea5e9" fill="#0ea5e9" fillOpacity={0.16} />
+                    <Radar name={radarCampusVsInstitution.campusName} dataKey="campus" stroke="#f97316" fill="#f97316" fillOpacity={0.16} />
+                    <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                    <Tooltip formatter={(v) => Number(v).toFixed(2)} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Tendencia mensual de desempeño"
+              subtitle="Evolución del puntaje promedio y porcentaje de completitud por mes"
+              span={2}
+            >
+              {monthlyTrend.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center mt-10">Sin fechas suficientes para construir tendencia</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={290}>
+                  <LineChart data={monthlyTrend} margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="score" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="pct" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                    <Tooltip
+                      content={({ active, payload }) =>
+                        active && payload?.length ? (
+                          <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                            <p className="font-semibold text-slate-800">{payload[0]?.payload?.month}</p>
+                            <p>Promedio: <strong>{Number(payload[0]?.payload?.score || 0).toFixed(2)}</strong></p>
+                            <p>Completitud: <strong>{payload[0]?.payload?.completionPct}%</strong></p>
+                            <p>Evaluaciones: <strong>{payload[0]?.payload?.total}</strong></p>
+                          </div>
+                        ) : null
+                      }
+                    />
+                    <ReferenceLine yAxisId="score" y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    <Line yAxisId="score" type="monotone" dataKey="score" name="Promedio" stroke="#2563eb" strokeWidth={3} dot={{ r: 3 }} />
+                    <Line yAxisId="pct" type="monotone" dataKey="completionPct" name="Completitud %" stroke="#14b8a6" strokeWidth={2} dot={{ r: 2 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </ChartCard>
+
+            <ChartCard
+              title="Embudo de avance"
+              subtitle="Flujo de evaluaciones: asignadas, iniciadas y completadas"
+            >
+              <div className="flex items-center gap-4">
+                <ResponsiveContainer width="55%" height={250}>
+                  <FunnelChart>
+                    <Tooltip />
+                    <Funnel dataKey="value" data={funnelData} isAnimationActive>
+                      <LabelList position="right" fill="#334155" stroke="none" dataKey="name" />
+                    </Funnel>
+                  </FunnelChart>
+                </ResponsiveContainer>
+                <div className="space-y-2 text-sm">
+                  {funnelData.map((step) => (
+                    <div key={step.name} className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full" style={{ background: step.fill }} />
+                      <span className="text-slate-600">{step.name}:</span>
+                      <span className="font-bold text-slate-800">{step.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </ChartCard>
+
+            <ChartCard
+              title="Pareto de secciones críticas"
+              subtitle="Impacto negativo acumulado frente al umbral 3.7 (priorización 80/20)"
+            >
+              {paretoSections.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center mt-10">Sin datos suficientes para análisis de pareto</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={paretoSections}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={60} />
+                    <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar yAxisId="left" dataKey="impact" name="Impacto" fill="#f97316" radius={[6, 6, 0, 0]} />
+                    <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="Acumulado %" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
+                    <ReferenceLine yAxisId="right" y={80} stroke="#dc2626" strokeDasharray="4 3" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </ChartCard>
+          </div>
+        )}
+
+        {/* ── TAB: PROGRAMAS ── */}
+        {activeTab === 'programas' && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <ChartCard title="Promedio por programa" subtitle="Ordenado de mayor a menor — línea naranja = umbral 3.7" span={2}>
+              <ResponsiveContainer width="100%" height={Math.max(280, byProgram.length * 38)}>
+                <BarChart data={byProgram} layout="vertical" barSize={20}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                  <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 10 }} />
+                  <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 12 }} />
                   <Tooltip content={<ScoreTooltip />} />
-                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'insideTopRight', fontSize: 11, fill: '#f97316' }} />
                   <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
-                    {centerComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    {byProgram.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 12, fontWeight: 600 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            {/* Volumen de evaluaciones por programa */}
+            <ChartCard title="Volumen de evaluaciones" subtitle="Cantidad de evaluaciones registradas por programa">
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={[...byProgram].sort((a, b) => b.total - a.total).slice(0, 10)} barSize={20}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip content={({ active, payload }) => active && payload?.length ? (
+                    <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                      <p className="font-semibold">{payload[0].payload.name}</p>
+                      <p>Evaluaciones: <strong>{payload[0].value}</strong></p>
+                    </div>
+                  ) : null} />
+                  <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="total" position="top" style={{ fontSize: 11, fontWeight: 600 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            {/* Donut participación programas */}
+            <ChartCard title="Participación por programa" subtitle="Distribución porcentual del total de evaluaciones">
+              <div className="flex items-center gap-4">
+                <ResponsiveContainer width="45%" height={220}>
+                  <PieChart>
+                    <Pie data={byProgram.slice(0, 8).map((d) => ({ ...d, name: d.name, value: d.total, pct: filtered.length ? ((d.total / filtered.length) * 100).toFixed(1) : '0' }))} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={2}>
+                      {byProgram.slice(0, 8).map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Pie>
+                    <Tooltip content={<PieTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-2 text-xs flex-1">
+                  {byProgram.slice(0, 8).map((d, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
+                      <span className="text-slate-600 truncate flex-1">{d.name}</span>
+                      <span className="font-bold text-slate-700 shrink-0">{d.total}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </ChartCard>
+
+            <ChartCard title="Calidad vs volumen por programa" subtitle="Eje X = evaluaciones · Eje Y = promedio · Tamaño = cobertura en centros">
+              <ResponsiveContainer width="100%" height={280}>
+                <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="x" type="number" name="Evaluaciones" tick={{ fontSize: 11 }} />
+                  <YAxis dataKey="y" type="number" name="Promedio" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                  <ZAxis dataKey="z" range={[40, 320]} />
+                  <Tooltip
+                    content={({ active, payload }) =>
+                      active && payload?.length ? (
+                        <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                          <p className="font-semibold">{payload[0]?.payload?.name}</p>
+                          <p>Evaluaciones: <strong>{payload[0]?.payload?.x}</strong></p>
+                          <p>Promedio: <strong>{Number(payload[0]?.payload?.y || 0).toFixed(2)}</strong></p>
+                          <p>Centros: <strong>{payload[0]?.payload?.centers}</strong></p>
+                        </div>
+                      ) : null
+                    }
+                  />
+                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Scatter
+                    data={byProgramExtended.map((p) => ({ name: p.name, x: p.total, y: p.score, z: p.centerCount, centers: p.centerCount }))}
+                    fill="#2563eb"
+                    fillOpacity={0.75}
+                  />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            <ChartCard title="Cumplimiento por programa" subtitle="Porcentaje de evaluaciones completadas en los programas con más volumen">
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={byProgramExtended.slice(0, 10)} barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={65} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                  <Tooltip formatter={(v) => `${v}%`} />
+                  <Bar dataKey="completionPct" name="Cumplimiento" fill="#14b8a6" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="completionPct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 10, fontWeight: 600 }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
           </div>
+        )}
 
-          {analiticOutput && (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <ChartCard title="Resumen ejecutivo" subtitle="Lectura general del estado de calidad" span={2}>
-                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.resumenEjecutivo}</p>
-              </ChartCard>
+        {/* ── TAB: CENTROS ── */}
+        {activeTab === 'centros' && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {/* Promedio por centro — barras horizontales con semáforo */}
+            <ChartCard title="Promedio por centro de convenio" subtitle="Línea naranja = umbral 3.7 (MEN 00273)" span={2}>
+              <ResponsiveContainer width="100%" height={Math.max(300, byCenter.length * 42)}>
+                <BarChart data={byCenter} layout="vertical" barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                  <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
+                  <Tooltip content={<ScoreTooltip />} />
+                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral', position: 'top', fontSize: 10, fill: '#f97316' }} />
+                  <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
+                    {byCenter.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 11, fontWeight: 600 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
 
-              {analiticOutput.metodologia && (
-                <ChartCard title="Metodologia" subtitle="Enfoque analitico y criterios de interpretacion" span={2}>
-                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.metodologia}</p>
-                </ChartCard>
-              )}
+            {/* Scatter: impacto vs satisfacción */}
+            <ChartCard title="Impacto vs Satisfacción por centro" subtitle="Eje X = estudiantes impactados (aprox.) · Eje Y = promedio · Tamaño = volumen total">
+              <ResponsiveContainer width="100%" height={280}>
+                <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="x" name="Impacto" type="number" tick={{ fontSize: 11 }} label={{ value: 'N° Estudiantes impactados (aprox.)', position: 'insideBottomRight', offset: -10, fontSize: 11 }} />
+                  <YAxis dataKey="y" name="Promedio" type="number" domain={[0, 5]} tick={{ fontSize: 11 }} label={{ value: 'Promedio', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                  <ZAxis dataKey="z" range={[40, 300]} />
+                  <Tooltip
+                    content={({ active, payload }) =>
+                      active && payload?.length ? (
+                        <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                          <p className="font-semibold">{payload[0]?.payload?.name}</p>
+                          <p>Campus: <strong>{payload[0]?.payload?.campus}</strong></p>
+                          <p>Estudiantes impactados: <strong>{payload[0]?.payload?.students}</strong></p>
+                          <p>Evaluaciones: <strong>{payload[0]?.payload?.total}</strong></p>
+                          <p>Promedio: <strong>{Number(payload[0]?.payload?.y || 0).toFixed(2)}</strong></p>
+                        </div>
+                      ) : null
+                    }
+                  />
+                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Scatter data={impactVsSatisfaction} fill="#2563eb" fillOpacity={0.7} />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </ChartCard>
 
-              <ChartCard title="Lectura de graficas" subtitle="Interpretacion de tendencias y comparativos" span={2}>
-                <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.lecturaGraficas}</p>
-              </ChartCard>
+            {/* % Cumplimiento por centro */}
+            <ChartCard title="% Cumplimiento por centro" subtitle="Porcentaje de evaluaciones completadas por cada centro">
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={[...byCenter].sort((a, b) => b.completionPct - a.completionPct).slice(0, 10)} barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-35} textAnchor="end" height={70} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                  <Tooltip formatter={(v) => `${v}%`} />
+                  <Bar dataKey="completionPct" name="Cumplimiento" fill="#14b8a6" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="completionPct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 10, fontWeight: 600 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
 
-              {analiticOutput.calidadDato && (
-                <ChartCard title="Calidad del dato" subtitle="Confiabilidad del analisis y limitaciones de captura" span={2}>
-                  <p className="text-sm text-slate-700 mb-3 whitespace-pre-line leading-relaxed">{String(analiticOutput.calidadDato?.diagnostico || '')}</p>
-                  <p className="text-xs text-slate-500 mb-2">Confiabilidad: <span className="font-bold text-slate-700">{String(analiticOutput.calidadDato?.confiabilidad || 'No definida')}</span></p>
-                  {Array.isArray(analiticOutput.calidadDato?.limitaciones) && analiticOutput.calidadDato.limitaciones.length > 0 && (
-                    <ul className="space-y-1 text-sm text-slate-700 list-disc pl-5">
-                      {analiticOutput.calidadDato.limitaciones.map((lim, idx) => (
-                        <li key={idx}>{String(lim)}</li>
-                      ))}
-                    </ul>
-                  )}
-                </ChartCard>
-              )}
+            <ChartCard title="Centros con más evaluaciones" subtitle="Ranking por volumen total y su desempeño asociado" span={2}>
+              {topCentersByVolume.length === 0 ? (
+                <p className="text-sm text-slate-400">Sin datos disponibles para ranking de centros</p>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  <ResponsiveContainer width="100%" height={Math.max(280, topCentersByVolume.length * 30)}>
+                    <BarChart data={topCentersByVolume} layout="vertical" barSize={16}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} />
+                      <YAxis type="category" dataKey="name" width={220} tick={{ fontSize: 11 }} />
+                      <Tooltip content={<ScoreTooltip />} />
+                      <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[0, 6, 6, 0]}>
+                        <LabelList dataKey="total" position="right" style={{ fontSize: 11, fontWeight: 600 }} />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
 
-              {analiticOutput.benchmarking && (
-                <ChartCard title="Benchmarking" subtitle="Comparativos entre programas, centros y promedio global" span={2}>
-                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.benchmarking}</p>
-                </ChartCard>
-              )}
-
-              {analiticOutput.analisisPorCriterio?.length > 0 && (
-                <ChartCard title="Analisis por criterio" subtitle="Cobertura completa de criterios del instrumento con enfoque normativo" span={2}>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-500 border-b border-slate-200">
-                          <th className="py-2 text-left">Criterio</th>
-                          <th className="py-2 text-left">Estado 0273</th>
-                          <th className="py-2 text-left">Evidencia cuantitativa</th>
-                          <th className="py-2 text-left">Evidencia cualitativa</th>
-                          <th className="py-2 text-left">Brecha</th>
-                          <th className="py-2 text-left">Recomendacion</th>
+                          <th className="py-2 text-left">#</th>
+                          <th className="py-2 text-left">Centro</th>
+                          <th className="py-2 text-right">Eval.</th>
+                          <th className="py-2 text-right">Prom.</th>
+                          <th className="py-2 text-right">Cumpl.</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {analiticOutput.analisisPorCriterio.map((item, idx) => (
-                          <tr key={idx} className="border-b border-slate-100 align-top">
-                            <td className="py-2 font-semibold text-slate-800 min-w-[180px]">{String(item?.criterio || '')}</td>
-                            <td className="py-2 text-slate-700">{String(item?.estado0273 || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[220px]">{String(item?.evidenciaCuantitativa || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[220px]">{String(item?.evidenciaCualitativa || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[120px]">{String(item?.brecha || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[240px]">{String(item?.recomendacion || '')}</td>
+                        {topCentersByVolume.slice(0, 10).map((c) => (
+                          <tr key={c.name} className="border-b border-slate-100">
+                            <td className="py-2 font-semibold text-slate-600">{c.rank}</td>
+                            <td className="py-2 text-slate-700 max-w-[260px] truncate" title={c.name}>{c.name}</td>
+                            <td className="py-2 text-right font-semibold">{c.total}</td>
+                            <td className="py-2 text-right font-semibold" style={{ color: alertColor(c.score) }}>{c.score.toFixed(2)}</td>
+                            <td className="py-2 text-right text-slate-600">{c.completionPct}%</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                </ChartCard>
+                </div>
               )}
+            </ChartCard>
 
-              <ChartCard title="Hallazgos clave" subtitle="Puntos criticos identificados por Analitic Komet">
-                {analiticOutput.hallazgosClave?.length ? (
-                  <ul className="space-y-2 text-sm text-slate-700 list-disc pl-5">
-                    {analiticOutput.hallazgosClave.map((item, idx) => (
-                      <li key={idx}>{String(item)}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-slate-400">Sin hallazgos estructurados.</p>
-                )}
-              </ChartCard>
+            <ChartCard title="Comentarios y respuestas escritas por centro" subtitle="Extracción de texto abierto para lectura cualitativa" span={2}>
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <label className="text-sm text-slate-600 font-semibold">Centro para detalle:</label>
+                <select
+                  value={selectedCenterView}
+                  onChange={(e) => setSelectedCenterView(e.target.value)}
+                  className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {centerViewOptions.map((c) => <option key={c} value={c}>{c === 'Todos' ? 'Todos los centros' : c}</option>)}
+                </select>
+                <span className="text-xs text-slate-500">Registros encontrados: {centerComments.length}</span>
+              </div>
 
-              <ChartCard title="Alertas tempranas" subtitle="Señales de riesgo operativo a monitorear">
-                {analiticOutput.alertasTempranas?.length ? (
-                  <ul className="space-y-2 text-sm text-slate-700 list-disc pl-5">
-                    {analiticOutput.alertasTempranas.map((item, idx) => (
-                      <li key={idx}>{String(item)}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-slate-400">Sin alertas reportadas.</p>
-                )}
-              </ChartCard>
+              {centerComments.length === 0 ? (
+                <p className="text-sm text-slate-400">No se encontraron comentarios escritos para el filtro seleccionado.</p>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                  <div className="xl:col-span-2 overflow-x-auto max-h-[420px]">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-white">
+                        <tr className="text-slate-500 border-b border-slate-200">
+                          <th className="py-2 text-left">Fecha</th>
+                          <th className="py-2 text-left">Centro</th>
+                          <th className="py-2 text-left">Programa / Rol</th>
+                          <th className="py-2 text-left">Pregunta</th>
+                          <th className="py-2 text-left">Comentario</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {centerComments.map((item, i) => (
+                          <tr key={`${item.center}-${item.person}-${i}`} className="border-b border-slate-100 align-top">
+                            <td className="py-2 text-xs text-slate-500 whitespace-nowrap">{item.date ? new Date(item.date).toLocaleDateString() : 'Sin fecha'}</td>
+                            <td className="py-2 text-slate-700 max-w-[180px] truncate" title={item.center}>{item.center}</td>
+                            <td className="py-2">
+                              <div className="text-slate-700 max-w-[150px] truncate" title={item.program}>{item.program}</div>
+                              <div className="text-xs text-slate-500">{item.role}</div>
+                            </td>
+                            <td className="py-2 text-xs text-slate-600 max-w-[180px] truncate" title={item.question}>{item.question}</td>
+                            <td className="py-2 text-slate-700 min-w-[260px]">{item.text}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
 
-              {analiticOutput.analisisCualitativoPorCentro?.length > 0 && (
-                <ChartCard title="Analisis cualitativo por escenario de practica" subtitle="Fortalezas, aspectos de mejora y voces de estudiantes por sitio de practica — generado por Analitic Komet" span={2}>
-                  <div className="space-y-8">
-                    {analiticOutput.analisisCualitativoPorCentro.map((escenario, idx) => (
-                      <div key={idx} className="border border-slate-200 rounded-xl p-5 bg-slate-50">
-                        <div className="flex items-center justify-between mb-4">
-                          <div>
-                            <h4 className="font-bold text-slate-800 text-base">{String(escenario?.centro || 'Escenario')}</h4>
-                            {typeof escenario?.promedio === 'number' && (
-                              <span className={`inline-block mt-1 text-xs font-semibold px-2 py-0.5 rounded-full ${escenario.promedio >= 4.0 ? 'bg-emerald-100 text-emerald-700' : escenario.promedio >= 3.7 ? 'bg-blue-100 text-blue-700' : escenario.promedio >= 3.2 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                                Promedio: {escenario.promedio.toFixed(2)}
-                              </span>
-                            )}
-                          </div>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold text-slate-700 mb-2">Nube de palabras (sentimiento)</h4>
+                      {wordCloudData.length === 0 ? (
+                        <p className="text-xs text-slate-400">Sin palabras relevantes</p>
+                      ) : (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex flex-wrap gap-2">
+                          {wordCloudData.map((k, idx) => (
+                            <span
+                              key={`${k.word}-${idx}`}
+                              className="font-semibold leading-tight"
+                              style={{
+                                fontSize: `${k.size}px`,
+                                color: idx % 3 === 0 ? '#0f766e' : idx % 3 === 1 ? '#1d4ed8' : '#be123c'
+                              }}
+                            >
+                              {k.word}
+                            </span>
+                          ))}
                         </div>
+                      )}
+                    </div>
 
-                        {escenario?.tematicasRecurrentes?.length > 0 && (
-                          <div className="mb-4">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tematicas recurrentes</p>
-                            <div className="flex flex-wrap gap-2">
-                              {escenario.tematicasRecurrentes.map((t, ti) => (
-                                <span key={ti} className="text-xs bg-blue-100 text-blue-700 rounded-full px-3 py-1">{String(t)}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                    <div className="rounded-xl border border-slate-200 p-3 bg-white">
+                      <h5 className="font-semibold text-slate-700 text-xs uppercase tracking-wide mb-2">Sentimiento estimado</h5>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between"><span className="text-slate-600">Positivo</span><span className="font-bold text-emerald-700">{sentimentSummary.positivePct}%</span></div>
+                        <div className="flex justify-between"><span className="text-slate-600">Neutral</span><span className="font-bold text-slate-700">{sentimentSummary.neutralPct}%</span></div>
+                        <div className="flex justify-between"><span className="text-slate-600">Riesgo</span><span className="font-bold text-red-700">{sentimentSummary.negativePct}%</span></div>
+                      </div>
+                    </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                          {escenario?.fortalezas?.length > 0 && (
-                            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Fortalezas</p>
-                              <ul className="space-y-1.5 text-sm text-emerald-900">
-                                {escenario.fortalezas.map((f, fi) => (
-                                  <li key={fi} className="flex gap-2"><span className="text-emerald-500 shrink-0">✓</span>{String(f)}</li>
-                                ))}
-                              </ul>
+                    <div>
+                      <h4 className="font-semibold text-slate-700 mb-2">Palabras más frecuentes</h4>
+                      {commentKeywords.length === 0 ? (
+                        <p className="text-xs text-slate-400">Sin palabras relevantes</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {commentKeywords.map((k) => (
+                            <div key={k.word} className="flex items-center justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                              <span className="font-medium text-slate-700">{k.word}</span>
+                              <span className="font-bold text-blue-700">{k.count}</span>
                             </div>
-                          )}
-
-                          {escenario?.aspectosMejora?.length > 0 && (
-                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Aspectos a mejorar</p>
-                              <ul className="space-y-1.5 text-sm text-amber-900">
-                                {escenario.aspectosMejora.map((a, ai) => (
-                                  <li key={ai} className="flex gap-2"><span className="text-amber-500 shrink-0">→</span>{String(a)}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
+                          ))}
                         </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </ChartCard>
 
-                        {escenario?.vocesEstudiantes && (
-                          <div className="mb-4 bg-violet-50 border border-violet-200 rounded-lg p-4">
-                            <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-2">Voces de los estudiantes / practicantes</p>
-                            <p className="text-sm text-violet-900 whitespace-pre-line leading-relaxed">{String(escenario.vocesEstudiantes)}</p>
-                          </div>
-                        )}
-
-                        {escenario?.descripcionAmplia && (
-                          <div className="bg-white border border-slate-200 rounded-lg p-4">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Descripcion cualitativa amplia</p>
-                            <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{String(escenario.descripcionAmplia)}</p>
-                          </div>
-                        )}
+            {/* Heatmap centros × secciones */}
+            <ChartCard title="Mapa de calor de cumplimiento por sede" subtitle="Filas = centros de práctica · Columnas = categorías de encuesta · color rojo-verde por puntaje" span={2}>
+              {heatmap.centers.length === 0 ? (
+                <p className="text-sm text-slate-400">Sin datos suficientes</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left p-2 text-slate-500 font-semibold min-w-[120px]">Sede</th>
+                        <th className="text-left p-2 text-slate-500 font-semibold min-w-[150px]">Centro</th>
+                        {heatmap.sections.map((s) => (
+                          <th key={s} className="p-2 text-slate-500 font-semibold text-center max-w-[90px]">
+                            <span className="block truncate max-w-[88px]" title={s}>{s.length > 14 ? s.slice(0, 14) + '…' : s}</span>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {heatmap.centers.map((row) => (
+                        <tr key={row.center} className="border-t border-slate-100">
+                          <td className="p-2 text-slate-600 truncate max-w-[120px]" title={row.campus}>{row.campus}</td>
+                          <td className="p-2 text-slate-700 font-medium truncate max-w-[150px]" title={row.center}>{row.center}</td>
+                          {heatmap.sections.map((s) => {
+                            const val = row.sections[s] || 0;
+                            const color = heatColor(val || null);
+                            return (
+                              <td key={s} className="p-1 text-center">
+                                <div
+                                  className="rounded-lg py-1.5 px-2 font-bold text-white text-xs"
+                                  style={{ background: val > 0 ? color : '#e2e8f0', color: val > 0 ? '#fff' : '#94a3b8' }}
+                                >
+                                  {val > 0 ? val.toFixed(1) : '–'}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="flex gap-4 mt-4 text-xs text-slate-500">
+                    {[['1.0', '#ef4444', 'Rojo crítico'], ['3.0', '#eab308', 'Zona media'], ['5.0', '#22c55e', 'Verde alto']].map(([range, color, label]) => (
+                      <div key={label} className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded" style={{ background: color }} />
+                        <span>{range} — {label}</span>
                       </div>
                     ))}
                   </div>
-                </ChartCard>
+                </div>
               )}
+            </ChartCard>
+          </div>
+        )}
 
-              {analiticOutput.riesgosPriorizados?.length > 0 && (
-                <ChartCard title="Riesgos priorizados" subtitle="Matriz de riesgos con evidencia y contencion" span={2}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-slate-500 border-b border-slate-200">
-                          <th className="py-2 text-left">Riesgo</th>
-                          <th className="py-2 text-left">Tipo</th>
-                          <th className="py-2 text-left">Severidad</th>
-                          <th className="py-2 text-left">Impacto</th>
-                          <th className="py-2 text-left">Evidencia</th>
-                          <th className="py-2 text-left">Accion de contencion</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {analiticOutput.riesgosPriorizados.map((risk, idx) => (
-                          <tr key={idx} className="border-b border-slate-100 align-top">
-                            <td className="py-2 font-semibold text-slate-800 min-w-[180px]">{String(risk?.riesgo || '')}</td>
-                            <td className="py-2 text-slate-700">{String(risk?.tipo || '')}</td>
-                            <td className="py-2 text-slate-700">{String(risk?.severidad || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[180px]">{String(risk?.impacto || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[220px]">{String(risk?.evidencia || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[220px]">{String(risk?.accionContencion || '')}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </ChartCard>
+        {/* ── TAB: ROLES ── */}
+        {activeTab === 'roles' && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+            {/* Donut distribución por rol */}
+            <ChartCard title="Distribución por rol evaluador" subtitle="Participación porcentual de cada perfil en las evaluaciones">
+              <div className="flex items-center gap-6">
+                <ResponsiveContainer width="50%" height={240}>
+                  <PieChart>
+                    <Pie
+                      data={roleDonut.map((d) => ({ ...d, value: d.total, pct: d.pct }))}
+                      cx="50%" cy="50%" innerRadius={60} outerRadius={90}
+                      dataKey="value" paddingAngle={3}
+                    >
+                      {roleDonut.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Pie>
+                    <Tooltip content={<PieTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-3 text-sm flex-1">
+                  {roleDonut.map((d, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
+                      <span className="text-slate-600 flex-1">{d.name}</span>
+                      <span className="font-bold text-slate-800">{d.total} ({d.pct}%)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </ChartCard>
+
+            {/* Promedio por rol */}
+            <ChartCard title="Promedio por rol evaluador" subtitle="Puntaje promedio de las evaluaciones completadas por cada perfil">
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={byRole} barSize={36}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <YAxis domain={[0, 5]} tick={{ fontSize: 12 }} />
+                  <Tooltip content={<ScoreTooltip />} />
+                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
+                    {byRole.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    <LabelList dataKey="score" position="top" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 12, fontWeight: 700 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            {/* Barras agrupadas secciones × rol */}
+            <ChartCard title="Puntaje por sección y rol" subtitle="Comparativa de cada sección del instrumento entre los distintos roles evaluadores" span={2}>
+              {sectionByRole.data.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center mt-8">Sin datos de secciones</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={sectionByRole.data} barGap={2} barCategoryGap="20%">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={55} />
+                    <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v) => Number(v).toFixed(2)} />
+                    <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                    <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    {sectionByRole.roles.map((role, i) => (
+                      <Bar key={role} dataKey={role} name={role} fill={PALETTE[i % PALETTE.length]} radius={[4, 4, 0, 0]} barSize={16} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
               )}
+            </ChartCard>
+          </div>
+        )}
 
-              <ChartCard title="Aspectos de mejora" subtitle="Plan de accion sugerido desde comentarios y metricas" span={2}>
-                {analiticOutput.mejorasPriorizadas?.length ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-slate-500 border-b border-slate-200">
-                          <th className="py-2 text-left">Accion</th>
-                          <th className="py-2 text-left">Prioridad</th>
-                          <th className="py-2 text-left">Horizonte</th>
-                          <th className="py-2 text-left">Responsable</th>
-                          <th className="py-2 text-left">KPI</th>
-                          <th className="py-2 text-left">Criterio objetivo</th>
-                          <th className="py-2 text-left">Justificacion</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {analiticOutput.mejorasPriorizadas.map((m, idx) => (
-                          <tr key={idx} className="border-b border-slate-100 align-top">
-                            <td className="py-2 font-medium text-slate-800 min-w-[220px]">{String(m?.accion || '')}</td>
-                            <td className="py-2 text-slate-700">{String(m?.prioridad || '')}</td>
-                            <td className="py-2 text-slate-700">{String(m?.horizonte || '')}</td>
-                            <td className="py-2 text-slate-700">{String(m?.responsableSugerido || '')}</td>
-                            <td className="py-2 text-slate-700">{String(m?.kpiSeguimiento || '')}</td>
-                            <td className="py-2 text-slate-700">{String(m?.criterioObjetivo || '')}</td>
-                            <td className="py-2 text-slate-700 min-w-[260px]">{String(m?.justificacion || '')}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-400">Sin acciones priorizadas disponibles.</p>
+        {/* ── TAB: SECCIONES ── */}
+        {activeTab === 'secciones' && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+            {/* Semáforo por sección */}
+            <ChartCard title="Semáforo normativo por sección" subtitle="Verde ≥4.0 · Amarillo ≥3.5 · Naranja ≥2.5 · Rojo <2.5">
+              <div className="space-y-3">
+                {bySectionRaw.map((sec) => {
+                  const color = alertColor(sec.score);
+                  const pct = Math.max(0, Math.min(100, (sec.score / 5) * 100));
+                  return (
+                    <div key={sec.name}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-700 font-medium truncate max-w-[70%]">{sec.name}</span>
+                        <span className="font-bold" style={{ color }}>{sec.score.toFixed(2)}</span>
+                      </div>
+                      <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </ChartCard>
+
+            {/* Barras secciones con colores */}
+            <ChartCard title="Promedio global por sección" subtitle="Línea = umbral mínimo aceptable (3.7)">
+              <ResponsiveContainer width="100%" height={Math.max(280, bySectionRaw.length * 38)}>
+                <BarChart data={bySectionRaw} layout="vertical" barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                  <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" width={170} tick={{ fontSize: 11 }} />
+                  <Tooltip content={<ScoreTooltip />} />
+                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
+                    {bySectionRaw.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 11, fontWeight: 600 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            {/* Distribución 1–5 apilada por sección */}
+            <ChartCard title="Distribución de respuestas por sección" subtitle="Barras apiladas: proporción de calificaciones 1 a 5 por sección" span={2}>
+              {(() => {
+                const distData = (() => {
+                  const m = new Map();
+                  filtered.forEach((row) => {
+                    (row.scoreSummary?.sectionScores || []).forEach((sec) => {
+                      const key = norm(sec.title || sec.seccion || 'Sección');
+                      const cur = m.get(key) || { name: key.length > 20 ? key.slice(0, 20) + '…' : key, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0 };
+                      const r = Math.round(sec.score || 0);
+                      if (r >= 1 && r <= 5) cur[`r${r}`] += 1;
+                      m.set(key, cur);
+                    });
+                  });
+                  return [...m.values()];
+                })();
+                return (
+                  <ResponsiveContainer width="100%" height={320}>
+                    <BarChart data={distData} barSize={28}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={65} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                      <Bar dataKey="r1" name="1" stackId="a" fill="#ef4444" />
+                      <Bar dataKey="r2" name="2" stackId="a" fill="#f97316" />
+                      <Bar dataKey="r3" name="3" stackId="a" fill="#eab308" />
+                      <Bar dataKey="r4" name="4" stackId="a" fill="#22c55e" />
+                      <Bar dataKey="r5" name="5" stackId="a" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                );
+              })()}
+            </ChartCard>
+
+            <ChartCard
+              title="Likert divergente por dimensión"
+              subtitle="Izquierda = en contra (1-2) · centro = neutral (3) · derecha = a favor (4-5)"
+              span={2}
+            >
+              {divergentLikertBySection.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center mt-10">Sin datos para construir escala Likert divergente</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={360}>
+                  <BarChart data={divergentLikertBySection} layout="vertical" barSize={18} stackOffset="sign" margin={{ left: 20, right: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <XAxis type="number" domain={[-100, 100]} tick={{ fontSize: 11 }} unit="%" />
+                    <YAxis type="category" dataKey="name" width={220} tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      formatter={(value, name) => {
+                        const val = Math.abs(Number(value || 0)).toFixed(1);
+                        if (name === 'Neutral -') return [`${val}%`, 'Neutral (mitad izq.)'];
+                        if (name === 'Neutral +') return [`${val}%`, 'Neutral (mitad der.)'];
+                        return [`${val}%`, name];
+                      }}
+                      labelFormatter={(label) => `Dimensión: ${label}`}
+                    />
+                    <ReferenceLine x={0} stroke="#475569" strokeDasharray="2 2" />
+                    <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="r1Neg" name="Muy en contra (1)" stackId="likert" fill="#b91c1c" />
+                    <Bar dataKey="r2Neg" name="En contra (2)" stackId="likert" fill="#f97316" />
+                    <Bar dataKey="r3Neg" name="Neutral -" stackId="likert" fill="#94a3b8" />
+                    <Bar dataKey="r3Pos" name="Neutral +" stackId="likert" fill="#94a3b8" />
+                    <Bar dataKey="r4Pos" name="A favor (4)" stackId="likert" fill="#22c55e" />
+                    <Bar dataKey="r5Pos" name="Muy a favor (5)" stackId="likert" fill="#1d4ed8" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </ChartCard>
+          </div>
+        )}
+
+        {/* ── TAB: ANALITIC KOMET ── */}
+        {activeTab === 'analitic' && (
+          <div className="space-y-6">
+            <ChartCard
+              title="Analitic Komet"
+              subtitle="Analitica IA dinamica usando los filtros superiores y modelos gratuitos en OpenRouter"
+              span={2}
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={generateAnaliticKomet}
+                  disabled={isGeneratingAnalitic}
+                  className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingAnalitic ? 'Generando analisis...' : 'Generar Analitic Komet'}
+                </button>
+                <select
+                  value={analysisDepth}
+                  onChange={(e) => setAnalysisDepth(e.target.value)}
+                  className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="rapido">Profundidad: Rapido</option>
+                  <option value="estandar">Profundidad: Estandar</option>
+                  <option value="profundo">Profundidad: Profundo</option>
+                </select>
+                <span className="text-xs text-slate-500">
+                  Filtros activos: {selectedCampus} · {selectedLevel} · {selectedCenter} · {selectedProgram}
+                </span>
+                {analiticGeneratedAt && (
+                  <span className="text-xs text-slate-500">Ultima generacion: {analiticGeneratedAt}</span>
                 )}
+              </div>
+              {analiticError && <p className="text-sm text-red-600 mt-3">{analiticError}</p>}
+            </ChartCard>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <ChartCard
+                title="Comparativo normativo por programa"
+                subtitle="Promedio por programa con referencia al umbral 3.7 de MEN 00273"
+              >
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={programComparison.slice(0, 10)} barSize={18}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={65} />
+                    <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
+                    <Tooltip content={<ScoreTooltip />} />
+                    <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
+                      {programComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </ChartCard>
 
-              {analiticOutput.conclusion && (
-                <ChartCard title="Conclusion" subtitle="Cierre ejecutivo del analisis IA" span={2}>
-                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.conclusion}</p>
-                </ChartCard>
-              )}
+              <ChartCard
+                title="Comparativo normativo por centro"
+                subtitle="Ranking de centros por brecha respecto al umbral y promedio global"
+              >
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={centerComparison.slice(0, 10)} layout="vertical" barSize={16}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 10 }} />
+                    <Tooltip content={<ScoreTooltip />} />
+                    <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
+                      {centerComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
             </div>
-          )}
-        </div>
-      )}
+
+            {analiticOutput && (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <ChartCard title="Resumen ejecutivo" subtitle="Lectura general del estado de calidad" span={2}>
+                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.resumenEjecutivo}</p>
+                </ChartCard>
+
+                {analiticOutput.metodologia && (
+                  <ChartCard title="Metodologia" subtitle="Enfoque analitico y criterios de interpretacion" span={2}>
+                    <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.metodologia}</p>
+                  </ChartCard>
+                )}
+
+                <ChartCard title="Lectura de graficas" subtitle="Interpretacion de tendencias y comparativos" span={2}>
+                  <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.lecturaGraficas}</p>
+                </ChartCard>
+
+                {analiticOutput.calidadDato && (
+                  <ChartCard title="Calidad del dato" subtitle="Confiabilidad del analisis y limitaciones de captura" span={2}>
+                    <p className="text-sm text-slate-700 mb-3 whitespace-pre-line leading-relaxed">{String(analiticOutput.calidadDato?.diagnostico || '')}</p>
+                    <p className="text-xs text-slate-500 mb-2">Confiabilidad: <span className="font-bold text-slate-700">{String(analiticOutput.calidadDato?.confiabilidad || 'No definida')}</span></p>
+                    {Array.isArray(analiticOutput.calidadDato?.limitaciones) && analiticOutput.calidadDato.limitaciones.length > 0 && (
+                      <ul className="space-y-1 text-sm text-slate-700 list-disc pl-5">
+                        {analiticOutput.calidadDato.limitaciones.map((lim, idx) => (
+                          <li key={idx}>{String(lim)}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </ChartCard>
+                )}
+
+                {analiticOutput.benchmarking && (
+                  <ChartCard title="Benchmarking" subtitle="Comparativos entre programas, centros y promedio global" span={2}>
+                    <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.benchmarking}</p>
+                  </ChartCard>
+                )}
+
+                {analiticOutput.analisisPorCriterio?.length > 0 && (
+                  <ChartCard title="Analisis por criterio" subtitle="Cobertura completa de criterios del instrumento con enfoque normativo" span={2}>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-slate-200">
+                            <th className="py-2 text-left">Criterio</th>
+                            <th className="py-2 text-left">Estado 0273</th>
+                            <th className="py-2 text-left">Evidencia cuantitativa</th>
+                            <th className="py-2 text-left">Evidencia cualitativa</th>
+                            <th className="py-2 text-left">Brecha</th>
+                            <th className="py-2 text-left">Recomendacion</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analiticOutput.analisisPorCriterio.map((item, idx) => (
+                            <tr key={idx} className="border-b border-slate-100 align-top">
+                              <td className="py-2 font-semibold text-slate-800 min-w-[180px]">{String(item?.criterio || '')}</td>
+                              <td className="py-2 text-slate-700">{String(item?.estado0273 || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[220px]">{String(item?.evidenciaCuantitativa || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[220px]">{String(item?.evidenciaCualitativa || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[120px]">{String(item?.brecha || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[240px]">{String(item?.recomendacion || '')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </ChartCard>
+                )}
+
+                <ChartCard title="Hallazgos clave" subtitle="Puntos criticos identificados por Analitic Komet">
+                  {analiticOutput.hallazgosClave?.length ? (
+                    <ul className="space-y-2 text-sm text-slate-700 list-disc pl-5">
+                      {analiticOutput.hallazgosClave.map((item, idx) => (
+                        <li key={idx}>{String(item)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-slate-400">Sin hallazgos estructurados.</p>
+                  )}
+                </ChartCard>
+
+                <ChartCard title="Alertas tempranas" subtitle="Señales de riesgo operativo a monitorear">
+                  {analiticOutput.alertasTempranas?.length ? (
+                    <ul className="space-y-2 text-sm text-slate-700 list-disc pl-5">
+                      {analiticOutput.alertasTempranas.map((item, idx) => (
+                        <li key={idx}>{String(item)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-slate-400">Sin alertas reportadas.</p>
+                  )}
+                </ChartCard>
+
+                {analiticOutput.analisisCualitativoPorCentro?.length > 0 && (
+                  <ChartCard title="Analisis cualitativo por escenario de practica" subtitle="Fortalezas, aspectos de mejora y voces de estudiantes por sitio de practica — generado por Analitic Komet" span={2}>
+                    <div className="space-y-8">
+                      {analiticOutput.analisisCualitativoPorCentro.map((escenario, idx) => (
+                        <div key={idx} className="border border-slate-200 rounded-xl p-5 bg-slate-50">
+                          <div className="flex items-center justify-between mb-4">
+                            <div>
+                              <h4 className="font-bold text-slate-800 text-base">{String(escenario?.centro || 'Escenario')}</h4>
+                              {typeof escenario?.promedio === 'number' && (
+                                <span className={`inline-block mt-1 text-xs font-semibold px-2 py-0.5 rounded-full ${escenario.promedio >= 4.0 ? 'bg-emerald-100 text-emerald-700' : escenario.promedio >= 3.7 ? 'bg-blue-100 text-blue-700' : escenario.promedio >= 3.2 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                                  Promedio: {escenario.promedio.toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {escenario?.tematicasRecurrentes?.length > 0 && (
+                            <div className="mb-4">
+                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tematicas recurrentes</p>
+                              <div className="flex flex-wrap gap-2">
+                                {escenario.tematicasRecurrentes.map((t, ti) => (
+                                  <span key={ti} className="text-xs bg-blue-100 text-blue-700 rounded-full px-3 py-1">{String(t)}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            {escenario?.fortalezas?.length > 0 && (
+                              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                                <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Fortalezas</p>
+                                <ul className="space-y-1.5 text-sm text-emerald-900">
+                                  {escenario.fortalezas.map((f, fi) => (
+                                    <li key={fi} className="flex gap-2"><span className="text-emerald-500 shrink-0">✓</span>{String(f)}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {escenario?.aspectosMejora?.length > 0 && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Aspectos a mejorar</p>
+                                <ul className="space-y-1.5 text-sm text-amber-900">
+                                  {escenario.aspectosMejora.map((a, ai) => (
+                                    <li key={ai} className="flex gap-2"><span className="text-amber-500 shrink-0">→</span>{String(a)}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+
+                          {escenario?.vocesEstudiantes && (
+                            <div className="mb-4 bg-violet-50 border border-violet-200 rounded-lg p-4">
+                              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide mb-2">Voces de los estudiantes / practicantes</p>
+                              <p className="text-sm text-violet-900 whitespace-pre-line leading-relaxed">{String(escenario.vocesEstudiantes)}</p>
+                            </div>
+                          )}
+
+                          {escenario?.descripcionAmplia && (
+                            <div className="bg-white border border-slate-200 rounded-lg p-4">
+                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Descripcion cualitativa amplia</p>
+                              <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{String(escenario.descripcionAmplia)}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </ChartCard>
+                )}
+
+                {analiticOutput.riesgosPriorizados?.length > 0 && (
+                  <ChartCard title="Riesgos priorizados" subtitle="Matriz de riesgos con evidencia y contencion" span={2}>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-slate-200">
+                            <th className="py-2 text-left">Riesgo</th>
+                            <th className="py-2 text-left">Tipo</th>
+                            <th className="py-2 text-left">Severidad</th>
+                            <th className="py-2 text-left">Impacto</th>
+                            <th className="py-2 text-left">Evidencia</th>
+                            <th className="py-2 text-left">Accion de contencion</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analiticOutput.riesgosPriorizados.map((risk, idx) => (
+                            <tr key={idx} className="border-b border-slate-100 align-top">
+                              <td className="py-2 font-semibold text-slate-800 min-w-[180px]">{String(risk?.riesgo || '')}</td>
+                              <td className="py-2 text-slate-700">{String(risk?.tipo || '')}</td>
+                              <td className="py-2 text-slate-700">{String(risk?.severidad || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[180px]">{String(risk?.impacto || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[220px]">{String(risk?.evidencia || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[220px]">{String(risk?.accionContencion || '')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </ChartCard>
+                )}
+
+                <ChartCard title="Aspectos de mejora" subtitle="Plan de accion sugerido desde comentarios y metricas" span={2}>
+                  {analiticOutput.mejorasPriorizadas?.length ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-slate-200">
+                            <th className="py-2 text-left">Accion</th>
+                            <th className="py-2 text-left">Prioridad</th>
+                            <th className="py-2 text-left">Horizonte</th>
+                            <th className="py-2 text-left">Responsable</th>
+                            <th className="py-2 text-left">KPI</th>
+                            <th className="py-2 text-left">Criterio objetivo</th>
+                            <th className="py-2 text-left">Justificacion</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analiticOutput.mejorasPriorizadas.map((m, idx) => (
+                            <tr key={idx} className="border-b border-slate-100 align-top">
+                              <td className="py-2 font-medium text-slate-800 min-w-[220px]">{String(m?.accion || '')}</td>
+                              <td className="py-2 text-slate-700">{String(m?.prioridad || '')}</td>
+                              <td className="py-2 text-slate-700">{String(m?.horizonte || '')}</td>
+                              <td className="py-2 text-slate-700">{String(m?.responsableSugerido || '')}</td>
+                              <td className="py-2 text-slate-700">{String(m?.kpiSeguimiento || '')}</td>
+                              <td className="py-2 text-slate-700">{String(m?.criterioObjetivo || '')}</td>
+                              <td className="py-2 text-slate-700 min-w-[260px]">{String(m?.justificacion || '')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">Sin acciones priorizadas disponibles.</p>
+                  )}
+                </ChartCard>
+
+                {analiticOutput.conclusion && (
+                  <ChartCard title="Conclusion" subtitle="Cierre ejecutivo del analisis IA" span={2}>
+                    <p className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">{analiticOutput.conclusion}</p>
+                  </ChartCard>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
