@@ -9,6 +9,11 @@ import {
 } from '../lib/data';
 
 const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
+const PPTX_SHAPES = {
+  line: 'line',
+  rect: 'rect',
+  roundRect: 'roundRect'
+};
 
 function norm(value) {
   return String(value || '').trim();
@@ -177,7 +182,7 @@ function shortList(items = [], max = 5) {
 
 function addSlideHeader(slide, title, subtitle) {
   slide.addText('Komet Presenta', { x: 0.5, y: 0.2, w: 3, h: 0.3, fontSize: 11, color: '2563EB', bold: true });
-  slide.addShape(PptxGenJS.ShapeType.line, {
+  slide.addShape(PPTX_SHAPES.line, {
     x: 0.5,
     y: 0.58,
     w: 12.2,
@@ -195,7 +200,7 @@ function addFooter(slide, footerText) {
 }
 
 function addBulletBlock(slide, x, y, w, h, title, lines = []) {
-  slide.addShape(PptxGenJS.ShapeType.roundRect, {
+  slide.addShape(PPTX_SHAPES.roundRect, {
     x,
     y,
     w,
@@ -218,7 +223,7 @@ function addBulletBlock(slide, x, y, w, h, title, lines = []) {
 }
 
 function addTableLikeList(slide, startY, rows, headers) {
-  slide.addShape(PptxGenJS.ShapeType.rect, {
+  slide.addShape(PPTX_SHAPES.rect, {
     x: 0.5,
     y: startY,
     w: 12.2,
@@ -236,7 +241,7 @@ function addTableLikeList(slide, startY, rows, headers) {
 
   rows.slice(0, 8).forEach((row, idx) => {
     const y = startY + 0.45 + idx * 0.48;
-    slide.addShape(PptxGenJS.ShapeType.rect, {
+    slide.addShape(PPTX_SHAPES.rect, {
       x: 0.5,
       y,
       w: 12.2,
@@ -269,7 +274,7 @@ function createPresentationDeck({ filters, metrics, narrative }) {
   {
     const slide = pptx.addSlide();
     slide.background = { color: 'EFF6FF' };
-    slide.addShape(PptxGenJS.ShapeType.rect, {
+    slide.addShape(PPTX_SHAPES.rect, {
       x: 0,
       y: 0,
       w: 13.33,
@@ -335,7 +340,7 @@ function createPresentationDeck({ filters, metrics, narrative }) {
       const row = Math.floor(index / 3);
       const x = 0.7 + col * 4.1;
       const y = 1.8 + row * 2.2;
-      slide.addShape(PptxGenJS.ShapeType.roundRect, {
+      slide.addShape(PPTX_SHAPES.roundRect, {
         x,
         y,
         w: 3.8,
