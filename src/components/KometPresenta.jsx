@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PptxGenJS from 'pptxgenjs';
-import { Loader2, Presentation, Sparkles, Download } from 'lucide-react';
+import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart } from 'lucide-react';
 import {
   getEvaluationReportMetrics,
   getSystemSettings,
@@ -78,6 +78,7 @@ function formatFilters({ campus, level, center, program }) {
 function parseAiPayload(rawText = '') {
   const fallback = {
     resumen: 'No fue posible construir narrativa IA en este momento. Se usaron hallazgos automáticos.',
+    analisis_completo: 'Sin análisis profundo disponible.',
     hallazgos: [],
     riesgos: [],
     acciones: []
@@ -96,6 +97,7 @@ function parseAiPayload(rawText = '') {
     const parsed = JSON.parse(jsonText);
     return {
       resumen: String(parsed?.resumen || fallback.resumen),
+      analisis_completo: String(parsed?.analisis_completo || parsed?.analisis || fallback.analisis_completo),
       hallazgos: Array.isArray(parsed?.hallazgos) ? parsed.hallazgos.map(String) : [],
       riesgos: Array.isArray(parsed?.riesgos) ? parsed.riesgos.map(String) : [],
       acciones: Array.isArray(parsed?.acciones) ? parsed.acciones.map(String) : []
@@ -109,37 +111,34 @@ function parseAiPayload(rawText = '') {
 }
 
 function buildNarrativeFallback(metrics) {
+  const analisis = `Análisis Estructural de Datos:
+El conjunto de datos procesa ${metrics.kpis.total} evaluaciones con un cumplimiento del ${formatPct(metrics.kpis.completionPct)}. 
+El puntaje medio institucional es ${metrics.kpis.globalScore.toFixed(2)}/5.0, mostrando una varianza de ${metrics.variability.toFixed(2)}, lo que sugiere una dispersión ${metrics.variability > 0.9 ? 'significativa que requiere revisión' : 'controlada'}. 
+La métrica histórica refleja una tendencia general ${metrics.trendDirection}. 
+A nivel operativo, ${metrics.topCenter?.name || 'N/A'} lidera el desempeño, contrastando con ${metrics.lowCenter?.name || 'N/A'} que representa el cuartil inferior.`;
+
   const hallazgos = [
-    `Promedio global del periodo: ${metrics.kpis.globalScore.toFixed(2)} sobre 5.`,
-    `Cobertura de respuesta: ${formatPct(metrics.kpis.completionPct)} (${metrics.kpis.completed}/${metrics.kpis.total}).`,
-    metrics.topCenter
-      ? `Centro con mejor promedio: ${metrics.topCenter.name} (${metrics.topCenter.score.toFixed(2)}).`
-      : 'No hay centros suficientes para ranking comparativo.',
-    metrics.topProgram
-      ? `Programa con mejor promedio: ${metrics.topProgram.name} (${metrics.topProgram.score.toFixed(2)}).`
-      : 'No hay programas suficientes para ranking comparativo.'
+    `Promedio global consolidado: ${metrics.kpis.globalScore.toFixed(2)} sobre 5.`,
+    `Tasa de respuesta efectiva: ${formatPct(metrics.kpis.completionPct)} (${metrics.kpis.completed}/${metrics.kpis.total}).`,
+    metrics.topCenter ? `Liderazgo en centro de práctica: ${metrics.topCenter.name} destaca con ${metrics.topCenter.score.toFixed(2)}.` : '',
+    metrics.topProgram ? `Liderazgo académico: ${metrics.topProgram.name} obtiene la valoración más alta (${metrics.topProgram.score.toFixed(2)}).` : ''
   ].filter(Boolean);
 
   const riesgos = [
-    metrics.lowCenter
-      ? `Brecha de desempeno: ${metrics.lowCenter.name} presenta el promedio mas bajo (${metrics.lowCenter.score.toFixed(2)}).`
-      : '',
-    metrics.kpis.completionPct < 70
-      ? 'La cobertura de evaluaciones es inferior al 70%, lo cual puede sesgar el analisis.'
-      : '',
-    metrics.variability > 0.9
-      ? `Alta dispersión de calificaciones (desv. estandar ${metrics.variability.toFixed(2)}).`
-      : 'Dispersión estable de resultados.'
+    metrics.lowCenter ? `Brecha operativa: ${metrics.lowCenter.name} registra el índice más bajo (${metrics.lowCenter.score.toFixed(2)}).` : '',
+    metrics.kpis.completionPct < 70 ? 'Riesgo de sesgo: La cobertura global de respuestas es inferior al 70%.' : '',
+    metrics.variability > 0.9 ? `Falta de estandarización: Alta desviación en calificaciones (${metrics.variability.toFixed(2)}).` : ''
   ].filter(Boolean);
 
   const acciones = [
-    'Priorizar acompanamiento metodologico en los centros con promedio inferior a 3.5.',
-    'Ejecutar plan de cierre de evaluaciones pendientes por programa y rol.',
-    'Repetir este corte quincenalmente para monitorear mejora continua.'
+    'Establecer planes de remediación inmediatos en escenarios con promedio < 3.5.',
+    'Automatizar recordatorios para incrementar la tasa de cumplimiento de evaluaciones pendientes.',
+    'Socializar estos resultados con directores de programa para fomentar planes de acción a medida.'
   ];
 
   return {
-    resumen: `Reporte ejecutivo para ${metrics.kpis.total} evaluaciones filtradas. El promedio general es ${metrics.kpis.globalScore.toFixed(2)} con tendencia ${metrics.trendDirection}.`,
+    resumen: `Reporte gerencial basado en ${metrics.kpis.total} registros. El indicador global es ${metrics.kpis.globalScore.toFixed(2)} (Tendencia ${metrics.trendDirection}).`,
+    analisis_completo: analisis,
     hallazgos,
     riesgos,
     acciones
@@ -148,7 +147,6 @@ function buildNarrativeFallback(metrics) {
 
 function rankBy(rows, keyGetter, scoreGetter) {
   const map = new Map();
-
   rows.forEach((row) => {
     const name = keyGetter(row);
     const score = scoreGetter(row);
@@ -181,14 +179,8 @@ function shortList(items = [], max = 5) {
 }
 
 function addSlideHeader(slide, title, subtitle) {
-  slide.addText('Komet Presenta', { x: 0.5, y: 0.2, w: 3, h: 0.3, fontSize: 11, color: '2563EB', bold: true });
-  slide.addShape(PPTX_SHAPES.line, {
-    x: 0.5,
-    y: 0.58,
-    w: 12.2,
-    h: 0,
-    line: { color: 'E2E8F0', pt: 1 }
-  });
+  slide.addText('Komet Analytics & AI', { x: 0.5, y: 0.2, w: 4, h: 0.3, fontSize: 11, color: '2563EB', bold: true });
+  slide.addShape(PPTX_SHAPES.line, { x: 0.5, y: 0.58, w: 12.2, h: 0, line: { color: 'E2E8F0', pt: 1 } });
   slide.addText(title, { x: 0.5, y: 0.7, w: 12.2, h: 0.5, fontSize: 24, bold: true, color: '0F172A' });
   if (subtitle) {
     slide.addText(subtitle, { x: 0.5, y: 1.2, w: 12.2, h: 0.45, fontSize: 12, color: '475569' });
@@ -201,108 +193,78 @@ function addFooter(slide, footerText) {
 
 function addBulletBlock(slide, x, y, w, h, title, lines = []) {
   slide.addShape(PPTX_SHAPES.roundRect, {
-    x,
-    y,
-    w,
-    h,
-    line: { color: 'DBEAFE', pt: 1 },
-    fill: { color: 'F8FAFF' },
-    radius: 0.08
+    x, y, w, h, line: { color: 'DBEAFE', pt: 1 }, fill: { color: 'F8FAFF' }, radius: 0.08
   });
   slide.addText(title, { x: x + 0.2, y: y + 0.12, w: w - 0.4, h: 0.3, fontSize: 14, bold: true, color: '1D4ED8' });
   slide.addText(lines.join('\n') || '• Sin datos suficientes', {
-    x: x + 0.2,
-    y: y + 0.52,
-    w: w - 0.4,
-    h: h - 0.65,
-    fontSize: 11,
-    color: '0F172A',
-    breakLine: true,
-    valign: 'top'
+    x: x + 0.2, y: y + 0.52, w: w - 0.4, h: h - 0.65, fontSize: 11, color: '0F172A', breakLine: true, valign: 'top'
   });
 }
 
-function addTableLikeList(slide, startY, rows, headers) {
-  slide.addShape(PPTX_SHAPES.rect, {
-    x: 0.5,
-    y: startY,
-    w: 12.2,
-    h: 0.4,
-    line: { color: 'CBD5E1', pt: 1 },
-    fill: { color: 'EFF6FF' }
-  });
+function addNativeTable(slide, x, y, w, rows, headers) {
+  const colWs = [w * 0.45, w * 0.18, w * 0.18, w * 0.19]; 
+  const tableData = [
+    headers.map(h => ({ text: h, options: { fill: '1E3A8A', color: 'FFFFFF', bold: true, fontSize: 11, align: 'center', valign: 'middle' } })),
+    ...rows.slice(0, 10).map((row, idx) => [
+      { text: row.name, options: { fill: idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF', fontSize: 10, align: 'left', valign: 'middle' } },
+      { text: String(row.total), options: { fill: idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF', fontSize: 10, align: 'center', valign: 'middle' } },
+      { text: row.score.toFixed(2), options: { fill: idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF', fontSize: 10, align: 'center', valign: 'middle' } },
+      { text: formatPct(row.completionPct), options: { fill: idx % 2 === 0 ? 'F8FAFC' : 'FFFFFF', fontSize: 10, align: 'center', valign: 'middle' } }
+    ])
+  ];
 
-  const colW = [5.5, 2.2, 2.2, 2.3];
-  let x = 0.6;
-  headers.forEach((head, index) => {
-    slide.addText(head, { x, y: startY + 0.08, w: colW[index], h: 0.25, fontSize: 11, bold: true, color: '1E3A8A' });
-    x += colW[index];
-  });
-
-  rows.slice(0, 8).forEach((row, idx) => {
-    const y = startY + 0.45 + idx * 0.48;
-    slide.addShape(PPTX_SHAPES.rect, {
-      x: 0.5,
-      y,
-      w: 12.2,
-      h: 0.44,
-      line: { color: 'E2E8F0', pt: 1 },
-      fill: { color: idx % 2 === 0 ? 'FFFFFF' : 'F8FAFC' }
+  if (slide.addTable) {
+    slide.addTable(tableData, {
+      x, y, w, rowH: 0.4,
+      border: { pt: 1, color: 'E2E8F0' },
+      colW: colWs
     });
-    let rowX = 0.6;
-    [row.name, String(row.total), row.score.toFixed(2), formatPct(row.completionPct)].forEach((cell, cellIdx) => {
-      slide.addText(cell, { x: rowX, y: y + 0.1, w: colW[cellIdx], h: 0.25, fontSize: 10.5, color: '0F172A' });
-      rowX += colW[cellIdx];
-    });
-  });
+  }
 }
 
 function createPresentationDeck({ filters, metrics, narrative }) {
   const pptx = new PptxGenJS();
+
   pptx.layout = 'LAYOUT_WIDE';
-  pptx.author = 'Komet';
+  pptx.author = 'Komet Analytics';
   pptx.company = 'Komet';
-  pptx.subject = 'Reporte dinamico de evaluaciones';
+  pptx.subject = 'Reporte Ejecutivo y Análisis de Datos';
   pptx.title = 'Komet Presenta';
   pptx.lang = 'es-CO';
 
   const stamp = new Date().toLocaleString('es-CO');
-  const footer = `Generado por Komet Presenta | ${stamp}`;
+  const footer = `Generado mediante Komet Data & AI | ${stamp}`;
   const filtersText = formatFilters(filters);
 
   // 1. Portada
   {
     const slide = pptx.addSlide();
     slide.background = { color: 'EFF6FF' };
-    slide.addShape(PPTX_SHAPES.rect, {
-      x: 0,
-      y: 0,
-      w: 13.33,
-      h: 1.7,
-      fill: { color: '1D4ED8' },
-      line: { color: '1D4ED8', pt: 0 }
-    });
-    slide.addText('Komet Presenta', { x: 0.7, y: 0.45, w: 6, h: 0.6, fontSize: 32, bold: true, color: 'FFFFFF' });
-    slide.addText('Presentacion ejecutiva automatizada', { x: 0.7, y: 1.95, w: 8, h: 0.4, fontSize: 17, color: '1E293B' });
-    slide.addText(filtersText, { x: 0.7, y: 2.45, w: 12, h: 0.5, fontSize: 12, color: '334155' });
-    slide.addText(`Cobertura: ${metrics.kpis.total} evaluaciones`, { x: 0.7, y: 2.95, w: 6, h: 0.4, fontSize: 12, color: '334155' });
-    slide.addText(narrative.resumen, { x: 0.7, y: 3.55, w: 12, h: 2.5, fontSize: 15, color: '0F172A', breakLine: true });
+    slide.addShape(PPTX_SHAPES.rect, { x: 0, y: 0, w: 13.33, h: 1.7, fill: { color: '1D4ED8' }, line: { color: '1D4ED8', pt: 0 } });
+    slide.addText('Komet Data Analytics', { x: 0.7, y: 0.45, w: 8, h: 0.6, fontSize: 32, bold: true, color: 'FFFFFF' });
+    slide.addText('Reporte Integral de Evaluaciones y Calidad', { x: 0.7, y: 1.95, w: 10, h: 0.4, fontSize: 18, bold: true, color: '1E293B' });
+    slide.addText(filtersText, { x: 0.7, y: 2.55, w: 12, h: 0.5, fontSize: 12, color: '334155' });
+    slide.addText(`Volumen de la muestra: ${metrics.kpis.total} evaluaciones analizadas`, { x: 0.7, y: 3.05, w: 8, h: 0.4, fontSize: 12, color: '334155', italic: true });
+    slide.addText(narrative.resumen, { x: 0.7, y: 3.8, w: 11.5, h: 2.0, fontSize: 16, color: '0F172A', breakLine: true });
     addFooter(slide, footer);
   }
 
   // 2. Agenda
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Agenda Ejecutiva', 'Secuencia estandar de 15 diapositivas para seguimiento institucional');
+    addSlideHeader(slide, 'Estructura del Estudio de Datos', 'Secuencia metodológica del reporte');
     slide.addText(
       [
-        '1. Contexto y filtros aplicados',
-        '2. KPIs globales y distribucion de puntajes',
-        '3. Comparativos por campus, centro, programa y rol',
-        '4. Tendencia temporal y desempeno por encuesta',
-        '5. Hallazgos, riesgos y plan de accion recomendado'
-      ].join('\n'),
-      { x: 0.9, y: 2.0, w: 11.8, h: 3.8, fontSize: 18, color: '0F172A', breakLine: true }
+        '1. Metodología y alcance del dataset',
+        '2. Cuadro de Mando Integral (KPIs)',
+        '3. Análisis de Distribución de Resultados (Gráficos)',
+        '4. Estudio de Tendencias Temporales',
+        '5. Matrices Comparativas (Campus, Centros, Programas)',
+        '6. Diagnóstico de Calidad del Dato',
+        '7. Deep Data Analysis: Estudio Integral por IA',
+        '8. Plan de Acción y Sugerencias Estratégicas'
+      ].join('\n\n'),
+      { x: 0.9, y: 1.8, w: 11.8, h: 4.5, fontSize: 16, color: '0F172A', breakLine: true, bullet: { code: '2022', color: '1D4ED8' } }
     );
     addFooter(slide, footer);
   }
@@ -310,13 +272,13 @@ function createPresentationDeck({ filters, metrics, narrative }) {
   // 3. Filtros y alcance
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Alcance del Corte', 'Filtros dinamicos aplicados al dataset');
-    addBulletBlock(slide, 0.7, 1.9, 12, 3.6, 'Filtros activos', shortList([
-      `Campus: ${filters.campus}`,
-      `Nivel: ${filters.level}`,
-      `Centro: ${filters.center}`,
-      `Programa: ${filters.program}`,
-      `Rango observado: ${metrics.dateRange}`
+    addSlideHeader(slide, 'Contexto del Estudio', 'Filtros aplicados a la base de datos');
+    addBulletBlock(slide, 0.7, 1.9, 12, 3.6, 'Parámetros de Inclusión', shortList([
+      `Sede / Campus: ${filters.campus}`,
+      `Nivel Académico: ${filters.level}`,
+      `Centro de Práctica: ${filters.center}`,
+      `Especialidad / Programa: ${filters.program}`,
+      `Periodo de Observación: ${metrics.dateRange}`
     ], 5));
     addFooter(slide, footer);
   }
@@ -324,15 +286,14 @@ function createPresentationDeck({ filters, metrics, narrative }) {
   // 4. KPIs principales
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'KPIs Principales', 'Indicadores de nivel directivo');
-
+    addSlideHeader(slide, 'Cuadro de Mando Integral', 'Métricas de alto nivel institucionales');
     const cards = [
-      ['Evaluaciones', String(metrics.kpis.total)],
-      ['Completadas', String(metrics.kpis.completed)],
-      ['Cumplimiento', formatPct(metrics.kpis.completionPct)],
-      ['Promedio global', metrics.kpis.globalScore.toFixed(2)],
-      ['Programas', String(metrics.kpis.programs)],
-      ['Centros', String(metrics.kpis.centers)]
+      ['Total Evaluaciones', String(metrics.kpis.total)],
+      ['Respuestas Efectivas', String(metrics.kpis.completed)],
+      ['Tasa de Cumplimiento', formatPct(metrics.kpis.completionPct)],
+      ['Score Promedio Global', metrics.kpis.globalScore.toFixed(2)],
+      ['Programas Cubiertos', String(metrics.kpis.programs)],
+      ['Centros Monitoreados', String(metrics.kpis.centers)]
     ];
 
     cards.forEach((card, index) => {
@@ -340,134 +301,165 @@ function createPresentationDeck({ filters, metrics, narrative }) {
       const row = Math.floor(index / 3);
       const x = 0.7 + col * 4.1;
       const y = 1.8 + row * 2.2;
-      slide.addShape(PPTX_SHAPES.roundRect, {
-        x,
-        y,
-        w: 3.8,
-        h: 1.8,
-        line: { color: 'DBEAFE', pt: 1 },
-        fill: { color: 'F8FAFF' },
-        radius: 0.08
-      });
-      slide.addText(card[0], { x: x + 0.2, y: y + 0.2, w: 3.4, h: 0.35, fontSize: 12, color: '475569' });
-      slide.addText(card[1], { x: x + 0.2, y: y + 0.72, w: 3.4, h: 0.7, fontSize: 28, bold: true, color: '1E3A8A' });
+      slide.addShape(PPTX_SHAPES.roundRect, { x, y, w: 3.8, h: 1.8, line: { color: 'DBEAFE', pt: 1 }, fill: { color: 'F8FAFF' }, radius: 0.08 });
+      slide.addText(card[0], { x: x + 0.2, y: y + 0.2, w: 3.4, h: 0.35, fontSize: 13, color: '475569', bold: true });
+      slide.addText(card[1], { x: x + 0.2, y: y + 0.72, w: 3.4, h: 0.7, fontSize: 32, bold: true, color: '1E3A8A' });
+    });
+    addFooter(slide, footer);
+  }
+
+  // 5. Gráfico Distribución de Puntajes
+  {
+    const slide = pptx.addSlide();
+    addSlideHeader(slide, 'Distribución de Calificaciones', 'Análisis de concentración de puntajes globales');
+    
+    // Gráfico de pastel / Doughnut nativo
+    const distChartData = [{
+      name: 'Volumen',
+      labels: metrics.distribution.map(d => d.label),
+      values: metrics.distribution.map(d => d.count)
+    }];
+    
+    slide.addChart(pptx.charts.DOUGHNUT, distChartData, {
+      x: 0.7, y: 1.8, w: 5.5, h: 4.5,
+      showLegend: true, legendPos: 'b',
+      showValue: false, showPercent: true,
+      dataLabelColor: 'FFFFFF', dataLabelFontSize: 12,
+      chartColors: ['EF4444', 'F59E0B', '3B82F6', '10B981'],
+      holeSize: 50
     });
 
-    addFooter(slide, footer);
-  }
-
-  // 5. Distribucion de puntajes
-  {
-    const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Distribucion de Puntajes', 'Frecuencia por rangos de calificacion global');
-    const distributionLines = metrics.distribution.map((item) => `• Rango ${item.label}: ${item.count} evaluaciones`);
-    addBulletBlock(slide, 0.7, 1.8, 5.8, 4.8, 'Distribucion', distributionLines);
-    addBulletBlock(slide, 6.8, 1.8, 5.9, 4.8, 'Lectura ejecutiva', shortList([
-      `Puntaje promedio: ${metrics.kpis.globalScore.toFixed(2)}`,
-      `Desviacion estandar: ${metrics.variability.toFixed(2)}`,
-      metrics.variability > 0.9 ? 'Existe alta variabilidad entre evaluaciones.' : 'Variabilidad controlada en el corte.',
-      `Tendencia temporal: ${metrics.trendDirection}`
+    addBulletBlock(slide, 6.8, 1.8, 5.9, 4.5, 'Insights Estadísticos', shortList([
+      `Mediana del periodo: ${metrics.kpis.globalScore.toFixed(2)}`,
+      `Índice de Varianza (Desv. Estándar): ${metrics.variability.toFixed(2)}`,
+      metrics.variability > 0.9 ? '⚠️ Se detecta una alta variabilidad. Revisar metodologías.' : '✅ La variabilidad está controlada y estable.',
+      `Categoría dominante: Rango ${[...metrics.distribution].sort((a,b) => b.count - a.count)[0]?.label}`
     ], 4));
     addFooter(slide, footer);
   }
 
-  // 6. Campus
+  // 6. Tendencia Mensual (Líneas)
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Comparativo por Campus', 'Promedio, volumen y cumplimiento');
-    addTableLikeList(slide, 1.8, metrics.byCampus, ['Campus', 'Total', 'Promedio', 'Cumplimiento']);
+    addSlideHeader(slide, 'Evolución y Tendencia Temporal', 'Comportamiento del puntaje promedio mes a mes');
+    
+    if (metrics.monthly.length > 0) {
+      const lineData = [{
+        name: 'Promedio Mensual',
+        labels: metrics.monthly.map(m => m.name),
+        values: metrics.monthly.map(m => m.score)
+      }];
+      slide.addChart(pptx.charts.LINE, lineData, {
+        x: 0.5, y: 1.8, w: 12.2, h: 4.5,
+        showLegend: false, showValue: true,
+        valAxisMinVal: 0, valAxisMaxVal: 5.5,
+        lineSize: 3, lineDataSymbol: 'circle', chartColors: ['2563EB']
+      });
+    } else {
+      slide.addText('Datos insuficientes para generar línea de tendencia.', { x: 0.5, y: 3, w: 12, align: 'center', color: '64748B' });
+    }
     addFooter(slide, footer);
   }
 
-  // 7. Centros
+  // 7. Comparativo Campus (Barras + Tabla)
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Comparativo por Centros', 'Top escenarios de practica por desempeno');
-    addTableLikeList(slide, 1.8, metrics.byCenter, ['Centro', 'Total', 'Promedio', 'Cumplimiento']);
+    addSlideHeader(slide, 'Desempeño por Campus', 'Matriz de promedios cruzados y participación');
+    
+    if(metrics.byCampus.length > 0) {
+      const barData = [{
+        name: 'Score Global',
+        labels: metrics.byCampus.slice(0,6).map(c => c.name.substring(0,15)),
+        values: metrics.byCampus.slice(0,6).map(c => c.score)
+      }];
+      slide.addChart(pptx.charts.BAR, barData, {
+        x: 0.5, y: 1.8, w: 5.5, h: 4.5, barDir: 'col',
+        showLegend: false, showValue: true,
+        valAxisMinVal: 0, valAxisMaxVal: 5, chartColors: ['3B82F6']
+      });
+      addNativeTable(slide, 6.4, 1.8, 6.3, metrics.byCampus, ['Campus', 'Total', 'Prom.', 'Cump.']);
+    }
     addFooter(slide, footer);
   }
 
-  // 8. Programas
+  // 8. Centros (Tabla Nativa)
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Comparativo por Programas', 'Consolidado academico por especialidad');
-    addTableLikeList(slide, 1.8, metrics.byProgram, ['Programa', 'Total', 'Promedio', 'Cumplimiento']);
+    addSlideHeader(slide, 'Estudio por Centros de Práctica', 'Top 10 escenarios clasificados por rendimiento');
+    addNativeTable(slide, 0.7, 1.8, 11.8, metrics.byCenter, ['Centro / Institución', 'Volumen', 'Promedio', 'Cumplimiento']);
     addFooter(slide, footer);
   }
 
-  // 9. Roles
+  // 9. Programas (Tabla Nativa)
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Comparativo por Roles', 'Percepcion por tipo de evaluador');
-    addTableLikeList(slide, 1.8, metrics.byRole, ['Rol', 'Total', 'Promedio', 'Cumplimiento']);
+    addSlideHeader(slide, 'Estudio por Especialidad y Programa', 'Consolidado académico segmentado');
+    addNativeTable(slide, 0.7, 1.8, 11.8, metrics.byProgram, ['Programa Académico', 'Evaluaciones', 'Promedio', 'Cumplimiento']);
     addFooter(slide, footer);
   }
 
-  // 10. Tendencia mensual
+  // 10. Roles (Tabla Nativa)
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Tendencia Mensual', 'Evolucion de volumen y promedio en el tiempo');
-    addTableLikeList(slide, 1.8, metrics.monthly, ['Mes', 'Total', 'Promedio', 'Cumplimiento']);
+    addSlideHeader(slide, 'Análisis por Perfil del Evaluador', 'Percepción y participación según rol');
+    addNativeTable(slide, 0.7, 1.8, 11.8, metrics.byRole, ['Rol de Usuario', 'Registros', 'Promedio', 'Cumplimiento']);
     addFooter(slide, footer);
   }
 
-  // 11. Encuestas
+  // 11. Calidad de dato
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Desempeno por Encuesta', 'Lectura de instrumentos con datos calificados');
-    addTableLikeList(slide, 1.8, metrics.bySurvey, ['Encuesta', 'Total', 'Promedio', 'Cumplimiento']);
-    addFooter(slide, footer);
-  }
-
-  // 12. Calidad de dato
-  {
-    const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Calidad y Cobertura del Dato', 'Consistencia para toma de decisiones');
-    addBulletBlock(slide, 0.7, 1.8, 5.9, 4.8, 'Estado del dato', shortList([
-      `Evaluaciones con puntaje: ${metrics.kpis.scored}`,
-      `Evaluaciones sin puntaje: ${metrics.kpis.total - metrics.kpis.scored}`,
-      `Desviacion estandar global: ${metrics.variability.toFixed(2)}`,
-      metrics.kpis.completionPct < 70 ? 'Advertencia: cobertura baja para inferencias fuertes.' : 'Cobertura aceptable para decisiones operativas.'
+    addSlideHeader(slide, 'Diagnóstico de Calidad de Datos', 'Nivel de confianza de la muestra analizada');
+    addBulletBlock(slide, 0.7, 1.8, 5.9, 4.8, 'Métricas de Confianza', shortList([
+      `Registros con calificación válida: ${metrics.kpis.scored}`,
+      `Registros vacíos/pendientes: ${metrics.kpis.total - metrics.kpis.scored}`,
+      `Desviación Estándar Muestral: ${metrics.variability.toFixed(2)}`,
+      metrics.kpis.completionPct < 70 ? 'Advertencia: Margen de error alto por baja participación.' : 'Confianza: Nivel óptimo de representatividad estadística.'
     ], 4));
-    addBulletBlock(slide, 6.8, 1.8, 5.9, 4.8, 'Diagnostico', shortList([
-      metrics.lowCenter ? `Centro critico: ${metrics.lowCenter.name} (${metrics.lowCenter.score.toFixed(2)}).` : 'Sin centro critico identificado.',
-      metrics.topCenter ? `Centro referente: ${metrics.topCenter.name} (${metrics.topCenter.score.toFixed(2)}).` : 'Sin centro referente identificado.',
-      metrics.lowProgram ? `Programa critico: ${metrics.lowProgram.name} (${metrics.lowProgram.score.toFixed(2)}).` : 'Sin programa critico identificado.',
-      metrics.topProgram ? `Programa referente: ${metrics.topProgram.name} (${metrics.topProgram.score.toFixed(2)}).` : 'Sin programa referente identificado.'
+    addBulletBlock(slide, 6.8, 1.8, 5.9, 4.8, 'Extremos Detectados', shortList([
+      metrics.lowCenter ? `Punto de Dolor (Centro): ${metrics.lowCenter.name} (${metrics.lowCenter.score.toFixed(2)}).` : 'Sin centros críticos.',
+      metrics.topCenter ? `Benchmarking (Centro): ${metrics.topCenter.name} (${metrics.topCenter.score.toFixed(2)}).` : 'Sin centros líderes.',
+      metrics.lowProgram ? `Punto de Dolor (Prog): ${metrics.lowProgram.name} (${metrics.lowProgram.score.toFixed(2)}).` : 'Sin programas críticos.',
+      metrics.topProgram ? `Benchmarking (Prog): ${metrics.topProgram.name} (${metrics.topProgram.score.toFixed(2)}).` : 'Sin programas líderes.'
     ], 4));
+    addFooter(slide, footer);
+  }
+
+  // 12. Análisis Profundo de Datos (NUEVO)
+  {
+    const slide = pptx.addSlide();
+    addSlideHeader(slide, 'Deep Data Analysis (IA)', 'Estudio completo e integral del ecosistema de datos');
+    slide.addShape(PPTX_SHAPES.roundRect, { x: 0.7, y: 1.8, w: 12, h: 4.8, fill: 'F4F4F5', line: { color: 'D4D4D8', pt: 1 }, radius: 0.1 });
+    slide.addText(narrative.analisis_completo, { 
+      x: 1.0, y: 2.1, w: 11.4, h: 4.2, 
+      fontSize: 16, color: '27272A', align: 'justify', breakLine: true, valign: 'top'
+    });
     addFooter(slide, footer);
   }
 
   // 13. Hallazgos IA
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Hallazgos Priorizados', 'Sintesis generada con modelo IA gratuito');
-    addBulletBlock(slide, 0.7, 1.8, 12, 4.8, 'Hallazgos', shortList(narrative.hallazgos, 10));
+    addSlideHeader(slide, 'Descubrimientos y Hallazgos', 'Insights extraídos mediante modelado estratégico');
+    addBulletBlock(slide, 0.7, 1.8, 12, 4.8, 'Hallazgos Clave', shortList(narrative.hallazgos, 8));
     addFooter(slide, footer);
   }
 
   // 14. Riesgos IA
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Riesgos y Alertas', 'Elementos que requieren accion temprana');
-    addBulletBlock(slide, 0.7, 1.8, 12, 4.8, 'Riesgos', shortList(narrative.riesgos, 10));
+    addSlideHeader(slide, 'Mapa de Riesgos Operativos', 'Focos de atención y posibles desviaciones institucionales');
+    addBulletBlock(slide, 0.7, 1.8, 12, 4.8, 'Alertas Identificadas', shortList(narrative.riesgos, 8));
     addFooter(slide, footer);
   }
 
-  // 15. Plan de accion y cierre
+  // 15. Plan de accion y sugerencias (NUEVO FOCO EN SUGERENCIAS)
   {
     const slide = pptx.addSlide();
-    addSlideHeader(slide, 'Plan de Accion Sugerido', 'Proximos pasos para gestion y mejora continua');
-    addBulletBlock(slide, 0.7, 1.8, 12, 3.2, 'Acciones recomendadas', shortList(narrative.acciones, 8));
-    slide.addText('Cierre: mantener corte mensual y seguimiento de compromisos por centro y programa.', {
-      x: 0.9,
-      y: 5.3,
-      w: 11.7,
-      h: 0.9,
-      fontSize: 14,
-      color: '1E293B',
-      bold: true,
-      align: 'center'
+    addSlideHeader(slide, 'Sugerencias y Plan de Acción Estratégico', 'Recomendaciones Data-Driven para mejora continua');
+    addBulletBlock(slide, 0.7, 1.8, 12, 3.8, 'Sugerencias Basadas en Datos', shortList(narrative.acciones, 8));
+    slide.addText('Conclusión Corporativa: Adoptar estas estrategias permite mitigar los riesgos identificados, mejorar el cuartil de desempeño y maximizar la experiencia global.', {
+      x: 0.9, y: 5.8, w: 11.7, h: 0.9, fontSize: 13, color: '1E3A8A', bold: true, align: 'center', fill: 'DBEAFE'
     });
     addFooter(slide, footer);
   }
@@ -494,7 +486,7 @@ export default function KometPresenta() {
       .then((result) => setRows(result?.rows || []))
       .catch(() => {
         setRows([]);
-        setError('No se pudo cargar informacion de evaluaciones.');
+        setError('No se pudo cargar información de evaluaciones.');
       })
       .finally(() => setLoading(false));
   }, []);
@@ -556,7 +548,6 @@ export default function KometPresenta() {
     const byProgram = rankBy(filteredRows, (row) => resolveProgram(row), (row) => row.scoreSummary?.globalScore)
       .filter((item) => item.name !== 'Sin programa');
     const byRole = rankBy(filteredRows, (row) => norm(row.role || 'Sin definir'), (row) => row.scoreSummary?.globalScore);
-    const bySurvey = rankBy(filteredRows, (row) => norm(row.survey || 'Sin encuesta'), (row) => row.scoreSummary?.globalScore);
 
     const monthMap = new Map();
     filteredRows.forEach((row) => {
@@ -619,7 +610,6 @@ export default function KometPresenta() {
       byCenter,
       byProgram,
       byRole,
-      bySurvey,
       monthly,
       variability: stdDev(scoreRows),
       topCenter: byCenter[0] || null,
@@ -651,41 +641,32 @@ export default function KometPresenta() {
         : OPENROUTER_FREE_MODELS[0];
 
       const prompt = [
-        'Eres analista senior en educacion superior y calidad docencia-servicio.',
-        'Entrega SOLO JSON valido con esta forma:',
-        '{"resumen":"texto","hallazgos":["..."],"riesgos":["..."],"acciones":["..."]}',
-        'Maximo 5 hallazgos, 5 riesgos, 5 acciones. Sin markdown.',
-        `Filtros: ${formatFilters(filters)}`,
-        `KPIs: total=${metrics.kpis.total}, completadas=${metrics.kpis.completed}, cumplimiento=${metrics.kpis.completionPct}, promedio=${metrics.kpis.globalScore}`,
-        `Top centros: ${metrics.byCenter.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
-        `Top programas: ${metrics.byProgram.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
-        `Tendencia mensual: ${metrics.monthly.map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`
+        'Eres un analista de datos avanzado especialista en calidad de educación y salud.',
+        'Analiza las siguientes métricas y entrega SOLO un JSON válido con esta estructura exacta:',
+        '{"resumen":"texto de 2 lineas","analisis_completo":"Un estudio detallado interpretando los datos, tendencias temporales, correlaciones y conclusiones fuertes basadas en las desviaciones.","hallazgos":["..."],"riesgos":["..."],"acciones":["Sugerencia accionable 1..."]}',
+        'Máximo 5 hallazgos, 5 riesgos y 5 acciones (sugerencias estratégicas de mejora).',
+        `Filtros aplicados: ${formatFilters(filters)}`,
+        `Data: Total evaluaciones=${metrics.kpis.total}, Cumplimiento=${metrics.kpis.completionPct}%, Promedio=${metrics.kpis.globalScore}`,
+        `Distribución de notas: 0-2(${metrics.distribution[0].count}), 2-3(${metrics.distribution[1].count}), 3-4(${metrics.distribution[2].count}), 4-5(${metrics.distribution[3].count})`,
+        `Top 3 Centros: ${metrics.byCenter.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
+        `Top 3 Programas: ${metrics.byProgram.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
+        `Tendencia Mensual: ${metrics.monthly.map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
+        `Desviación Estándar Global: ${metrics.variability}`
       ].join('\n');
 
       const raw = await runOpenRouterPrompt({
         apiKey: settings?.openrouter_api_key || '',
         model: selectedModel,
-        systemPrompt:
-          settings?.openrouter_system_prompt ||
-          'Eres un asistente estrategico que sintetiza resultados en lenguaje ejecutivo claro.',
+        systemPrompt: settings?.openrouter_system_prompt || 'Eres un Chief Data Officer experto en generar insights a partir de data cruda.',
         prompt,
-        temperature: Number.isFinite(Number(settings?.openrouter_temperature))
-          ? Number(settings.openrouter_temperature)
-          : 0.6
+        temperature: 0.6
       });
 
       const parsed = parseAiPayload(raw);
-      const safeNarrative = {
-        resumen: parsed.resumen || fallbackNarrative.resumen,
-        hallazgos: parsed.hallazgos.length ? parsed.hallazgos : fallbackNarrative.hallazgos,
-        riesgos: parsed.riesgos.length ? parsed.riesgos : fallbackNarrative.riesgos,
-        acciones: parsed.acciones.length ? parsed.acciones : fallbackNarrative.acciones
-      };
-
-      setAiNarrative(safeNarrative);
+      setAiNarrative(parsed);
     } catch (aiError) {
       setAiNarrative(fallbackNarrative);
-      setError(`No se pudo generar narrativa IA gratuita: ${aiError?.message || 'error no identificado'}`);
+      setError(`No se pudo generar análisis profundo IA: ${aiError?.message || 'error no identificado'}`);
     } finally {
       setGeneratingAi(false);
     }
@@ -703,104 +684,138 @@ export default function KometPresenta() {
       });
 
       const timeTag = new Date().toISOString().slice(0, 10);
-      await deck.writeFile({ fileName: `komet-presenta-${timeTag}.pptx` });
+      await deck.writeFile({ fileName: `Komet-Data-Report-${timeTag}.pptx` });
     } catch (exportError) {
-      setError(`No se pudo exportar la presentacion: ${exportError?.message || 'error no identificado'}`);
+      setError(`Error al exportar la presentación con gráficos: ${exportError?.message || 'error no identificado'}`);
     } finally {
       setExporting(false);
     }
   }
 
+  const activeNarrative = aiNarrative || fallbackNarrative;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-8 bg-slate-50 min-h-screen font-sans">
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-              <Presentation className="w-6 h-6 text-blue-600" />
-              Komet Presenta
+              <Presentation className="w-7 h-7 text-blue-600" />
+              Komet Data & Analytics
             </h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Modulo independiente para generar presentaciones PowerPoint dinamicas (minimo 15 diapositivas).
+            <p className="text-sm text-slate-600 mt-1 max-w-xl">
+              Generador de presentaciones ejecutivas. Incluye gráficos nativos interactivos, tablas formateadas y un modelo de estudio de datos profundo.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={handleGenerateAiNarrative}
               disabled={loading || generatingAi || !metrics.kpis.total}
-              className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 disabled:opacity-50 inline-flex items-center gap-2"
+              className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50 inline-flex items-center gap-2 transition-all"
             >
-              {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              Enriquecer con IA Free
+              {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-yellow-400" />}
+              Analizar Dataset (IA)
             </button>
             <button
               type="button"
               onClick={handleExportPptx}
               disabled={loading || exporting || !metrics.kpis.total}
-              className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-2"
+              className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-2 transition-all shadow-sm shadow-blue-200"
             >
               {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Exportar .pptx (15 slides)
+              Generar PPTX con Gráficas
             </button>
           </div>
         </div>
-
-        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+        {error && <div className="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">{error}</div>}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider mb-4">Filtros dinamicos</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={selectedCampus} onChange={(event) => setSelectedCampus(event.target.value)}>
-            {campusOptions.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
+        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Segmentación de la Muestra</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCampus} onChange={(e) => setSelectedCampus(e.target.value)}>
+            {campusOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
           </select>
-
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={selectedLevel} onChange={(event) => setSelectedLevel(event.target.value)}>
+          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)}>
             <option value="Todos">Todos los niveles</option>
             <option value="pregrado">Pregrado</option>
             <option value="posgrado">Posgrado</option>
           </select>
-
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={selectedCenter} onChange={(event) => setSelectedCenter(event.target.value)}>
-            {centerOptions.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
+          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCenter} onChange={(e) => setSelectedCenter(e.target.value)}>
+            {centerOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
           </select>
-
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={selectedProgram} onChange={(event) => setSelectedProgram(event.target.value)}>
-            {programOptions.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
+          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedProgram} onChange={(e) => setSelectedProgram(e.target.value)}>
+            {programOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
           </select>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <p className="text-xs text-slate-500">Evaluaciones</p>
-          <p className="text-3xl font-black text-slate-900">{loading ? '-' : metrics.kpis.total}</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Evaluaciones</p>
+          <p className="text-3xl font-black text-slate-900 mt-1">{loading ? '-' : metrics.kpis.total}</p>
         </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <p className="text-xs text-slate-500">Completadas</p>
-          <p className="text-3xl font-black text-slate-900">{loading ? '-' : metrics.kpis.completed}</p>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Completadas</p>
+          <p className="text-3xl font-black text-slate-900 mt-1">{loading ? '-' : metrics.kpis.completed}</p>
         </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <p className="text-xs text-slate-500">Cumplimiento</p>
-          <p className="text-3xl font-black text-slate-900">{loading ? '-' : `${metrics.kpis.completionPct}%`}</p>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Cumplimiento</p>
+          <p className="text-3xl font-black text-blue-600 mt-1">{loading ? '-' : `${metrics.kpis.completionPct}%`}</p>
         </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <p className="text-xs text-slate-500">Promedio global</p>
-          <p className="text-3xl font-black text-slate-900">{loading ? '-' : metrics.kpis.globalScore.toFixed(2)}</p>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Promedio Global</p>
+          <p className="text-3xl font-black text-blue-600 mt-1">{loading ? '-' : metrics.kpis.globalScore.toFixed(2)}</p>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <h3 className="font-bold text-slate-900">Narrativa para diapositivas 13-15</h3>
-        <p className="text-sm text-slate-500 mt-1">{(aiNarrative || fallbackNarrative).resumen}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
+            <PieChart className="w-5 h-5 text-indigo-500" />
+            Resumen Ejecutivo
+          </h3>
+          <p className="text-sm text-slate-600 leading-relaxed bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+            {activeNarrative.resumen}
+          </p>
+        </div>
+        
+        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[16rem]">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
+            <BarChart3 className="w-5 h-5 text-emerald-500" />
+            Estudio Profundo de Datos (Slide 12)
+          </h3>
+          {generatingAi ? (
+            <div className="flex flex-col items-center justify-center h-40 text-slate-400">
+              <Loader2 className="w-8 h-8 animate-spin mb-2" />
+              <p className="text-sm">Analizando correlaciones y varianzas...</p>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600 leading-relaxed text-justify">
+              {activeNarrative.analisis_completo}
+            </p>
+          )}
+        </div>
+
+        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
+            <FileText className="w-5 h-5 text-orange-500" />
+            Sugerencias y Plan de Acción (Slide 15)
+          </h3>
+          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {activeNarrative.acciones.slice(0, 6).map((accion, idx) => (
+              <li key={idx} className="text-sm text-slate-700 bg-orange-50/50 p-4 rounded-xl border border-orange-100 flex items-start gap-2">
+                <span className="text-orange-600 font-black mt-0.5">•</span>
+                <span>{accion}</span>
+              </li>
+            ))}
+            {activeNarrative.acciones.length === 0 && (
+              <p className="text-sm text-slate-400">No hay sugerencias generadas aún.</p>
+            )}
+          </ul>
+        </div>
       </div>
     </div>
   );
