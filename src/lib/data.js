@@ -1090,32 +1090,45 @@ function aggregateByKey(items, key, countKey = 'total') {
 
 export async function getEvaluationReportMetrics(filters = {}) {
   const { role, program, center } = filters;
+  const pageSize = 1000;
+  let allRows = [];
+  let page = 0;
 
-  const { data, error } = await supabase
-    .from('evaluations')
-    .select(`
-      id,
-      status,
-      created_at,
-      completed_at,
-      dirigidoA,
-      estado,
-      periodoCorte,
-      tipoPrograma,
-      titulo,
-      preguntas,
-      evaluation_responses(answers,submitted_at),
-      survey:survey_id(title,questions,description,target_type),
-      campus:campus_id(name),
-      center:center_id(name),
-      student:student_id(full_name,program),
-      tutor:tutor_id(full_name,specialty)
-    `)
-    .order('created_at', { ascending: false });
+  while (true) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase
+      .from('evaluations')
+      .select(`
+        id,
+        status,
+        created_at,
+        completed_at,
+        dirigidoA,
+        estado,
+        periodoCorte,
+        tipoPrograma,
+        titulo,
+        preguntas,
+        evaluation_responses(answers,submitted_at),
+        survey:survey_id(title,questions,description,target_type),
+        campus:campus_id(name),
+        center:center_id(name),
+        student:student_id(full_name,program),
+        tutor:tutor_id(full_name,specialty)
+      `)
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
-  if (error) throw error;
+    if (error) throw error;
+    if (!data?.length) break;
 
-  const rows = (data || []).map(mapEvaluationItem);
+    allRows = allRows.concat(data);
+    if (data.length < pageSize) break;
+    page += 1;
+  }
+
+  const rows = (allRows || []).map(mapEvaluationItem);
   const filteredRows = rows.filter((item) => {
     if (role && role !== 'all' && item.role !== role) return false;
     if (program && program !== 'all' && item.program !== program) return false;
