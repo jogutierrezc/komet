@@ -708,42 +708,25 @@ export default function KometPresenta() {
       const engine = new PptxTemplateEngine();
       await engine.load(templateUrl);
 
-      const data = buildTemplateData(metrics, filters, aiNarrative || fallbackNarrative);
+      const operations = buildTemplateData(metrics, filters, aiNarrative || fallbackNarrative);
 
-      // Aplicar reemplazos de texto en shapes
-      for (const [slideStr, slideData] of Object.entries(data)) {
-        if (slideStr === '_tables' || slideStr.startsWith('_')) continue;
-        const slideNum = parseInt(slideStr, 10);
-        for (const [shapeName, text] of Object.entries(slideData)) {
-          try {
-            engine.setText(slideNum, shapeName, String(text));
-          } catch (e) {
-            console.warn(`Shape "${shapeName}" en slide ${slideNum}: ${e.message}`);
-          }
-        }
+      console.log(`[Komet Presenta] Aplicando ${operations.length} operaciones a la plantilla...`);
+
+      // Agrupar operaciones por slide para aplicar en lote
+      const bySlide = new Map();
+      for (const op of operations) {
+        if (!bySlide.has(op.slide)) bySlide.set(op.slide, []);
+        bySlide.get(op.slide).push(op);
       }
 
-      // Aplicar reemplazos en tablas
-      const tableData = data._tables || {};
-      for (const [slideStr, tableConfig] of Object.entries(tableData)) {
-        const slideNum = parseInt(slideStr, 10);
-        if (tableConfig.table && tableConfig.data) {
-          try {
-            engine.setTableData(slideNum, tableConfig.table, tableConfig.data);
-          } catch (e) {
-            console.warn(`Tabla "${tableConfig.table}" en slide ${slideNum}: ${e.message}`);
-          }
-        }
-        if (tableConfig.shapes) {
-          for (const [shapeName, text] of Object.entries(tableConfig.shapes)) {
-            try {
-              engine.setText(slideNum, shapeName, String(text));
-            } catch (e) {
-              console.warn(`Shape "${shapeName}" en slide ${slideNum}: ${e.message}`);
-            }
-          }
-        }
+      let totalSuccess = 0;
+      for (const [slideNum, ops] of bySlide) {
+        const success = engine.applyOperations(slideNum, ops);
+        totalSuccess += success;
+        console.log(`  Slide ${slideNum}: ${success}/${ops.length} operaciones exitosas`);
       }
+
+      console.log(`[Komet Presenta] Total: ${totalSuccess}/${operations.length} operaciones completadas`);
 
       const timeTag = new Date().toISOString().slice(0, 10);
       await engine.download(`Informe-Autoevaluacion-${timeTag}.pptx`);
