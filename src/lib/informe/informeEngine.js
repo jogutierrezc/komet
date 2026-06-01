@@ -310,7 +310,8 @@ export function rowsToEvaluacionesData(rows = []) {
       aspectosMejora: normalizeText(raw.aspectosMejora || raw.mejoras),
       observaciones: normalizeText(raw.observaciones || raw.comments),
       completadaEn: row.completed_at || row.created_at || null,
-      scoreSummary: row.scoreSummary || null
+      scoreSummary: row.scoreSummary || null,
+      rawAnswers: row.rawAnswers || {}
     };
   });
 }

@@ -55,6 +55,93 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#039;');
 }
 
+/**
+ * Extrae el puntaje global de una evaluación usando múltiples niveles de fallback:
+ * 1. scoreSummary.globalScore (ya calculado por calculateSurveyScoreSummary)
+ * 2. Extracción directa desde rawAnswers (valores numéricos 1-5)
+ * 3. scoreSummary.sectionScores promediado
+ */
+function extractGlobalScore(row) {
+  // Nivel 1: scoreSummary ya calculado
+  if (typeof row.scoreSummary?.globalScore === 'number') {
+    return row.scoreSummary.globalScore;
+  }
+
+  // Nivel 2: promediar sectionScores si existen
+  if (Array.isArray(row.scoreSummary?.sectionScores) && row.scoreSummary.sectionScores.length > 0) {
+    const valid = row.scoreSummary.sectionScores.filter(s => typeof s.score === 'number').map(s => s.score);
+    if (valid.length > 0) {
+      return valid.reduce((sum, v) => sum + v, 0) / valid.length;
+    }
+  }
+
+  // Nivel 3: extraer valores numéricos 1-5 directamente de rawAnswers
+  const raw = row.rawAnswers || {};
+  const numericValues = Object.entries(raw)
+    .filter(([key]) => !key.startsWith('_'))
+    .map(([, val]) => {
+      if (typeof val === 'number' && val >= 1 && val <= 5) return val;
+      if (typeof val === 'string') {
+        const n = Number(val.trim());
+        return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
+      }
+      return null;
+    })
+    .filter(v => v !== null);
+
+  if (numericValues.length > 0) {
+    return numericValues.reduce((sum, v) => sum + v, 0) / numericValues.length;
+  }
+
+  return null;
+}
+
+/**
+ * Extrae los puntajes por sección de una evaluación con múltiples niveles de fallback.
+ */
+function extractSectionScores(row) {
+  // Nivel 1: scoreSummary.sectionScores
+  if (Array.isArray(row.scoreSummary?.sectionScores) && row.scoreSummary.sectionScores.length > 0) {
+    return row.scoreSummary.sectionScores;
+  }
+
+  // Nivel 2: extraer secciones desde rawAnswers agrupando por prefijo de clave
+  const raw = row.rawAnswers || {};
+  const rawSections = new Map();
+
+  Object.entries(raw)
+    .filter(([key]) => !key.startsWith('_'))
+    .forEach(([key, val]) => {
+      let score = null;
+      if (typeof val === 'number' && val >= 1 && val <= 5) score = val;
+      else if (typeof val === 'string') {
+        const n = Number(val.trim());
+        if (Number.isFinite(n) && n >= 1 && n <= 5) score = n;
+      }
+      if (score === null) return;
+
+      // Inferir sección desde la clave (AG, CI, SPB, OA, PF, CMC)
+      const codeMatch = key.toUpperCase().match(/\b(AG|CI|SPB|OA|PF|CMC)\s*-?\s*(\d{1,2})\b/);
+      const sectionName = codeMatch
+        ? ({ AG: 'ASPECTOS GENERALES', CI: 'CAPACIDAD INSTALADA', SPB: 'SEGURIDAD, PROTECCION Y BIENESTAR',
+             OA: 'ORGANIZACION ADMINISTRATIVA RELACION DOCENCIA - SERVICIO', PF: 'PRACTICAS FORMATIVAS',
+             CMC: 'CULTURA DE MEJORAMIENTO CONTINUO' })[codeMatch[1]] || 'General'
+        : 'General';
+
+      if (!rawSections.has(sectionName)) rawSections.set(sectionName, []);
+      rawSections.get(sectionName).push(score);
+    });
+
+  if (rawSections.size === 0) return [];
+
+  return [...rawSections.entries()].map(([title, scores]) => ({
+    sectionId: title.replace(/\s+/g, '_'),
+    title,
+    score: scores.reduce((s, v) => s + v, 0) / scores.length,
+    questionCount: scores.length
+  }));
+}
+
 function buildCenterSummary(rows = []) {
   const map = new Map();
 
@@ -71,7 +158,7 @@ function buildCenterSummary(rows = []) {
         roles: new Map()
       };
 
-    const score = row.scoreSummary?.globalScore;
+    const score = extractGlobalScore(row);
     current.total += 1;
     if (row.status === 'Completada') current.completed += 1;
     if (typeof score === 'number') current.scores.push(score);
@@ -112,7 +199,7 @@ function buildProgramSummary(rows = []) {
         roles: new Map()
       };
 
-    const score = row.scoreSummary?.globalScore;
+    const score = extractGlobalScore(row);
     current.total += 1;
     if (typeof score === 'number') current.scores.push(score);
 
@@ -140,7 +227,7 @@ function buildImprovementSummary(rows = []) {
   const map = new Map();
 
   rows.forEach((row) => {
-    (row.scoreSummary?.sectionScores || []).forEach((section) => {
+    (extractSectionScores(row) || []).forEach((section) => {
       if (typeof section.score === 'number' && section.score < 3.7) {
         const key = normalizeText(section.title || 'Aspecto no identificado');
         map.set(key, (map.get(key) || 0) + 1);
@@ -167,7 +254,7 @@ function buildRoleSummary(rows = []) {
         scores: []
       };
 
-    const score = row.scoreSummary?.globalScore;
+    const score = extractGlobalScore(row);
     current.total += 1;
     if (row.status === 'Completada') current.completed += 1;
     if (typeof score === 'number') current.scores.push(score);
@@ -202,7 +289,7 @@ function buildEvaluatedSummary(rows = []) {
         scores: []
       };
 
-    const score = row.scoreSummary?.globalScore;
+    const score = extractGlobalScore(row);
     current.total += 1;
     if (row.status === 'Completada') current.completed += 1;
     if (typeof score === 'number') current.scores.push(score);
@@ -280,16 +367,13 @@ function buildRoleDistributionSummary(rows = []) {
 
   rows.forEach((row) => {
     const role = normalizeText(row.role || 'Sin rol');
-    const bucket = roleMap.get(role) || { role, total: 0, counts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
-
-    (row.scoreSummary?.sectionScores || []).forEach((section) => {
+    const bucket = roleMap.get(role) || { role, total: 0, counts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };    (extractSectionScores(row) || []).forEach((section) => {
       const rounded = Math.round(Number(section.score || 0));
       if (rounded >= 1 && rounded <= 5) {
         bucket.counts[rounded] += 1;
         bucket.total += 1;
       }
     });
-
     roleMap.set(role, bucket);
   });
 
@@ -303,7 +387,7 @@ function buildProgramDistributionSummary(rows = []) {
     const program = resolveProgram(row);
     const bucket = programMap.get(program) || { program, total: 0, counts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
 
-    (row.scoreSummary?.sectionScores || []).forEach((section) => {
+    (extractSectionScores(row) || []).forEach((section) => {
       const rounded = Math.round(Number(section.score || 0));
       if (rounded >= 1 && rounded <= 5) {
         bucket.counts[rounded] += 1;
@@ -1081,7 +1165,7 @@ export default function Reportes() {
   }, [roleRows, selectedProgram, selectedCenter, selectedLevel, validProgramNamesForLevel]);
 
   const globalScore = useMemo(() => {
-    const scores = filteredRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number');
+    const scores = filteredRows.map((row) => extractGlobalScore(row)).filter((value) => typeof value === 'number');
     return average(scores);
   }, [filteredRows]);
 

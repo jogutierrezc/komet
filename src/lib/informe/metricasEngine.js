@@ -54,7 +54,46 @@ export function calcularMetricasPorSeccion(evaluaciones = []) {
     });
   });
 
-  if (fallbackMap.size === 0) return instrumentResults;
+  if (fallbackMap.size === 0) {
+    // Nivel 3: extraer valores numéricos directamente desde rawAnswers
+    const rawMap = new Map();
+    evaluaciones.forEach((ev) => {
+      if (!ev.rawAnswers) return;
+      Object.entries(ev.rawAnswers).forEach(([key, val]) => {
+        if (key.startsWith('_')) return;
+        let score = null;
+        if (typeof val === 'number' && val >= 1 && val <= 5) score = val;
+        else if (typeof val === 'string') {
+          const n = Number(val.trim());
+          if (Number.isFinite(n) && n >= 1 && n <= 5) score = n;
+        }
+        if (score === null) return;
+
+        // Inferir sección desde el código de instrumento en la clave
+        const codeMatch = key.toUpperCase().match(/\b(AG|CI|SPB|OA|PF|CMC)\s*-?\s*(\d{1,2})\b/);
+        const sectionName = codeMatch
+          ? ({ AG: 'ASPECTOS GENERALES', CI: 'CAPACIDAD INSTALADA', SPB: 'SEGURIDAD, PROTECCION Y BIENESTAR',
+               OA: 'ORGANIZACION ADMINISTRATIVA RELACION DOCENCIA - SERVICIO', PF: 'PRACTICAS FORMATIVAS',
+               CMC: 'CULTURA DE MEJORAMIENTO CONTINUO' })[codeMatch[1]] || 'General'
+          : 'General';
+
+        if (!rawMap.has(sectionName)) rawMap.set(sectionName, []);
+        rawMap.get(sectionName).push(score);
+      });
+    });
+
+    if (rawMap.size > 0) {
+      return [...rawMap.entries()].map(([title, scores]) => ({
+        seccion: title,
+        promedio: avg(scores),
+        distribucion: distribucion(scores),
+        totalRespuestas: scores.length,
+        interpretacion: interpretarPromedio(avg(scores))
+      }));
+    }
+
+    return instrumentResults;
+  }
 
   return [...fallbackMap.entries()].map(([title, scores]) => ({
     seccion: title,
@@ -72,12 +111,30 @@ export function calcularPromedioGlobal(evaluaciones = []) {
 
   if (todos.length > 0) return avg(todos);
 
-  // Fallback a scoreSummary.globalScore cuando no hay respuestas mapeadas a instrumento
+  // Fallback a scoreSummary.globalScore
   const scores = evaluaciones
     .map((ev) => ev.scoreSummary?.globalScore)
     .filter((v) => typeof v === 'number');
 
-  return scores.length > 0 ? avg(scores) : null;
+  if (scores.length > 0) return avg(scores);
+
+  // Tercer nivel: extraer valores numéricos directamente de rawAnswers
+  const rawScores = evaluaciones.flatMap((ev) => {
+    if (!ev.rawAnswers) return [];
+    return Object.entries(ev.rawAnswers)
+      .filter(([key]) => !key.startsWith('_'))
+      .map(([, val]) => {
+        if (typeof val === 'number' && val >= 1 && val <= 5) return val;
+        if (typeof val === 'string') {
+          const n = Number(val.trim());
+          return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
+        }
+        return null;
+      })
+      .filter((v) => v !== null);
+  });
+
+  return rawScores.length > 0 ? avg(rawScores) : null;
 }
 
 export function calcularResumenPorEscenario(evaluaciones = []) {

@@ -106,9 +106,7 @@ export async function runOpenRouterPrompt({
     } catch {
       return await response.text();
     }
-  }
-
-  async function fetchDynamicFreeModels(trimmedKey) {
+  }    async function fetchDynamicFreeModels(trimmedKey) {
     if (!trimmedKey) return [];
     try {
       const modelsResponse = await fetch('https://openrouter.ai/api/v1/models', {
@@ -129,35 +127,44 @@ export async function runOpenRouterPrompt({
     }
   }
 
-  async function requestOpenRouterCompletion({ trimmedKey, candidateModel, requestTemperature, messages }) {
+  /**
+   * Llama directamente a OpenRouter sin pasar por el proxy /api/openrouter-chat.
+   * Usado como fallback cuando el servidor de desarrollo no sirve el endpoint API.
+   */
+  async function callDirectOpenRouter({ trimmedKey, model, requestTemperature, messages, freeModels }) {
+    if (!trimmedKey) {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ error: { message: 'missing_openrouter_api_key - configura la API key en Sistema > Configuracion' } }),
+        text: async () => 'missing_openrouter_api_key'
+      };
+    }
+
     const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
-
-    const callDirectOpenRouter = async () => {
-      if (!trimmedKey) {
-        return {
-          ok: false,
-          status: 400,
-          json: async () => ({ error: { message: 'missing_openrouter_api_key_for_direct_fallback' } }),
-          text: async () => 'missing_openrouter_api_key_for_direct_fallback'
-        };
-      }
-
-      return fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${trimmedKey}`,
-          'HTTP-Referer': browserOrigin,
-          'X-Title': 'Komet'
-        },
-        body: JSON.stringify({
-          model: candidateModel,
-          temperature: requestTemperature,
-          messages
-        })
-      });
+    const body = {
+      model,
+      temperature: requestTemperature,
+      messages
     };
+    // Para auto-routing, incluir la lista de modelos gratuitos
+    if (model === 'openrouter/auto' && freeModels?.length) {
+      body.models = freeModels;
+    }
 
+    return fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${trimmedKey}`,
+        'HTTP-Referer': browserOrigin,
+        'X-Title': 'Komet'
+      },
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function requestOpenRouterCompletion({ trimmedKey, candidateModel, requestTemperature, messages }) {
     const proxyResponse = await fetch('/api/openrouter-chat', {
       method: 'POST',
       headers: {
@@ -173,7 +180,7 @@ export async function runOpenRouterPrompt({
 
     // Vite dev server may return HTML 404 if /api is not served; fallback to direct OpenRouter.
     if (proxyResponse.status === 404) {
-      return callDirectOpenRouter();
+      return callDirectOpenRouter({ trimmedKey, model: candidateModel, requestTemperature, messages });
     }
 
     return proxyResponse;
@@ -194,14 +201,17 @@ export async function runOpenRouterPrompt({
       })
     });
 
+    // Vite dev server may return HTML 404 if /api is not served; fallback to direct OpenRouter.
     if (proxyResponse.status === 404) {
-      return callDirectOpenRouter();
+      return callDirectOpenRouter({ trimmedKey, model: 'openrouter/auto', requestTemperature, messages, freeModels });
     }
 
     return proxyResponse;
   }
 
-  const trimmedKey = (apiKey || '').trim();
+  // La API key puede venir de: 1) parámetro apiKey (desde system_settings), 2) variable de entorno VITE_OPENROUTER_API_KEY
+  const envKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY;
+  const trimmedKey = (apiKey || envKey || '').trim();
   const dynamicFreeModels = await fetchDynamicFreeModels(trimmedKey);
   const candidateModels = [...new Set([model, ...dynamicFreeModels, ...OPENROUTER_FREE_MODELS].filter(Boolean))];
 
