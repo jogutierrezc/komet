@@ -15,7 +15,8 @@ function distribucion(values) {
 }
 
 export function calcularMetricasPorSeccion(evaluaciones = []) {
-  return SECCIONES_INSTRUMENTO.map((seccion) => {
+  // 1. Intentar mapeo a secciones del instrumento (AG, CI, SPB, OA, PF, CMC)
+  const instrumentResults = SECCIONES_INSTRUMENTO.map((seccion) => {
     const preguntasSeccion = PREGUNTAS_POR_SECCION[seccion] || [];
     const ids = new Set(preguntasSeccion.map((p) => p.id));
 
@@ -34,13 +35,49 @@ export function calcularMetricasPorSeccion(evaluaciones = []) {
       interpretacion: interpretarPromedio(promedio)
     };
   });
+
+  // 2. Si el mapeo a instrumento no produjo datos, fallback a scoreSummary.sectionScores
+  const totalRespuestasInstrumento = instrumentResults.reduce(
+    (sum, s) => sum + s.totalRespuestas, 0
+  );
+
+  if (totalRespuestasInstrumento > 0) return instrumentResults;
+
+  // Fallback: agrupar por título de sección desde scoreSummary
+  const fallbackMap = new Map();
+  evaluaciones.forEach((ev) => {
+    if (!ev.scoreSummary?.sectionScores) return;
+    ev.scoreSummary.sectionScores.forEach((sec) => {
+      const title = sec.title || 'General';
+      if (!fallbackMap.has(title)) fallbackMap.set(title, []);
+      if (typeof sec.score === 'number') fallbackMap.get(title).push(sec.score);
+    });
+  });
+
+  if (fallbackMap.size === 0) return instrumentResults;
+
+  return [...fallbackMap.entries()].map(([title, scores]) => ({
+    seccion: title,
+    promedio: avg(scores),
+    distribucion: distribucion(scores),
+    totalRespuestas: scores.length,
+    interpretacion: interpretarPromedio(avg(scores))
+  }));
 }
 
 export function calcularPromedioGlobal(evaluaciones = []) {
   const todos = evaluaciones.flatMap((ev) =>
     (ev.respuestas || []).map((r) => r.valor).filter((v) => v !== null)
   );
-  return avg(todos);
+
+  if (todos.length > 0) return avg(todos);
+
+  // Fallback a scoreSummary.globalScore cuando no hay respuestas mapeadas a instrumento
+  const scores = evaluaciones
+    .map((ev) => ev.scoreSummary?.globalScore)
+    .filter((v) => typeof v === 'number');
+
+  return scores.length > 0 ? avg(scores) : null;
 }
 
 export function calcularResumenPorEscenario(evaluaciones = []) {
@@ -177,26 +214,84 @@ export function calcularMetricasGlobales(evaluaciones = []) {
 export function detectarPreguntasCriticas(evaluaciones = [], umbral = 3.0) {
   const resultado = [];
 
-  PREGUNTAS_INSTRUMENTO.forEach((pregunta) => {
-    const respuestas = evaluaciones
-      .map((ev) => ({
-        escenario: ev.escenarioPractica,
-        valor: (ev.respuestas || []).find((r) => r.preguntaId === pregunta.id)?.valor ?? null
-      }))
-      .filter((r) => r.valor !== null);
+  // Verificar si hay respuestas mapeadas a instrumento
+  const totalRespuestas = evaluaciones.reduce(
+    (sum, ev) => sum + (ev.respuestas || []).length, 0
+  );
 
-    const promedio = avg(respuestas.map((r) => r.valor));
-    if (promedio !== null && promedio < umbral) {
-      const escenarios = [...new Set(respuestas.map((r) => r.escenario).filter(Boolean))];
-      resultado.push({
-        preguntaId: pregunta.id,
-        texto: pregunta.texto,
-        seccion: pregunta.seccion,
-        promedio,
-        escenarios
-      });
-    }
-  });
+  if (totalRespuestas > 0) {
+    PREGUNTAS_INSTRUMENTO.forEach((pregunta) => {
+      const respuestas = evaluaciones
+        .map((ev) => ({
+          escenario: ev.escenarioPractica,
+          valor: (ev.respuestas || []).find((r) => r.preguntaId === pregunta.id)?.valor ?? null
+        }))
+        .filter((r) => r.valor !== null);
+
+      const promedio = avg(respuestas.map((r) => r.valor));
+      if (promedio !== null && promedio < umbral) {
+        const escenarios = [...new Set(respuestas.map((r) => r.escenario).filter(Boolean))];
+        resultado.push({
+          preguntaId: pregunta.id,
+          texto: pregunta.texto,
+          seccion: pregunta.seccion,
+          promedio,
+          escenarios
+        });
+      }
+    });
+  } else {
+    // Fallback: detectar secciones criticas desde scoreSummary
+    const secciones = calcularMetricasPorSeccion(evaluaciones);
+    secciones.forEach((sec) => {
+      if (sec.promedio !== null && sec.promedio < umbral) {
+        resultado.push({
+          preguntaId: `SEC_${sec.seccion.replace(/\s+/g, '_')}`,
+          texto: `Seccion: ${sec.seccion}`,
+          seccion: sec.seccion,
+          promedio: sec.promedio,
+          escenarios: []
+        });
+      }
+    });
+  }
 
   return resultado.sort((a, b) => a.promedio - b.promedio);
+}
+
+export function calcularComparacionProgramasPorCentro(evaluaciones = []) {
+  // Agrupa por centro de practica y dentro de cada centro por programa academico
+  // Retorna una estructura que permite comparar como distintos programas evaluan un mismo escenario
+  const centrosMap = new Map();
+
+  evaluaciones.forEach((ev) => {
+    const centerKey = `${ev.campus}||${ev.escenarioPractica}`;
+    if (!centrosMap.has(centerKey)) centrosMap.set(centerKey, new Map());
+    const programsMap = centrosMap.get(centerKey);
+
+    const program = ev.programaAcademico || 'Sin programa';
+    if (!programsMap.has(program)) programsMap.set(program, []);
+    programsMap.get(program).push(ev);
+  });
+
+  return [...centrosMap.entries()].map(([centerKey, programsMap]) => {
+    const [campus, escenario] = centerKey.split('||');
+    const programas = [...programsMap.entries()].map(([program, evs]) => {
+      const promedioGlobal = calcularPromedioGlobal(evs);
+      const promediosPorSeccion = calcularMetricasPorSeccion(evs);
+      return {
+        programa: program,
+        totalEvaluaciones: evs.length,
+        promedioGlobal,
+        promediosPorSeccion
+      };
+    }).sort((a, b) => (b.promedioGlobal || 0) - (a.promedioGlobal || 0));
+
+    return {
+      campus,
+      escenario,
+      totalEvaluaciones: programas.reduce((s, p) => s + p.totalEvaluaciones, 0),
+      programas
+    };
+  });
 }

@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import PptxGenJS from 'pptxgenjs';
-import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart } from 'lucide-react';
+import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart, FileUp } from 'lucide-react';
 import {
   getEvaluationReportMetrics,
   getSystemSettings,
   runOpenRouterPrompt,
   OPENROUTER_FREE_MODELS
 } from '../lib/data';
+import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine';
 
 const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
 const PPTX_SHAPES = {
@@ -472,6 +473,7 @@ export default function KometPresenta() {
   const [loading, setLoading] = useState(true);
   const [generatingAi, setGeneratingAi] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingTemplate, setExportingTemplate] = useState(false);
   const [error, setError] = useState('');
   const [aiNarrative, setAiNarrative] = useState(null);
 
@@ -692,6 +694,66 @@ export default function KometPresenta() {
     }
   }
 
+  async function handleExportWithTemplate() {
+    if (!metrics.kpis.total) {
+      setError('No hay datos para exportar con la plantilla.');
+      return;
+    }
+
+    setExportingTemplate(true);
+    setError('');
+
+    try {
+      const templateUrl = '/templates/INFORME AUTOEVALUACIÓN PRACTICAS.pptx';
+      const engine = new PptxTemplateEngine();
+      await engine.load(templateUrl);
+
+      const data = buildTemplateData(metrics, filters, aiNarrative || fallbackNarrative);
+
+      // Aplicar reemplazos de texto en shapes
+      for (const [slideStr, slideData] of Object.entries(data)) {
+        if (slideStr === '_tables' || slideStr.startsWith('_')) continue;
+        const slideNum = parseInt(slideStr, 10);
+        for (const [shapeName, text] of Object.entries(slideData)) {
+          try {
+            engine.setText(slideNum, shapeName, String(text));
+          } catch (e) {
+            console.warn(`Shape "${shapeName}" en slide ${slideNum}: ${e.message}`);
+          }
+        }
+      }
+
+      // Aplicar reemplazos en tablas
+      const tableData = data._tables || {};
+      for (const [slideStr, tableConfig] of Object.entries(tableData)) {
+        const slideNum = parseInt(slideStr, 10);
+        if (tableConfig.table && tableConfig.data) {
+          try {
+            engine.setTableData(slideNum, tableConfig.table, tableConfig.data);
+          } catch (e) {
+            console.warn(`Tabla "${tableConfig.table}" en slide ${slideNum}: ${e.message}`);
+          }
+        }
+        if (tableConfig.shapes) {
+          for (const [shapeName, text] of Object.entries(tableConfig.shapes)) {
+            try {
+              engine.setText(slideNum, shapeName, String(text));
+            } catch (e) {
+              console.warn(`Shape "${shapeName}" en slide ${slideNum}: ${e.message}`);
+            }
+          }
+        }
+      }
+
+      const timeTag = new Date().toISOString().slice(0, 10);
+      await engine.download(`Informe-Autoevaluacion-${timeTag}.pptx`);
+    } catch (templateError) {
+      setError(`Error al generar con plantilla: ${templateError?.message || 'error no identificado'}`);
+    } finally {
+      setExportingTemplate(false);
+    }
+  }
+
   const activeNarrative = aiNarrative || fallbackNarrative;
 
   return (
@@ -726,6 +788,15 @@ export default function KometPresenta() {
             >
               {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               Generar PPTX con Gráficas
+            </button>
+            <button
+              type="button"
+              onClick={handleExportWithTemplate}
+              disabled={loading || exportingTemplate || !metrics.kpis.total}
+              className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 inline-flex items-center gap-2 transition-all shadow-sm shadow-emerald-200"
+            >
+              {exportingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />}
+              Exportar con Plantilla
             </button>
           </div>
         </div>

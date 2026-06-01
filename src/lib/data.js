@@ -194,6 +194,10 @@ export async function runOpenRouterPrompt({
       })
     });
 
+    if (proxyResponse.status === 404) {
+      return callDirectOpenRouter();
+    }
+
     return proxyResponse;
   }
 
@@ -812,20 +816,29 @@ export async function getProfessorsByConvenio(convenioId) {
 }
 
 export async function getActiveConveniosCount() {
-  const { count, error } = await supabase.from('convenios').select('id', { head: true, count: 'exact' }).eq('status', 'activo');
-  if (error) throw error;
+  const { count, error } = await supabase.from('convenios').select('id', { head: true, count: 'estimated' }).eq('status', 'activo');
+  if (error) {
+    console.warn('Error contando convenios activos, usando 0 como fallback:', error);
+    return 0;
+  }
   return count || 0;
 }
 
 export async function getStudentsInPracticeCount() {
-  const { count, error } = await supabase.from('students').select('id', { head: true, count: 'exact' }).eq('status', 'En Práctica');
-  if (error) throw error;
+  const { count, error } = await supabase.from('students').select('id', { head: true, count: 'estimated' }).eq('status', 'En Práctica');
+  if (error) {
+    console.warn('Error contando estudiantes en práctica, usando 0 como fallback:', error);
+    return 0;
+  }
   return count || 0;
 }
 
 export async function getEvaluationsCount() {
-  const { count, error } = await supabase.from('evaluations').select('id', { head: true, count: 'exact' });
-  if (error) throw error;
+  const { count, error } = await supabase.from('evaluations').select('id', { head: true, count: 'estimated' });
+  if (error) {
+    console.warn('Error contando evaluaciones, usando 0 como fallback:', error);
+    return 0;
+  }
   return count || 0;
 }
 

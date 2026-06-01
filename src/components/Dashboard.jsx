@@ -15,15 +15,27 @@ export default function Dashboard() {
   async function loadDashboard() {
     setLoading(true);
     try {
-      const [evaluationsData, conveniosActive, studentsInPractice, totalEvaluations] = await Promise.all([
+      const results = await Promise.allSettled([
         getRecentEvaluations(),
         getActiveConveniosCount(),
         getStudentsInPracticeCount(),
         getEvaluationsCount()
       ]);
 
-      setRecentEvals(evaluationsData);
-      setStats({ conveniosActive, studentsInPractice, totalEvaluations });
+      const [evaluationsResult, conveniosResult, studentsResult, totalResult] = results;
+
+      if (evaluationsResult.status === 'fulfilled') {
+        setRecentEvals(evaluationsResult.value);
+      } else {
+        console.warn('Error cargando evaluaciones recientes:', evaluationsResult.reason);
+        setRecentEvals([]);
+      }
+
+      setStats({
+        conveniosActive: conveniosResult.status === 'fulfilled' ? conveniosResult.value : 0,
+        studentsInPractice: studentsResult.status === 'fulfilled' ? studentsResult.value : 0,
+        totalEvaluations: totalResult.status === 'fulfilled' ? totalResult.value : 0
+      });
     } catch (error) {
       console.error('Error cargando métricas del dashboard:', error);
       setRecentEvals([]);

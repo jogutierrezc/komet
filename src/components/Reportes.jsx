@@ -222,6 +222,35 @@ function buildEvaluatedSummary(rows = []) {
     .sort((a, b) => b.avgScore - a.avgScore);
 }
 
+function buildComparacionCentrosHtml(comparacion = []) {
+  if (!comparacion.length) return '<p>No hay datos suficientes para comparacion entre programas por centro.</p>';
+
+  return comparacion
+    .map(
+      (item) => `
+    <h4 style="margin-top:16px;">${escapeHtml(item.escenario)} (${escapeHtml(item.campus)}) — ${item.totalEvaluaciones} evaluaciones</h4>
+    <table>
+      <thead><tr><th>Programa</th><th>Evaluaciones</th><th>Promedio Global</th>${(item.programas[0]?.promediosPorSeccion || []).map((s) => `<th>${escapeHtml(s.seccion)}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${item.programas
+          .map(
+            (prog) => `
+          <tr>
+            <td>${escapeHtml(prog.programa)}</td>
+            <td class="num">${prog.totalEvaluaciones}</td>
+            <td class="num">${scoreToText(prog.promedioGlobal)}</td>
+            ${(prog.promediosPorSeccion || []).map((s) => `<td class="num">${scoreToText(s.promedio)}</td>`).join('')}
+          </tr>
+        `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `
+    )
+    .join('');
+}
+
 function buildPlanRows(plan = []) {
   return plan
     .map(
@@ -825,7 +854,11 @@ function composeReportHtml({
       </table>
     </div>
 
-    <h3>5.1 Resumen estructurado por programa</h3>
+    <h3>5.1 Comparacion por Programas en un Mismo Centro</h3>
+    <p>Analisis de como distintos programas academicos evaluan un mismo escenario de practica, identificando brechas de percepcion entre actores formativos.</p>
+    ${buildComparacionCentrosHtml(informeOutput?.comparacionProgramasCentro || [])}
+
+    <h3>5.2 Resumen estructurado por programa</h3>
     <table>
       <thead><tr><th>Programa</th><th>Tipo</th><th>Campus</th><th>Evaluaciones</th><th>Promedio</th></tr></thead>
       <tbody>${programaRowsHtmlEngine || '<tr><td colspan="5">Sin resumen por programa.</td></tr>'}</tbody>
@@ -1115,6 +1148,7 @@ export default function Reportes() {
       distribucionRoles: buildRoleDistributionSummary(filteredRows).slice(0, 10),
       distribucionProgramas: buildProgramDistributionSummary(filteredRows),
       resumenCampus: (informeOutput.resumenPorCampus || []).slice(0, 6),
+      comparacionProgramasCentro: (informeOutput.comparacionProgramasCentro || []).slice(0, 10),
       preguntasCriticas: (informeOutput.preguntasCriticas || []).slice(0, 8),
       recomendaciones: informeOutput.recomendaciones || [],
       plan306090: informeOutput.plan306090 || { dias30: [], dias60: [], dias90: [] },
@@ -1176,6 +1210,7 @@ Requisitos:
 - No inventes datos fuera del dataset.
 - Incluye lectura de secciones del instrumento y analisis de riesgos por preguntas criticas.
 - Incluye comparativos claros entre roles evaluadores y entre evaluados (brechas, dispersion y hallazgos accionables).
+- Analiza las diferencias de calificacion entre distintos programas academicos que evaluan un mismo centro de practica, identificando brechas de percepcion y posibles causas asociadas al perfil del programa o del escenario.
 - Usa como insumo clave la distribucion de calificaciones por seccion, rol y programa para explicar concentraciones en puntajes bajos, medios o altos.
 - Cuando identifiques dispersion o polarizacion, explicala como un hallazgo operativo y no solo descriptivo.
 - En actionPlan incorpora acciones concretas por horizonte de 30, 60 y 90 dias.

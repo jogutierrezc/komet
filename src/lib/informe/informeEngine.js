@@ -3,7 +3,8 @@ import {
   calcularResumenPorCampus,
   calcularResumenPorEscenario,
   calcularResumenPorPrograma,
-  detectarPreguntasCriticas
+  detectarPreguntasCriticas,
+  calcularComparacionProgramasPorCentro
 } from './metricasEngine';
 import { generarAnalisisNormativo, NIVELES_COMPLEJIDAD, normalizeComplexity, TEXTOS_NORMATIVOS } from './algoritmo0273';
 import { PREGUNTAS_INSTRUMENTO } from './instrumento';
@@ -308,7 +309,8 @@ export function rowsToEvaluacionesData(rows = []) {
       fortalezas: normalizeText(raw.fortalezas || raw.strengths),
       aspectosMejora: normalizeText(raw.aspectosMejora || raw.mejoras),
       observaciones: normalizeText(raw.observaciones || raw.comments),
-      completadaEn: row.completed_at || row.created_at || null
+      completadaEn: row.completed_at || row.created_at || null,
+      scoreSummary: row.scoreSummary || null
     };
   });
 }
@@ -327,6 +329,7 @@ export function generarInformeDesdeRows(rows = [], input = {}) {
   const recomendaciones = buildRecommendations(metricasGlobales, preguntasCriticas);
   const planesAccion = buildPlanesAccion(metricasGlobales, preguntasCriticas);
   const plan306090 = buildPlan306090(metricasGlobales, preguntasCriticas);
+  const comparacionProgramasCentro = calcularComparacionProgramasPorCentro(evaluaciones);
   const nivelComplejidad = normalizeComplexity(input.configuracion?.nivelComplejidadEscenario || NIVELES_COMPLEJIDAD.ALTA);
   const analisisNormativo = generarAnalisisNormativo(metricasGlobales, nivelComplejidad);
 
@@ -343,6 +346,7 @@ export function generarInformeDesdeRows(rows = [], input = {}) {
     resumenPorCampus,
     resumenPorEscenario,
     resumenPorPrograma,
+    comparacionProgramasCentro,
     preguntasCriticas,
     introduccion:
       'El informe consolida resultados de la relacion docencia-servicio por campus, escenario y programa academico para orientar decisiones de calidad.',
