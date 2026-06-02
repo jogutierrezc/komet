@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart, FileUp } from 'lucide-react';
+import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart, FileUp, Building2 } from 'lucide-react';
 import {
   getCampuses,
   getConvenios,
@@ -11,7 +11,7 @@ import {
 import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine';
 
 // --- Módulos extraídos ---
-import { norm, avg, stdDev, resolveProgram, resolveLevel, formatPct, formatFilters, rankBy, getMonthKey, shortList } from '../utils/dataHelpers';
+import { norm, avg, stdDev, resolveProgram, resolveLevel, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
 import { parseAiPayload, buildNarrativeFallback } from '../services/aiService';
 import { createPresentationDeck } from '../services/pptService';
 
@@ -181,6 +181,9 @@ export default function KometPresenta() {
       ? 'al alza'
       : 'a la baja';
 
+    const centerAnalysis = calculateCenterAnalysis(filteredRows);
+    const roleGrid = calculateRoleGrid(centerAnalysis);
+
     return {
       kpis: {
         total: filteredRows.length,
@@ -203,7 +206,9 @@ export default function KometPresenta() {
       topProgram: byProgram[0] || null,
       lowProgram: byProgram.length ? byProgram[byProgram.length - 1] : null,
       dateRange,
-      trendDirection
+      trendDirection,
+      centerAnalysis,
+      roleGrid
     };
   }, [filteredRows]);
 
@@ -226,6 +231,12 @@ export default function KometPresenta() {
         ? settings.openrouter_model
         : OPENROUTER_FREE_MODELS[0];
 
+      const centerAnalysisText = formatCenterAnalysisForPrompt(
+        metrics.centerAnalysis,
+        selectedCenter,
+        selectedProgram
+      );
+
       const prompt = [
         'Eres un analista de datos avanzado especialista en calidad de educación y salud.',
         'Analiza las siguientes métricas y entrega SOLO un JSON válido con esta estructura exacta:',
@@ -237,7 +248,8 @@ export default function KometPresenta() {
         `Top 3 Centros: ${metrics.byCenter.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
         `Top 3 Programas: ${metrics.byProgram.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
         `Tendencia Mensual: ${metrics.monthly.map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
-        `Desviación Estándar Global: ${metrics.variability}`
+        `Desviación Estándar Global: ${metrics.variability}`,
+        `ANÁLISIS POR CENTRO DE PRÁCTICA:\n${centerAnalysisText}`
       ].join('\n');
 
       const raw = await runOpenRouterPrompt({
@@ -425,7 +437,7 @@ export default function KometPresenta() {
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[16rem]">
           <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
             <BarChart3 className="w-5 h-5 text-emerald-500" />
-            Estudio Profundo de Datos (Slide 12)
+            Estudio Profundo de Datos
           </h3>
           {generatingAi ? (
             <div className="flex flex-col items-center justify-center h-40 text-slate-400">
@@ -442,7 +454,7 @@ export default function KometPresenta() {
         <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
             <FileText className="w-5 h-5 text-orange-500" />
-            Sugerencias y Plan de Acción (Slide 15)
+            Sugerencias y Plan de Acción
           </h3>
           <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeNarrative.acciones.slice(0, 6).map((accion, idx) => (
@@ -457,6 +469,85 @@ export default function KometPresenta() {
           </ul>
         </div>
       </div>
+
+      {/* ── Análisis por Centro de Práctica ── */}
+      {!loading && metrics.centerAnalysis.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
+            <Building2 className="w-5 h-5 text-violet-500" />
+            {selectedCenter !== 'Todos'
+              ? `Análisis Comparativo: ${selectedCenter} vs Otros Centros`
+              : `Ranking de Centros de Práctica (${metrics.centerAnalysis.length})`}
+          </h3>
+
+          {/* Tabla: Centro × Rol */}
+          <div className="overflow-x-auto mb-4">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-violet-50">
+                  <th className="text-left p-2 font-semibold text-violet-800 border border-violet-200">Centro</th>
+                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Total</th>
+                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Promedio</th>
+                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Estud.</th>
+                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Docentes</th>
+                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Coord.</th>
+                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Vs Prom.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.centerAnalysis.map((center, idx) => {
+                  const isSelected = selectedCenter !== 'Todos' && center.name === selectedCenter;
+                  const avgScore = avg(metrics.centerAnalysis.map(c => c.score));
+                  const diff = center.score - avgScore;
+                  return (
+                    <tr key={center.name}
+                      className={`${isSelected ? 'bg-violet-100 font-semibold' : idx % 2 === 0 ? 'bg-slate-50' : ''} hover:bg-violet-50 transition-colors`}
+                    >
+                      <td className="p-2 border border-slate-200">
+                        {isSelected && <span className="inline-block w-2 h-2 bg-violet-500 rounded-full mr-2"></span>}
+                        {center.name}
+                        {isSelected && <span className="text-xs text-violet-600 ml-1">(seleccionado)</span>}
+                      </td>
+                      <td className="text-center p-2 border border-slate-200">{center.total}</td>
+                      <td className="text-center p-2 border border-slate-200 font-medium">{center.score.toFixed(2)}</td>
+                      <td className="text-center p-2 border border-slate-200">
+                        {center.byRole['Estudiantes']?.score?.toFixed(1) || '—'}
+                      </td>
+                      <td className="text-center p-2 border border-slate-200">
+                        {center.byRole['Docentes']?.score?.toFixed(1) || center.byRole['Profesores']?.score?.toFixed(1) || '—'}
+                      </td>
+                      <td className="text-center p-2 border border-slate-200">
+                        {center.byRole['Coordinadores']?.score?.toFixed(1) || '—'}
+                      </td>
+                      <td className={`text-center p-2 border border-slate-200 font-mono ${diff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {diff >= 0 ? '+' : ''}{diff.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Insight rápido */}
+          {metrics.centerAnalysis.length >= 2 && (
+            <div className="flex flex-wrap gap-3 text-xs text-slate-600">
+              <span className="bg-violet-50 px-3 py-1.5 rounded-lg">
+                🏆 Mejor: <strong>{metrics.centerAnalysis[0].name}</strong> ({metrics.centerAnalysis[0].score.toFixed(2)})
+              </span>
+              <span className="bg-red-50 px-3 py-1.5 rounded-lg">
+                ⚠️ Menor: <strong>{metrics.centerAnalysis[metrics.centerAnalysis.length - 1].name}</strong> ({metrics.centerAnalysis[metrics.centerAnalysis.length - 1].score.toFixed(2)})
+              </span>
+              <span className="bg-blue-50 px-3 py-1.5 rounded-lg">
+                📊 Brecha: {(metrics.centerAnalysis[0].score - metrics.centerAnalysis[metrics.centerAnalysis.length - 1].score).toFixed(2)} pts
+              </span>
+              <span className="bg-slate-50 px-3 py-1.5 rounded-lg">
+                📈 Desv. Estándar: {stdDev(metrics.centerAnalysis.map(c => c.score)).toFixed(2)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

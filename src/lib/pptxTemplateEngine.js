@@ -475,33 +475,8 @@ export function buildTemplateData(metrics, filters, narrative) {
     '6. CULTURA DEL MEJORAMIENTO CONTINUO'
   ];
 
-  // ── Generar puntajes por condición para Slide 7 ──
-  // Distribuye el globalScore con un gradiente basado en variabilidad y distribución
-  const variationOffset = (metrics.distribution[3]?.count - metrics.distribution[0]?.count) / Math.max(metrics.kpis.scored, 1);
-  const conditionScores = condiciones.map((_, i) => {
-    const offset = (i - 2.5) * 0.08 * (1 + metrics.variability);
-    const base = Math.min(5, Math.max(1, globalScore + offset + variationOffset * 0.15));
-    return {
-      coord: Math.min(5, Math.max(1, base + 0.15)),
-      doc: Math.min(5, Math.max(1, base)),
-      est: Math.min(5, Math.max(1, base - 0.25)),
-      prom: Math.min(5, Math.max(1, base - 0.05))
-    };
-  });
-
-  // Tabla de Slide 7: header 2 filas (2 y 6 cols) + 6 condiciones (5 cols) + total (5 cols)
-  const evalTable = [
-    ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'ENCUESTAS RELACION DOCENCIA SERVICIO - ESCENARIOS CLÍNICOS'],
-    ['', 'COORDINADOR', 'DE PRÁCTICAS', 'DOCENTES', 'ESTUDIANTES', 'PROMEDIO'],
-    ...conditionScores.map((cs, i) => [
-      condiciones[i],
-      cs.coord.toFixed(1).replace('.', ','),
-      cs.doc.toFixed(1).replace('.', ','),
-      cs.est.toFixed(1).replace('.', ','),
-      cs.prom.toFixed(1).replace('.', ',')
-    ]),
-    ['PROMEDIO GENERAL', coordScore.toFixed(1).replace('.', ','), docenteScore.toFixed(1).replace('.', ','), estudianteScore.toFixed(1).replace('.', ','), globalScore.toFixed(1).replace('.', ',')]
-  ];
+  // ── Análisis por centro y rol (usado en slides 8-10 y datos adicionales) ──
+  const centerAnalysis = metrics.centerAnalysis || [];
 
   // ── Distribuir hallazgos/riesgos/acciones en 6 condiciones (slides 8-10) ──
   // Usa round-robin para que cada condición reciba narrativa única disponible
@@ -520,6 +495,17 @@ export function buildTemplateData(metrics, filters, narrative) {
   const qualTableCoord = buildQualTable(h, r, a);
   const qualTableEst = buildQualTable(h, r, a);
   const qualTableDoc = buildQualTable(h, r, a);
+
+  // Texto adicional con ranking de centros para slide 7
+  const centerRankingText = centerAnalysis.length > 0
+    ? '\n\nRANKING DE CENTROS POR PUNTAJE:\n' +
+      centerAnalysis.slice(0, 6).map((c, i) =>
+        `${i + 1}. ${c.name}: ${c.score.toFixed(1).replace('.', ',')} ` +
+        `(Est: ${(c.byRole['Estudiantes']?.score || 0).toFixed(1).replace('.', ',')} ` +
+        `Doc: ${(c.byRole['Docentes']?.score || c.byRole['Profesores']?.score || 0).toFixed(1).replace('.', ',')} ` +
+        `Coord: ${(c.byRole['Coordinadores']?.score || 0).toFixed(1).replace('.', ',')})`
+      ).join('\n')
+    : '';
 
   // Texto completo para OBSERVACIONES DE LA EVALUACIÓN (slides 8-10)
   const hAll = h.join(' | ') || 'Sin datos suficientes';
@@ -600,37 +586,52 @@ export function buildTemplateData(metrics, filters, narrative) {
     ].join('\n') },
 
     // ════════════════════════════════════════════════════════════════
-    // SLIDE 7 — EVALUACIÓN RDS (Título 1 + Tabla 4 con grid 6 condiciones)
+    // SLIDE 7 — EVALUACIÓN RDS (Título 1 + Marcador de contenido 2 texto)
+    // NOTA: El template NO tiene tabla en slide 7. Usa "Marcador de contenido 2"
+    // que es un cuadro de texto con placeholder "Colocar tabla y grafico".
     // ════════════════════════════════════════════════════════════════
     { slide: 7, type: 'byContent', search: 'EVALUACIÓN', value: [
       'EVALUACIÓN DE LA RELACIÓN DOCENCIA SERVICIO',
       `${centerName} — ${programName}`,
       `Periodo: ${metrics.dateRange || year}`
     ].join('\n') },
-    // Tabla "Tabla 4" con el grid de 9 filas (2 header + 6 condiciones + 1 total)
-    { slide: 7, type: 'table', name: 'Tabla 4', data: evalTable },
+    // Reemplazar el placeholder "Colocar tabla y grafico" con los datos
+    { slide: 7, type: 'byContent', search: 'Colocar tabla', value: [
+      `RESULTADOS GLOBALES — ${centerName}`,
+      `Promedio General: ${globalScore.toFixed(1).replace('.', ',')} / 5,0`,
+      `Evaluaciones: ${metrics.kpis.total} (Completadas: ${completed})`,
+      `Tasa de Respuesta: ${completionPct.toFixed(1)}%`,
+      `Centros: ${metrics.kpis.centers} | Programas: ${metrics.kpis.programs}`,
+      '',
+      `Desglose por rol — Est.: ${estudianteScore.toFixed(1).replace('.', ',')} | Doc.: ${docenteScore.toFixed(1).replace('.', ',')} | Coord.: ${coordScore.toFixed(1).replace('.', ',')}`,
+      `Mejor centro: ${topCenter?.name || 'N/A'} (${topCenter?.score.toFixed(1).replace('.', ',') || '—'})`,
+      `Menor centro: ${metrics.lowCenter?.name || 'N/A'} (${metrics.lowCenter?.score.toFixed(1).replace('.', ',') || '—'})`,
+      `Brecha: ${(topCenter && metrics.lowCenter) ? (topCenter.score - metrics.lowCenter.score).toFixed(1).replace('.', ',') : '—'}`,
+      '',
+      `Distribución: 0-2: ${metrics.distribution[0].count} | 2-3: ${metrics.distribution[1].count} | 3-4: ${metrics.distribution[2].count} | 4-5: ${metrics.distribution[3].count}`,
+      centerRankingText
+    ].join('\n') },
 
     // ════════════════════════════════════════════════════════════════
     // SLIDE 8 — COORDINADOR: Observaciones
     // ════════════════════════════════════════════════════════════════
     { slide: 8, type: 'replaceText', search: 'Coordinador', value: 'Coordinador' },
     { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE', value: observacionesText('COORDINADOR', hAll, rAll, aAll) },
-    // NOTA: template real tiene "Marcador de contenido 4" no "Marcador de contenido 2"
-    { slide: 8, type: 'table', name: 'Marcador de contenido 4', data: qualTableCoord },
+    { slide: 8, type: 'table', name: 'Marcador de contenido 2', data: qualTableCoord },
 
     // ════════════════════════════════════════════════════════════════
     // SLIDE 9 — ESTUDIANTES: Observaciones
     // ════════════════════════════════════════════════════════════════
     { slide: 9, type: 'byContent', search: 'Estudiantes', value: 'Estudiantes al escenario de práctica' },
     { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: observacionesText('ESTUDIANTES', hAll, rAll, aAll) },
-    { slide: 9, type: 'table', name: 'Marcador de contenido 4', data: qualTableEst },
+    { slide: 9, type: 'table', name: 'Marcador de contenido 2', data: qualTableEst },
 
     // ════════════════════════════════════════════════════════════════
     // SLIDE 10 — DOCENTES: Observaciones
     // ════════════════════════════════════════════════════════════════
     { slide: 10, type: 'byContent', search: 'Docentes', value: 'Docentes al escenario de práctica' },
     { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: observacionesText('DOCENTES', hAll, rAll, aAll) },
-    { slide: 10, type: 'table', name: 'Marcador de contenido 4', data: qualTableDoc },
+    { slide: 10, type: 'table', name: 'Marcador de contenido 2', data: qualTableDoc },
 
     // ════════════════════════════════════════════════════════════════
     // SLIDE 11 — OPORTUNIDADES DE MEJORA

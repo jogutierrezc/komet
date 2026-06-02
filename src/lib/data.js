@@ -3,15 +3,17 @@ import { supabase } from './supabaseClient';
 const SYSTEM_SETTINGS_KEY = 'komet_system';
 
 export const OPENROUTER_FREE_MODELS = [
-  // Modelos gratuitos actuales en OpenRouter (ordenados por confiabilidad)
-  'google/gemini-2.0-flash-exp:free',
-  'meta-llama/llama-3.2-3b-instruct:free',
+  // Modelos gratuitos activos en OpenRouter (Junio 2026)
+  // La disponibilidad cambia frecuentemente — el fallback a modelo pago más barato
+  // (findCheapestPaidModel) se activa si todos estos fallan.
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'qwen/qwen3-coder:free',
   'qwen/qwen-2.5-7b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
   'deepseek/deepseek-r1-distill-qwen-7b:free',
-  'microsoft/phi-3-mini-4k-instruct:free',
-  'google/gemma-2-9b-it:free',
-  'meta-llama/llama-3.3-8b-instruct:free'
+  'meta-llama/llama-3.2-3b-instruct:free'
 ];
 
 export const DEFAULT_SYSTEM_SETTINGS = {
@@ -288,8 +290,41 @@ export async function runOpenRouterPrompt({
     if (!result.skip) break;
   }
 
+  // 3. Fallback: buscar el modelo NO gratuito más barato disponible
+  async function findCheapestPaidModel(apiKey) {
+    if (!apiKey) return null;
+    try {
+      const resp = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+      if (!resp.ok) return null;
+      const payload = await resp.json();
+      const models = Array.isArray(payload?.data) ? payload.data : [];
+      // Filtrar solo modelos que NO son free, ordenar por precio (completion más barato primero)
+      const paid = models
+        .filter(m => !String(m.id || '').includes(':free') && m.pricing?.completion)
+        .map(m => ({
+          id: m.id,
+          cost: parseFloat(m.pricing.completion)
+        }))
+        .filter(m => m.cost > 0 && m.cost < 1) // menos de $1 por token (razonable)
+        .sort((a, b) => a.cost - b.cost);
+      return paid[0]?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  const cheapestModel = await findCheapestPaidModel(trimmedKey);
+  if (cheapestModel) {
+    console.warn(`[OpenRouter] Probando modelo económico: ${cheapestModel}`);
+    const result = await tryModel(cheapestModel, false);
+    if (result.ok) return result.content;
+    if (result.error) lastErrorMessage = result.error;
+  }
+
   const requestError = new Error(
-    'Ningún modelo gratuito de OpenRouter respondió. Último error: ' + (lastErrorMessage?.slice(0, 200) || 'desconocido')
+    'Todos los modelos de OpenRouter fallaron (gratuitos y pagos mínimos). Último error: ' + (lastErrorMessage?.slice(0, 200) || 'desconocido')
   );
   requestError.code = 'openrouter_all_models_failed';
   throw requestError;
