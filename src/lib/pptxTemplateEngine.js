@@ -1,7 +1,7 @@
 /**
  * pptxTemplateEngine.js — v2
  * 
- * Motor de edición de plantillas PPTX en el navegador.
+ * Motor de edicion de plantillas PPTX en el navegador.
  * Soporta: shapes de texto (<p:sp>), tablas (<p:graphicFrame> con a:tbl),
  * shapes agrupados (<p:grpSp>), y reemplazo masivo de texto.
  */
@@ -64,21 +64,18 @@ export class PptxTemplateEngine {
    * Busca en TODOS los tipos de elementos: p:sp, p:graphicFrame, y dentro de p:grpSp.
    */
   _findElementByName(slideDoc, targetName) {
-    // 1. Buscar en shapes regulares (<p:sp>)
     const sps = slideDoc.getElementsByTagNameNS(NS.p, 'sp');
     for (const el of sps) {
       const cNvPr = el.getElementsByTagNameNS(NS.p, 'cNvPr')[0];
       if (cNvPr && cNvPr.getAttribute('name') === targetName) return el;
     }
 
-    // 2. Buscar en graphic frames (<p:graphicFrame>) — contienen tablas
     const gfs = slideDoc.getElementsByTagNameNS(NS.p, 'graphicFrame');
     for (const el of gfs) {
       const cNvPr = el.getElementsByTagNameNS(NS.p, 'cNvPr')[0];
       if (cNvPr && cNvPr.getAttribute('name') === targetName) return el;
     }
 
-    // 3. Buscar dentro de grupos (<p:grpSp>) — shapes anidados
     const grps = slideDoc.getElementsByTagNameNS(NS.p, 'grpSp');
     for (const grp of grps) {
       const found = this._findInGroup(grp, targetName);
@@ -88,23 +85,17 @@ export class PptxTemplateEngine {
     return null;
   }
 
-  /**
-   * Búsqueda recursiva dentro de un grupo de shapes.
-   */
   _findInGroup(groupEl, targetName) {
-    // Shapes dentro del grupo
     const sps = groupEl.getElementsByTagNameNS(NS.p, 'sp');
     for (const el of sps) {
       const cNvPr = el.getElementsByTagNameNS(NS.p, 'cNvPr')[0];
       if (cNvPr && cNvPr.getAttribute('name') === targetName) return el;
     }
-    // Graphic frames dentro del grupo
     const gfs = groupEl.getElementsByTagNameNS(NS.p, 'graphicFrame');
     for (const el of gfs) {
       const cNvPr = el.getElementsByTagNameNS(NS.p, 'cNvPr')[0];
       if (cNvPr && cNvPr.getAttribute('name') === targetName) return el;
     }
-    // Subgrupos
     const grps = groupEl.getElementsByTagNameNS(NS.p, 'grpSp');
     for (const subGrp of grps) {
       const found = this._findInGroup(subGrp, targetName);
@@ -113,10 +104,6 @@ export class PptxTemplateEngine {
     return null;
   }
 
-  /**
-   * Busca un shape y reemplaza su texto.
-   * Ahora también maneja shapes SIN nombre (busca por posición/orden).
-   */
   setText(slideNum, shapeName, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) throw new Error(`Slide ${slideNum} no encontrado`);
@@ -127,11 +114,7 @@ export class PptxTemplateEngine {
     this._replaceTextInElement(element, String(newText));
   }
 
-  /**
-   * Reemplaza texto en un elemento XML (shape, celda de tabla, etc.).
-   */
   _replaceTextInElement(element, newText) {
-    // Intentar txBody (shapes de texto)
     const txBody = element.getElementsByTagNameNS(NS.p, 'txBody')[0]
       || element.getElementsByTagNameNS(NS.a, 'txBody')[0];
     
@@ -146,7 +129,6 @@ export class PptxTemplateEngine {
       }
     }
 
-    // Si no hay txBody, buscar textos directamente (caso tablas)
     const tElements = element.getElementsByTagNameNS(NS.a, 't');
     if (tElements.length > 0) {
       tElements[0].textContent = newText;
@@ -156,15 +138,10 @@ export class PptxTemplateEngine {
     }
   }
 
-  /**
-   * Busca el primer texto que contenga un substring y lo reemplaza.
-   * Útil para shapes sin nombre que tienen texto conocido.
-   */
   replaceTextByContent(slideNum, searchText, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) throw new Error(`Slide ${slideNum} no encontrado`);
 
-    // Buscar en shapes de texto
     const sps = slideDoc.getElementsByTagNameNS(NS.p, 'sp');
     for (const sp of sps) {
       const tElements = sp.getElementsByTagNameNS(NS.a, 't');
@@ -178,10 +155,6 @@ export class PptxTemplateEngine {
     return false;
   }
 
-  /**
-   * Reemplaza datos en una tabla.
-   * Busca en shapes regulares y en graphic frames.
-   */
   setTableData(slideNum, tableShapeName, data) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) throw new Error(`Slide ${slideNum} no encontrado`);
@@ -201,9 +174,6 @@ export class PptxTemplateEngine {
     }
   }
 
-  /**
-   * Reemplaza texto en una celda específica de tabla.
-   */
   setTableCell(slideNum, tableShapeName, row, col, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) throw new Error(`Slide ${slideNum} no encontrado`);
@@ -222,10 +192,6 @@ export class PptxTemplateEngine {
     this._replaceTextInElement(cells[col], String(newText));
   }
 
-  /**
-   * Reemplaza texto en TODOS los shapes que tengan texto IDÉNTICO al buscado.
-   * Busca en toda la diapositiva, sin importar el nombre del shape.
-   */
   replaceAllExactText(slideNum, oldText, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) return 0;
@@ -245,10 +211,6 @@ export class PptxTemplateEngine {
     return count;
   }
 
-  /**
-   * Obtiene TODOS los elementos que contengan texto en una diapositiva.
-   * Incluye sp, graphicFrame, y elementos dentro de grpSp.
-   */
   _getAllTextContainers(slideDoc) {
     const containers = [];
 
@@ -269,9 +231,6 @@ export class PptxTemplateEngine {
     return containers;
   }
 
-  /**
-   * Reemplaza texto en TODOS los shapes con nombre específico.
-   */
   replaceAllNamed(slideNum, shapeName, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) return 0;
@@ -289,12 +248,6 @@ export class PptxTemplateEngine {
     return count;
   }
 
-  /**
-   * Reemplaza TODO el texto de un shape encontrado por su contenido de texto.
-   * Busca el PRIMER shape que contenga el searchText y reemplaza TODOS sus
-   * elementos <a:t> con el nuevo texto.
-   * Ideal para shapes SIN nombre (name="" ).
-   */
   replaceShapeByContent(slideNum, searchText, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) return false;
@@ -304,7 +257,6 @@ export class PptxTemplateEngine {
       const tElements = container.getElementsByTagNameNS(NS.a, 't');
       for (const t of tElements) {
         if (t.textContent && t.textContent.trim().includes(searchText)) {
-          // Encontramos el shape. Reemplazar TODOS los <a:t> en este contenedor.
           this._replaceTextInElement(container, String(newText));
           return true;
         }
@@ -313,10 +265,6 @@ export class PptxTemplateEngine {
     return false;
   }
 
-  /**
-   * Reemplaza texto en el PRIMER shape que contenga texto.
-   * Útil cuando los shapes no tienen nombre pero sabemos qué slide es.
-   */
   setFirstShapeText(slideNum, newText) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) return;
@@ -332,15 +280,6 @@ export class PptxTemplateEngine {
     }
   }
 
-  /**
-   * Reemplazo masivo inteligente con múltiples estrategias:
-   * - type='byName': llama setText(slideNum, name, value)
-   * - type='byContent': llama replaceShapeByContent(slideNum, search, value) para shapes sin nombre
-   * - type='replaceText': llama replaceTextByContent(slideNum, search, value) para reemplazo parcial de <a:t>
-   * - type='table': llama setTableData(slideNum, name, data)
-   * @param {number} slideNum 
-   * @param {Array<{type: string, name?: string, search?: string, value?: string, data?: Array}>} operations
-   */
   applyOperations(slideNum, operations) {
     let successCount = 0;
     for (const op of operations) {
@@ -368,10 +307,6 @@ export class PptxTemplateEngine {
     return successCount;
   }
 
-  /**
-   * Lista todos los shapes con nombre y texto en una diapositiva.
-   * Útil para depuración.
-   */
   listShapes(slideNum) {
     const slideDoc = this.slides[slideNum];
     if (!slideDoc) return [];
@@ -415,32 +350,172 @@ export class PptxTemplateEngine {
   }
 }
 
+// ─── Ayudantes para análisis de datos reales ───
+
+function avg(values) {
+  const valid = values.filter((v) => typeof v === 'number' && Number.isFinite(v));
+  return valid.length ? Number((valid.reduce((s, v) => s + v, 0) / valid.length).toFixed(2)) : null;
+}
+
 /**
- * Construye las operaciones de inyección de datos en la plantilla PPTX.
- *
- * Mapea contra la estructura REAL de la plantilla:
- *   - Slide 2: Portada → shapes sin nombre con "INFORME DE AUTOEVALUACIÓN" y año
- *   - Slide 3: Estudiantes → shape "2 Diagrama" + shape sin nombre con "ESTUDIANTES"
- *   - Slide 4: Tabla "Tabla 4" (Datos generales)
- *   - Slide 5: Tabla "Tabla 4" (Competencias / Resultados)
- *   - Slide 6: CuadroTexto 5/6 → "MODELO DE AUTOEVALUACIÓN..."
- *   - Slide 7: Tabla "Tabla 4" (Grid 6 condiciones × Coord/Doc/Est/Prom) + Título 1
- *   - Slide 8: Tabla "Marcador de contenido 4", texto "Marcador de texto 3", "Título 1"
- *   - Slide 9: Tabla "Marcador de contenido 4", texto "Marcador de texto 3"
- *   - Slide 10: Tabla "Marcador de contenido 4", texto "Marcador de texto 3"
- *   - Slide 11: Rectángulo 6 → "OPORTUNIDADES DE MEJORA"
- *
- * Tipos de operación:
- *   byContent  → replaceShapeByContent: busca shape por contenido y reemplaza TODO su texto
- *   replaceText → replaceTextByContent: busca un <a:t> específico y lo reemplaza
- *   byName     → setText: busca shape por nombre exacto y reemplaza su texto
- *   table      → setTableData: reemplaza datos de una tabla
+ * Agrupa los sectionScores de todas las filas y promedia por título de sección.
+ * Retorna [{ titulo, score, count, interpretacion }]
  */
-export function buildTemplateData(metrics, filters, narrative) {
+function aggregateSectionScores(rows = []) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const sections = row?.scoreSummary?.sectionScores;
+    if (!Array.isArray(sections)) return;
+    sections.forEach((sec) => {
+      const title = sec?.title || 'General';
+      if (!map.has(title)) map.set(title, []);
+      if (typeof sec?.score === 'number') map.get(title).push(sec.score);
+    });
+  });
+
+  const result = [];
+  for (const [titulo, scores] of map) {
+    const score = avg(scores);
+    result.push({
+      titulo: titulo.toUpperCase(),
+      score,
+      count: scores.length,
+      interpretacion: score >= 4.5 ? 'Fortaleza consolidada'
+        : score >= 4.0 ? 'Cumple ampliamente'
+        : score >= 3.5 ? 'Requiere mejoras puntuales'
+        : score >= 3.0 ? 'Oportunidades de mejora significativas'
+        : score >= 2.0 ? 'Acciones correctivas requeridas'
+        : 'Intervencion inmediata'
+    });
+  }
+
+  if (!result.length) {
+    return [
+      { titulo: 'ASPECTOS GENERALES', score: null, count: 0, interpretacion: 'Sin datos' },
+      { titulo: 'CAPACIDAD INSTALADA', score: null, count: 0, interpretacion: 'Sin datos' },
+      { titulo: 'SEGURIDAD, PROTECCION Y BIENESTAR', score: null, count: 0, interpretacion: 'Sin datos' },
+      { titulo: 'ORGANIZACION ADMINISTRATIVA', score: null, count: 0, interpretacion: 'Sin datos' },
+      { titulo: 'PRACTICAS FORMATIVAS', score: null, count: 0, interpretacion: 'Sin datos' },
+      { titulo: 'CULTURA DE MEJORAMIENTO CONTINUO', score: null, count: 0, interpretacion: 'Sin datos' }
+    ];
+  }
+
+  return result;
+}
+
+/**
+ * Extrae texto cualitativo (fortalezas, mejoras, observaciones) desde rawAnswers
+ * y los agrupa por rol (coordinador, estudiante, docente).
+ */
+function extractQualitativeByRole(rows = []) {
+  const roles = { COORDINADOR: [], ESTUDIANTES: [], DOCENTES: [] };
+
+  rows.forEach((row) => {
+    const raw = row?.rawAnswers || {};
+    const role = String(row?.role || '').toLowerCase();
+
+    const fortalezas = raw.fortalezas || raw.strengths || '';
+    const mejoras = raw.aspectosMejora || raw.mejoras || '';
+    const observaciones = raw.observaciones || raw.comments || '';
+
+    if (role.includes('coord')) {
+      if (fortalezas) roles.COORDINADOR.push(fortalezas);
+      if (mejoras) roles.COORDINADOR.push(mejoras);
+      if (observaciones) roles.COORDINADOR.push(observaciones);
+    } else if (role.includes('est')) {
+      if (fortalezas) roles.ESTUDIANTES.push(fortalezas);
+      if (mejoras) roles.ESTUDIANTES.push(mejoras);
+      if (observaciones) roles.ESTUDIANTES.push(observaciones);
+    } else if (role.includes('doc') || role.includes('prof')) {
+      if (fortalezas) roles.DOCENTES.push(fortalezas);
+      if (mejoras) roles.DOCENTES.push(mejoras);
+      if (observaciones) roles.DOCENTES.push(observaciones);
+    }
+  });
+
+  return roles;
+}
+
+/**
+ * Construye un texto analítico tipo "supervisor del sitio de práctica"
+ * basado en datos cuantitativos (secciones) y cualitativos (comentarios).
+ */
+function buildSupervisorObservations(titulo, sections, qualComments, globalScore, completionPct, totalEvals) {
+  const score = sections.length ? avg(sections.map(s => s.score)) : globalScore;
+  const nivel = score >= 4.5 ? 'SOBRESALIENTE'
+    : score >= 4.0 ? 'ALTO'
+    : score >= 3.5 ? 'SATISFACTORIO'
+    : score >= 3.0 ? 'ACEPTABLE'
+    : score >= 2.0 ? 'BAJO'
+    : 'CRITICO';
+
+  const lines = [];
+  lines.push(`OBSERVACIONES DE LA EVALUACION — ${titulo}`);
+  lines.push('');
+  lines.push(`=== DIAGNOSTICO DEL SITIO DE PRACTICA ===`);
+  lines.push(`Nivel de desempeno: ${nivel} (${score.toFixed(1).replace('.', ',')} / 5,0)`);
+  lines.push(`Evaluaciones procesadas: ${totalEvals} | Tasa de respuesta: ${completionPct.toFixed(1)}%`);
+  lines.push('');
+
+  // Secciones con mejor y peor puntaje
+  const conScore = sections.filter(s => s.score !== null).sort((a, b) => b.score - a.score);
+  if (conScore.length > 0) {
+    lines.push('=== ANALISIS POR SECCION ===');
+    conScore.forEach((s) => {
+      lines.push(`  ${s.titulo}: ${s.score.toFixed(1).replace('.', ',')} — ${s.interpretacion}`);
+    });
+    lines.push('');
+
+    if (conScore.length >= 2) {
+      const mejor = conScore[0];
+      const peor = conScore[conScore.length - 1];
+      const brecha = (mejor.score - peor.score).toFixed(1).replace('.', ',');
+      lines.push(`Brecha inter-seccion: ${brecha} puntos`);
+      lines.push(`Fortaleza principal: ${mejor.titulo} (${mejor.score.toFixed(1).replace('.', ',')})`);
+      lines.push(`Area de mejora prioritaria: ${peor.titulo} (${peor.score.toFixed(1).replace('.', ',')})`);
+      lines.push('');
+    }
+  }
+
+  // Comentarios cualitativos
+  const validos = qualComments.filter(c => c && c.length > 10);
+  if (validos.length > 0) {
+    lines.push('=== RETROALIMENTACION CUALITATIVA ===');
+    const unicos = [...new Set(validos)];
+    unicos.forEach((c, i) => {
+      lines.push(`  ${i + 1}. ${c.length > 200 ? c.slice(0, 200) + '...' : c}`);
+    });
+    lines.push('');
+  }
+
+  lines.push('=== RECOMENDACIONES DEL SUPERVISOR ===');
+  if (score < 3.5) {
+    lines.push('  - Implementar plan de mejora inmediato con metas a 30, 60 y 90 dias.');
+    lines.push('  - Realizar visitas de supervision quincenales hasta estabilizar indicadores.');
+  } else if (score < 4.0) {
+    lines.push('  - Diseniar plan de acompanamiento para elevar estandares a nivel ALTO.');
+    lines.push('  - Socializar brechas identificadas con el Comite Docencia-Servicio.');
+  } else {
+    lines.push('  - Mantener estandares de calidad y documentar buenas practicas.');
+    lines.push('  - Compartir modelo de gestion con otros escenarios como referencia.');
+  }
+  lines.push(`  - Monitorear periodicamente los indicadores de las ${conScore.length} condiciones evaluadas.`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Construye las operaciones de inyeccion de datos en la plantilla PPTX.
+ *
+ * @param {Object} metrics - Metricas computadas desde KometPresenta
+ * @param {Object} filters - Filtros aplicados (campus, level, center, program)
+ * @param {Object} narrative - Narrativa IA o fallback { hallazgos, riesgos, acciones }
+ * @param {Array} [rows] - Filas de datos filtradas (para datos cualitativos y secciones reales)
+ */
+export function buildTemplateData(metrics, filters, narrative, rows = []) {
   const year = new Date().getFullYear();
   const topCenter = metrics.byCenter[0];
   const topProgram = metrics.byProgram[0];
-  const topCampus = metrics.byCampus[0];
 
   const h = narrative?.hallazgos || [];
   const r = narrative?.riesgos || [];
@@ -457,7 +532,7 @@ export function buildTemplateData(metrics, filters, narrative) {
   const completed = metrics.kpis.completed;
   const completionPct = metrics.kpis.completionPct;
 
-  // Puntajes por rol para la tabla del Slide 7
+  // Roles: conteos y puntajes reales desde metrics.byRole
   const coordRole = metrics.byRole.find(rr => rr.name.toLowerCase().includes('coord'));
   const docRole = metrics.byRole.find(rr => rr.name.toLowerCase().includes('doc'));
   const estRole = metrics.byRole.find(rr => rr.name.toLowerCase().includes('est'));
@@ -465,38 +540,50 @@ export function buildTemplateData(metrics, filters, narrative) {
   const docenteScore = docRole?.score || globalScore;
   const estudianteScore = estRole?.score || globalScore;
 
+  // Datos reales desde las filas
+  const sections = aggregateSectionScores(rows);
+  const qualByRole = extractQualitativeByRole(rows);
+
   // 6 condiciones del modelo Acuerdo 00273 de 2021
   const condiciones = [
     '1. ASPECTOS GENERALES',
     '2. CAPACIDAD INSTALADA',
-    '3. SEGURIDAD, PROTECCIÓN Y BIENESTAR',
-    '4. ORGANIZACIÓN ADMINISTRATIVA PARA LA DOCENCIA SERVICIO',
+    '3. SEGURIDAD, PROTECCION Y BIENESTAR',
+    '4. ORGANIZACION ADMINISTRATIVA PARA LA DOCENCIA SERVICIO',
     '5. PRACTICAS FORMATIVAS',
     '6. CULTURA DEL MEJORAMIENTO CONTINUO'
   ];
 
-  // ── Análisis por centro y rol (usado en slides 8-10 y datos adicionales) ──
+  // ── Analisis por centro y rol ──
   const centerAnalysis = metrics.centerAnalysis || [];
 
-  // ── Distribuir hallazgos/riesgos/acciones en 6 condiciones (slides 8-10) ──
-  // Usa round-robin para que cada condición reciba narrativa única disponible
+  // ── Tabla cualitativa (slides 8-10) con datos reales ──
   const condTableHeader = ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'FORTALEZAS', 'DIFICULTADES', 'SUGERENCIAS PARA MEJORAR'];
+
+  // Usar datos cualitativos reales si existen, si no, caer a narrativa IA
+  const qualH = qualByRole.COORDINADOR.length ? qualByRole.COORDINADOR : h;
+  const qualEst = qualByRole.ESTUDIANTES.length ? qualByRole.ESTUDIANTES : h;
+  const qualDoc = qualByRole.DOCENTES.length ? qualByRole.DOCENTES : h;
+
+  // Para dificultades y sugerencias, mezclar riesgos y acciones como fallback
+  const qualR = r.length ? r : qualH;
+  const qualA = a.length ? a : qualR;
 
   const buildQualTable = (itemsH, itemsR, itemsA) => [
     condTableHeader,
     ...condiciones.map((cond, i) => [
       cond,
-      itemsH[i % itemsH.length] || 'Sin datos',
-      itemsR[i % itemsR.length] || 'Sin datos',
-      itemsA[i % itemsA.length] || 'Sin datos'
+      itemsH[i % itemsH.length] || 'Sin datos cualitativos',
+      itemsR[i % itemsR.length] || 'Sin datos cualitativos',
+      itemsA[i % itemsA.length] || 'Sin datos cualitativos'
     ])
   ];
 
-  const qualTableCoord = buildQualTable(h, r, a);
-  const qualTableEst = buildQualTable(h, r, a);
-  const qualTableDoc = buildQualTable(h, r, a);
+  const qualTableCoord = buildQualTable(qualH, qualR, qualA);
+  const qualTableEst = buildQualTable(qualEst, qualR, qualA);
+  const qualTableDoc = buildQualTable(qualDoc, qualR, qualA);
 
-  // Texto adicional con ranking de centros para slide 7
+  // Texto de ranking de centros
   const centerRankingText = centerAnalysis.length > 0
     ? '\n\nRANKING DE CENTROS POR PUNTAJE:\n' +
       centerAnalysis.slice(0, 6).map((c, i) =>
@@ -507,75 +594,72 @@ export function buildTemplateData(metrics, filters, narrative) {
       ).join('\n')
     : '';
 
-  // Texto completo para OBSERVACIONES DE LA EVALUACIÓN (slides 8-10)
-  const hAll = h.join(' | ') || 'Sin datos suficientes';
-  const rAll = r.join(' | ') || 'Sin datos suficientes';
-  const aAll = a.join(' | ') || 'Sin datos suficientes';
+  // Texto supervisor para slides 8-10 (con datos reales)
+  const obsCoord = buildSupervisorObservations('COORDINADOR', sections, qualByRole.COORDINADOR, globalScore, completionPct, metrics.kpis.total);
+  const obsEst = buildSupervisorObservations('ESTUDIANTES', sections, qualByRole.ESTUDIANTES, globalScore, completionPct, metrics.kpis.total);
+  const obsDoc = buildSupervisorObservations('DOCENTES', sections, qualByRole.DOCENTES, globalScore, completionPct, metrics.kpis.total);
 
-  const observacionesText = (titulo, fortalezas, dificultades, sugerencias) => [
-    `OBSERVACIONES DE LA EVALUACIÓN — ${titulo}`,
-    '',
-    'FORTALEZAS:',
-    fortalezas,
-    '',
-    'DIFICULTADES:',
-    dificultades,
-    '',
-    'SUGERENCIAS:',
-    sugerencias
-  ].join('\n');
+  // Tabla de competencias (slide 5) - basada en secciones reales
+  const competenciasTable = sections.length > 0
+    ? [
+        ['COMPETENCIA DE LA PRACTICA FORMATIVA', 'RESULTADO DE APRENDIZAJE'],
+        ...sections.map((s) => [
+          `${s.titulo}`,
+          s.score !== null
+            ? `${s.score.toFixed(1).replace('.', ',')} / 5,0 — ${s.interpretacion}`
+            : 'Sin datos suficientes para evaluacion'
+        ])
+      ]
+    : [
+        ['COMPETENCIA DE LA PRACTICA FORMATIVA', 'RESULTADO DE APRENDIZAJE'],
+        ['Integracion teoria-practica', `Promedio: ${globalScore.toFixed(1).replace('.', ',')} / 5,0`],
+        ['Desarrollo de competencias profesionales', `Completadas: ${completed} de ${metrics.kpis.total}`],
+        ['Trabajo en equipo interprofesional', `Centros: ${metrics.kpis.centers}`],
+        ['Calidad y seguridad en la atencion', `Programas: ${metrics.kpis.programs}`]
+      ];
 
   return [
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 2 — PORTADA / TÍTULO
-    // ════════════════════════════════════════════════════════════════
-    // replaceText ANTES que byContent para no contaminar búsquedas
+    // ═══ SLIDE 2 — PORTADA ═══
     { slide: 2, type: 'replaceText', search: '2025', value: String(year) },
-    { slide: 2, type: 'byContent', search: 'INFORME', value: `INFORME DE AUTOEVALUACIÓN\nPRÁCTICAS FORMATIVAS ${year}` },
+    { slide: 2, type: 'byContent', search: 'INFORME', value: `INFORME DE AUTOEVALUACION\nPRACTICAS FORMATIVAS ${year}` },
     { slide: 2, type: 'byContent', search: 'CLINICA', value: `${centerName} - ${programName}\nCampus: ${filters.campus} | Nivel: ${filters.level}` },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 3 — ESTUDIANTES
-    // ════════════════════════════════════════════════════════════════
-    // Nota: el template tiene un SmartArt "2 Diagrama" que no se puede manipular
-    // desde el XML (usa namespace dgm:). Solo reemplazamos textos en shapes regulares.
+    // ═══ SLIDE 3 — ESTUDIANTES ═══
     { slide: 3, type: 'byContent', search: 'ESTUDIANTES', value: [
-      `ESTUDIANTES`,
+      'ESTUDIANTES',
       `Evaluaciones: ${metrics.kpis.total} | Completadas: ${completed} (${completionPct.toFixed(1)}%)`,
       `Centro: ${centerName} | Programa: ${programName}`
     ].join('\n') },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 4 — TABLA DATOS GENERALES
-    // ════════════════════════════════════════════════════════════════
+    // ═══ SLIDE 4 — TABLA DATOS GENERALES ═══
     {
       slide: 4, type: 'table', name: 'Tabla 4',
       data: [
-        ['Docentes a cargo', 'N° total de estudiantes', 'Total evaluaciones', 'Periodo'],
-        [String(coordRole?.total || '—'), String(estRole?.total || '—'), String(metrics.kpis.total), metrics.dateRange || 'Actual'],
-        ['Promedio global', `${globalScore.toFixed(2)} / 5.0`, `Cumplimiento: ${completionPct.toFixed(1)}%`, `${metrics.kpis.centers} centros`]
+        ['Docentes a cargo', 'N total de estudiantes', 'Coordinadores', 'Total evaluaciones'],
+        [
+          String(docRole?.total || estRole?.total || '—'),
+          String(estRole?.total || '—'),
+          String(coordRole?.total || '—'),
+          String(metrics.kpis.total)
+        ],
+        [
+          `Prom: ${docenteScore.toFixed(1).replace('.', ',')}`,
+          `Prom: ${estudianteScore.toFixed(1).replace('.', ',')}`,
+          `Prom: ${coordScore.toFixed(1).replace('.', ',')}`,
+          `${metrics.dateRange || 'Actual'}`
+        ]
       ]
     },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 5 — COMPETENCIAS / RESULTADOS DE APRENDIZAJE
-    // ════════════════════════════════════════════════════════════════
+    // ═══ SLIDE 5 — COMPETENCIAS / RESULTADOS DE APRENDIZAJE (datos reales) ═══
     {
       slide: 5, type: 'table', name: 'Tabla 4',
-      data: [
-        ['COMPETENCIA DE LA PRÁCTICA FORMATIVA', 'RESULTADO DE APRENDIZAJE'],
-        [`Integración teoría-práctica (Promedio: ${globalScore.toFixed(2)})`, `Cumplimiento: ${completionPct.toFixed(1)}%`],
-        [`Desarrollo de competencias profesionales`, `Completadas: ${completed} de ${metrics.kpis.total}`],
-        [`Trabajo en equipo interprofesional`, `Centros participantes: ${metrics.kpis.centers}`],
-        [`Calidad y seguridad en la atención`, `Programas: ${metrics.kpis.programs}`]
-      ]
+      data: competenciasTable
     },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 6 — MODELO DE AUTOEVALUACIÓN (Acuerdo 00273)
-    // ════════════════════════════════════════════════════════════════
+    // ═══ SLIDE 6 — MODELO DE AUTOEVALUACION ═══
     { slide: 6, type: 'byContent', search: 'MODELO', value: [
-      'MODELO DE AUTOEVALUACIÓN DE LA RELACIÓN DOCENCIA SERVICIO',
+      'MODELO DE AUTOEVALUACION DE LA RELACION DOCENCIA SERVICIO',
       '(ACUERDO 00273 DE 2021)',
       '(MERDS)',
       '',
@@ -585,17 +669,12 @@ export function buildTemplateData(metrics, filters, narrative) {
       `Cobertura: ${completionPct.toFixed(1)}%`
     ].join('\n') },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 7 — EVALUACIÓN RDS (Título 1 + Marcador de contenido 2 texto)
-    // NOTA: El template NO tiene tabla en slide 7. Usa "Marcador de contenido 2"
-    // que es un cuadro de texto con placeholder "Colocar tabla y grafico".
-    // ════════════════════════════════════════════════════════════════
-    { slide: 7, type: 'byContent', search: 'EVALUACIÓN', value: [
-      'EVALUACIÓN DE LA RELACIÓN DOCENCIA SERVICIO',
+    // ═══ SLIDE 7 — EVALUACION RDS ═══
+    { slide: 7, type: 'byContent', search: 'EVALUACI'+'ÓN', value: [
+      'EVALUACION DE LA RELACION DOCENCIA SERVICIO',
       `${centerName} — ${programName}`,
       `Periodo: ${metrics.dateRange || year}`
     ].join('\n') },
-    // Reemplazar el placeholder "Colocar tabla y grafico" con los datos
     { slide: 7, type: 'byContent', search: 'Colocar tabla', value: [
       `RESULTADOS GLOBALES — ${centerName}`,
       `Promedio General: ${globalScore.toFixed(1).replace('.', ',')} / 5,0`,
@@ -608,40 +687,37 @@ export function buildTemplateData(metrics, filters, narrative) {
       `Menor centro: ${metrics.lowCenter?.name || 'N/A'} (${metrics.lowCenter?.score.toFixed(1).replace('.', ',') || '—'})`,
       `Brecha: ${(topCenter && metrics.lowCenter) ? (topCenter.score - metrics.lowCenter.score).toFixed(1).replace('.', ',') : '—'}`,
       '',
-      `Distribución: 0-2: ${metrics.distribution[0].count} | 2-3: ${metrics.distribution[1].count} | 3-4: ${metrics.distribution[2].count} | 4-5: ${metrics.distribution[3].count}`,
-      centerRankingText
+      `Distribucion: 0-2: ${metrics.distribution[0].count} | 2-3: ${metrics.distribution[1].count} | 3-4: ${metrics.distribution[2].count} | 4-5: ${metrics.distribution[3].count}`,
+      centerRankingText,
+      '',
+      '--- PUNTAJES POR SECCION DEL INSTRUMENTO ---',
+      ...sections.filter(s => s.score !== null).map(s =>
+        `${s.titulo}: ${s.score.toFixed(1).replace('.', ',')} (${s.interpretacion})`
+      )
     ].join('\n') },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 8 — COORDINADOR: Observaciones
-    // ════════════════════════════════════════════════════════════════
+    // ═══ SLIDE 8 — COORDINADOR ═══
     { slide: 8, type: 'replaceText', search: 'Coordinador', value: 'Coordinador' },
-    { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE', value: observacionesText('COORDINADOR', hAll, rAll, aAll) },
+    { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE', value: obsCoord },
     { slide: 8, type: 'table', name: 'Marcador de contenido 2', data: qualTableCoord },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 9 — ESTUDIANTES: Observaciones
-    // ════════════════════════════════════════════════════════════════
-    { slide: 9, type: 'byContent', search: 'Estudiantes', value: 'Estudiantes al escenario de práctica' },
-    { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: observacionesText('ESTUDIANTES', hAll, rAll, aAll) },
+    // ═══ SLIDE 9 — ESTUDIANTES ═══
+    { slide: 9, type: 'byContent', search: 'Estudiantes', value: 'Estudiantes al escenario de practica' },
+    { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACI'+'ÓN', value: obsEst },
     { slide: 9, type: 'table', name: 'Marcador de contenido 2', data: qualTableEst },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 10 — DOCENTES: Observaciones
-    // ════════════════════════════════════════════════════════════════
-    { slide: 10, type: 'byContent', search: 'Docentes', value: 'Docentes al escenario de práctica' },
-    { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: observacionesText('DOCENTES', hAll, rAll, aAll) },
+    // ═══ SLIDE 10 — DOCENTES ═══
+    { slide: 10, type: 'byContent', search: 'Docentes', value: 'Docentes al escenario de practica' },
+    { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACI'+'ÓN', value: obsDoc },
     { slide: 10, type: 'table', name: 'Marcador de contenido 2', data: qualTableDoc },
 
-    // ════════════════════════════════════════════════════════════════
-    // SLIDE 11 — OPORTUNIDADES DE MEJORA
-    // ════════════════════════════════════════════════════════════════
+    // ═══ SLIDE 11 — OPORTUNIDADES DE MEJORA ═══
     { slide: 11, type: 'byContent', search: 'OPORTUNIDADES', value: [
       'OPORTUNIDADES DE MEJORA',
       '',
       ...(a.length > 0
         ? a.map((item, i) => `${i + 1}. ${item}`)
-        : ['No se generaron oportunidades de mejora automáticas.']),
+        : ['No se generaron oportunidades de mejora automaticas.']),
       '',
       `Generado por Komet Analytics | ${new Date().toLocaleDateString('es-CO')}`
     ].join('\n') }

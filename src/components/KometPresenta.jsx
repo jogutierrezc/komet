@@ -304,7 +304,7 @@ export default function KometPresenta() {
       const engine = new PptxTemplateEngine();
       await engine.load(templateUrl);
 
-      const operations = buildTemplateData(metrics, filters, aiNarrative || fallbackNarrative);
+      const operations = buildTemplateData(metrics, filters, aiNarrative || fallbackNarrative, filteredRows);
 
       console.log(`[Komet Presenta] Aplicando ${operations.length} operaciones a la plantilla...`);
 
