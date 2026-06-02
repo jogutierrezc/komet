@@ -96,6 +96,17 @@ export function shortList(items = [], max = 5) {
 }
 
 /**
+ * Normaliza un nombre de rol (inglés/español) a un nombre estándar en español.
+ */
+export function normalizeRoleName(role) {
+  const lower = String(role || '').toLowerCase().trim();
+  if (lower.includes('est')) return 'Estudiantes';
+  if (lower.includes('doc') || lower.includes('prof') || lower.includes('teache')) return 'Docentes';
+  if (lower.includes('coord') || lower.includes('admin')) return 'Coordinadores';
+  return role;
+}
+
+/**
  * Calcula el análisis detallado por centro de práctica con desglose por rol.
  * Retorna un mapa: centerName → { scores, counts, roleBreakdown, programs, comparison }
  */
@@ -128,9 +139,10 @@ export function calculateCenterAnalysis(rows = []) {
     // Conteo por rol
     entry.roles[role] = (entry.roles[role] || 0) + 1;
 
-    // Puntajes por rol
-    if (!entry.byRole[role]) entry.byRole[role] = [];
-    if (typeof score === 'number') entry.byRole[role].push(score);
+    // Puntajes por rol (normalizados al español)
+    const normRole = normalizeRoleName(role);
+    if (!entry.byRole[normRole]) entry.byRole[normRole] = [];
+    if (typeof score === 'number') entry.byRole[normRole].push(score);
 
     // Programas asociados
     if (program && program !== 'Sin programa') {
