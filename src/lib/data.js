@@ -190,6 +190,13 @@ export async function runOpenRouterPrompt({
     });
 
     if (response.status === 404) {
+      // Si el proxy no está disponible pero tenemos VITE_OPENROUTER_API_KEY
+      // (bakeada en el bundle por Vite), podemos caer a llamada directa
+      if (trimmedKey) {
+        console.warn('[OpenRouter] Proxy 404, fallback a llamada directa desde el browser');
+        return callDirectOpenRouter({ trimmedKey, model: candidateModel, requestTemperature, messages, freeModels });
+      }
+
       const error = new Error(
         'El endpoint /api/openrouter-chat no está disponible en Vercel. ' +
         'Haz redeploy del proyecto para que la API Serverless Function se active. ' +
