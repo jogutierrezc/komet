@@ -3,10 +3,14 @@ import { supabase } from './supabaseClient';
 const SYSTEM_SETTINGS_KEY = 'komet_system';
 
 export const OPENROUTER_FREE_MODELS = [
-  'google/gemma-2-9b-it:free',
+  // Modelos gratuitos actuales en OpenRouter (ordenados por confiabilidad)
+  'google/gemini-2.0-flash-exp:free',
+  'meta-llama/llama-3.2-3b-instruct:free',
   'qwen/qwen-2.5-7b-instruct:free',
   'mistralai/mistral-7b-instruct:free',
   'deepseek/deepseek-r1-distill-qwen-7b:free',
+  'microsoft/phi-3-mini-4k-instruct:free',
+  'google/gemma-2-9b-it:free',
   'meta-llama/llama-3.3-8b-instruct:free'
 ];
 
@@ -238,47 +242,56 @@ export async function runOpenRouterPrompt({
     throw error;
   }
 
-  // Prefer OpenRouter auto-routing constrained to free models.
-  const autoResponse = await callViaProxy({
-    trimmedKey,
-    candidateModel: 'openrouter/auto',
-    freeModels: candidateModels,
-    requestTemperature,
-    messages,
-    isAuto: true
-  });
+  // Helper: intenta un modelo y captura excepciones para seguir al siguiente
+  async function tryModel(modelToTry, isAuto = false) {
+    try {
+      const response = await callViaProxy({
+        trimmedKey,
+        candidateModel: modelToTry,
+        freeModels: candidateModels,
+        requestTemperature,
+        messages,
+        isAuto
+      });
 
-  if (autoResponse.ok) {
-    const autoPayload = await autoResponse.json();
-    return autoPayload?.choices?.[0]?.message?.content || '';
-  }
+      if (response.ok) {
+        const payload = await response.json();
+        const content = payload?.choices?.[0]?.message?.content || '';
+        if (content) return { ok: true, content };
+        return { ok: false, error: 'respuesta_vacia_del_modelo', skip: true };
+      }
 
-  const autoErrorMessage = await extractErrorBody(autoResponse);
-  lastErrorMessage = autoErrorMessage || lastErrorMessage;
-
-  for (const candidateModel of candidateModels) {
-    const response = await callViaProxy({
-      trimmedKey,
-      candidateModel,
-      requestTemperature,
-      messages,
-      isAuto: false
-    });
-
-    if (response.ok) {
-      const payload = await response.json();
-      return payload?.choices?.[0]?.message?.content || '';
+      const errorMessage = await extractErrorBody(response).catch(() => 'unknown_error');
+      const isNoEndpoint = response.status === 404 && String(errorMessage).toLowerCase().includes('no endpoints found');
+      return { ok: false, error: errorMessage, skip: isNoEndpoint };
+    } catch (err) {
+      const isNoEndpoint = String(err?.message || '').toLowerCase().includes('no endpoints found');
+      return { ok: false, error: err?.message || 'error', skip: isNoEndpoint };
     }
-
-    const errorMessage = await extractErrorBody(response);
-    lastErrorMessage = errorMessage || lastErrorMessage;
-
-    const noEndpointError = response.status === 404 && String(errorMessage).toLowerCase().includes('no endpoints found');
-    if (!noEndpointError) break;
   }
 
-  const requestError = new Error(lastErrorMessage || 'openrouter_request_failed');
-  requestError.code = 'openrouter_request_failed';
+  // 1. Intentar auto-routing con todos los modelos gratuitos como restricción
+  {
+    const result = await tryModel('openrouter/auto', true);
+    if (result.ok) return result.content;
+    if (result.error) lastErrorMessage = result.error;
+    console.warn('[OpenRouter] auto-routing falló:', result.error);
+  }
+
+  // 2. Probar cada modelo candidato individualmente
+  for (const candidateModel of candidateModels) {
+    const result = await tryModel(candidateModel, false);
+    if (result.ok) return result.content;
+    if (result.error) lastErrorMessage = result.error;
+    console.warn(`[OpenRouter] ${candidateModel} falló:`, result.error?.slice(0, 120));
+    // Si NO es un error de "no endpoints", no seguimos probando
+    if (!result.skip) break;
+  }
+
+  const requestError = new Error(
+    'Ningún modelo gratuito de OpenRouter respondió. Último error: ' + (lastErrorMessage?.slice(0, 200) || 'desconocido')
+  );
+  requestError.code = 'openrouter_all_models_failed';
   throw requestError;
 }
 
