@@ -957,6 +957,46 @@ function getLatestResponseAnswers(item) {
   return sorted[0]?.answers || null;
 }
 
+async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
+  const uniqueEvaluationIds = Array.from(new Set(evaluationIds.filter(Boolean)));
+  if (!uniqueEvaluationIds.length) return {};
+
+  const fetchChunk = async (chunk, chunkSize = 10) => {
+    const { data, error } = await supabase
+      .from('evaluation_responses')
+      .select('evaluation_id,answers,submitted_at')
+      .in('evaluation_id', chunk);
+
+    if (!error) return data || [];
+
+    if ((error?.status === 400 || error?.status === 414) && chunkSize > 1) {
+      const smallerChunkSize = Math.max(1, Math.floor(chunkSize / 2));
+      const rows = [];
+      for (let j = 0; j < chunk.length; j += smallerChunkSize) {
+        rows.push(...(await fetchChunk(chunk.slice(j, j + smallerChunkSize), smallerChunkSize)));
+      }
+      return rows;
+    }
+
+    throw error;
+  };
+
+  const chunkSize = 10;
+  const responseRows = [];
+
+  for (let i = 0; i < uniqueEvaluationIds.length; i += chunkSize) {
+    const chunk = uniqueEvaluationIds.slice(i, i + chunkSize);
+    responseRows.push(...(await fetchChunk(chunk, chunkSize)));
+  }
+
+  return responseRows.reduce((acc, item) => {
+    if (!item?.evaluation_id) return acc;
+    acc[item.evaluation_id] = acc[item.evaluation_id] || [];
+    acc[item.evaluation_id].push(item);
+    return acc;
+  }, {});
+}
+
 function mapEvaluationItem(item) {
   const persistedAnswers = getLatestResponseAnswers(item);
   const effectiveAnswers = persistedAnswers || item?.preguntas || {};
@@ -1113,7 +1153,7 @@ function aggregateByKey(items, key, countKey = 'total') {
 
 export async function getEvaluationReportMetrics(filters = {}) {
   const { role, program, center } = filters;
-  const pageSize = 1000;
+  const pageSize = 200;
   let allRows = [];
   let page = 0;
 
@@ -1133,7 +1173,6 @@ export async function getEvaluationReportMetrics(filters = {}) {
         tipoPrograma,
         titulo,
         preguntas,
-        evaluation_responses(answers,submitted_at),
         survey:survey_id(title,questions,description,target_type),
         campus:campus_id(name),
         center:center_id(name),
@@ -1149,6 +1188,15 @@ export async function getEvaluationReportMetrics(filters = {}) {
     allRows = allRows.concat(data);
     if (data.length < pageSize) break;
     page += 1;
+  }
+
+  const evaluationIds = allRows.map((item) => item.id).filter(Boolean);
+  if (evaluationIds.length) {
+    const responseMap = await fetchEvaluationResponsesByEvaluationIds(evaluationIds);
+    allRows = allRows.map((item) => ({
+      ...item,
+      evaluation_responses: responseMap[item.id] || []
+    }));
   }
 
   const rows = (allRows || []).map(mapEvaluationItem);
@@ -1237,7 +1285,6 @@ export async function getEvaluationReports() {
       tipoPrograma,
       titulo,
       preguntas,
-      evaluation_responses(answers,submitted_at),
       survey:survey_id(title,questions,description,target_type),
       campus:campus_id(name),
       center:center_id(name),
@@ -1248,26 +1295,39 @@ export async function getEvaluationReports() {
 
   if (error) throw error;
 
-  return (data || []).map((item) => {
-    const target = item.dirigidoA || item.tipoPrograma || item.estado || 'Sin definir';
-    const program = item.student?.program || item.tutor?.specialty || item.tipoPrograma || '-';
-    const person = item.student?.full_name || item.tutor?.full_name || 'Evaluación';
-    const centerName = item.center?.name || item.center_id || 'Sin centro';
-    const campusName = item.campus?.name || item.campus_id || 'Sin campus';
-    const surveyTitle = item.survey?.title || item.titulo || 'Evaluación';
+  const evaluations = data || [];
+  const evaluationIds = evaluations.map((item) => item.id).filter(Boolean);
+  let evaluationResponsesMap = {};
+  if (evaluationIds.length) {
+    evaluationResponsesMap = await fetchEvaluationResponsesByEvaluationIds(evaluationIds);
+  }
+
+  return evaluations.map((item) => {
+    const evaluation = {
+      ...item,
+      evaluation_responses: evaluationResponsesMap[item.id] || []
+    };
+
+    const target = evaluation.dirigidoA || evaluation.tipoPrograma || evaluation.estado || 'Sin definir';
+    const program = evaluation.student?.program || evaluation.tutor?.specialty || evaluation.tipoPrograma || '-';
+    const person = evaluation.student?.full_name || evaluation.tutor?.full_name || evaluation.titulo || 'Evaluación';
+    const centerName = evaluation.center?.name || evaluation.center_id || 'Sin centro';
+    const campusName = evaluation.campus?.name || evaluation.campus_id || 'Sin campus';
+    const surveyTitle = evaluation.survey?.title || evaluation.titulo || 'Evaluación';
 
     return {
-      id: item.id,
-      status: item.status || 'Pendiente',
-      created_at: item.created_at,
-      completed_at: item.completed_at,
+      id: evaluation.id,
+      status: evaluation.status || 'Pendiente',
+      created_at: evaluation.created_at,
+      completed_at: evaluation.completed_at,
       target,
-      period: item.periodoCorte || 'No definido',
+      period: evaluation.periodoCorte || 'No definido',
       program,
       person,
       center: centerName,
       campus: campusName,
-      survey: surveyTitle
+      survey: surveyTitle,
+      evaluation_responses: evaluation.evaluation_responses
     };
   });
 }
