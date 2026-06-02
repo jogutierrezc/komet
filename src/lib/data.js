@@ -98,6 +98,8 @@ export async function runOpenRouterPrompt({
   prompt,
   temperature = 0.7
 }) {
+  const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+
   async function extractErrorBody(response) {
     try {
       const payload = await response.json();
@@ -106,19 +108,15 @@ export async function runOpenRouterPrompt({
     } catch {
       return await response.text();
     }
-  }    async function fetchDynamicFreeModels(trimmedKey) {
+  }
+
+  async function fetchDynamicFreeModels(trimmedKey) {
     if (!trimmedKey) return [];
     try {
       const modelsResponse = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: {
-          Authorization: `Bearer ${trimmedKey}`
-        }
+        headers: { Authorization: `Bearer ${trimmedKey}` }
       });
-
-      if (!modelsResponse.ok) {
-        return [];
-      }
-
+      if (!modelsResponse.ok) return [];
       const payload = await modelsResponse.json();
       const ids = Array.isArray(payload?.data) ? payload.data.map((item) => item?.id).filter(Boolean) : [];
       return ids.filter((id) => String(id).includes(':free'));
@@ -128,31 +126,27 @@ export async function runOpenRouterPrompt({
   }
 
   /**
-   * Llama directamente a OpenRouter sin pasar por el proxy /api/openrouter-chat.
-   * Usado como fallback cuando el servidor de desarrollo no sirve el endpoint API.
+   * Llama a OpenRouter directamente desde el browser.
+   * Solo se usa en entorno de desarrollo (Vite) con VITE_OPENROUTER_API_KEY.
    */
   async function callDirectOpenRouter({ trimmedKey, model, requestTemperature, messages, freeModels }) {
     if (!trimmedKey) {
-      return {
-        ok: false,
-        status: 400,
-        json: async () => ({ error: { message: 'missing_openrouter_api_key - configura la API key en Sistema > Configuracion' } }),
-        text: async () => 'missing_openrouter_api_key'
-      };
+      const error = new Error(
+        isDev
+          ? 'No hay API key de OpenRouter. Crea un archivo .env con VITE_OPENROUTER_API_KEY=sk-or-v1-...'
+          : 'No hay API key de OpenRouter configurada. Ve a Sistema > Configuración e ingresa la llave.'
+      );
+      error.code = 'openrouter_missing_api_key';
+      throw error;
     }
 
     const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
-    const body = {
-      model,
-      temperature: requestTemperature,
-      messages
-    };
-    // Para auto-routing, incluir la lista de modelos gratuitos
+    const body = { model, temperature: requestTemperature, messages };
     if (model === 'openrouter/auto' && freeModels?.length) {
       body.models = freeModels;
     }
 
-    return fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -162,54 +156,53 @@ export async function runOpenRouterPrompt({
       },
       body: JSON.stringify(body)
     });
-  }
 
-  async function requestOpenRouterCompletion({ trimmedKey, candidateModel, requestTemperature, messages }) {
-    const proxyResponse = await fetch('/api/openrouter-chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        apiKey: trimmedKey,
-        model: candidateModel,
-        temperature: requestTemperature,
-        messages
-      })
-    });
-
-    // Vite dev server may return HTML 404 if /api is not served; fallback to direct OpenRouter.
-    if (proxyResponse.status === 404) {
-      return callDirectOpenRouter({ trimmedKey, model: candidateModel, requestTemperature, messages });
+    if (!response.ok) {
+      const errorBody = await extractErrorBody(response);
+      const error = new Error(`OpenRouter respondió con ${response.status}: ${errorBody}`);
+      error.code = 'openrouter_direct_call_failed';
+      error.status = response.status;
+      throw error;
     }
 
-    return proxyResponse;
+    return response;
   }
 
-  async function requestOpenRouterAutoCompletion({ trimmedKey, freeModels, requestTemperature, messages }) {
-    const proxyResponse = await fetch('/api/openrouter-chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        apiKey: trimmedKey || undefined,
-        model: 'openrouter/auto',
-        models: freeModels,
-        temperature: requestTemperature,
-        messages
-      })
-    });
-
-    // Vite dev server may return HTML 404 if /api is not served; fallback to direct OpenRouter.
-    if (proxyResponse.status === 404) {
-      return callDirectOpenRouter({ trimmedKey, model: 'openrouter/auto', requestTemperature, messages, freeModels });
+  /**
+   * Intenta la llamada primero via el proxy de Vercel /api/openrouter-chat.
+   * En dev (Vite) salta directo a llamada directa.
+   * En produccion, si el proxy falla con 404, lanza error claro.
+   */
+  async function callViaProxy({ trimmedKey, candidateModel, requestTemperature, messages, freeModels, isAuto }) {
+    if (isDev) {
+      // En dev no existe el proxy de Vercel, llamamos directo
+      return callDirectOpenRouter({ trimmedKey, model: candidateModel, requestTemperature, messages, freeModels });
     }
 
-    return proxyResponse;
+    const body = isAuto
+      ? { apiKey: trimmedKey || undefined, model: 'openrouter/auto', models: freeModels, temperature: requestTemperature, messages }
+      : { apiKey: trimmedKey, model: candidateModel, temperature: requestTemperature, messages };
+
+    const response = await fetch('/api/openrouter-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (response.status === 404) {
+      const error = new Error(
+        'El endpoint /api/openrouter-chat no está disponible en Vercel. ' +
+        'Haz redeploy del proyecto para que la API Serverless Function se active. ' +
+        'Si el problema persiste, configura VITE_OPENROUTER_API_KEY en las variables de entorno de Vercel.'
+      );
+      error.code = 'openrouter_proxy_not_found';
+      error.status = 404;
+      throw error;
+    }
+
+    return response;
   }
 
-  // La API key puede venir de: 1) parámetro apiKey (desde system_settings), 2) variable de entorno VITE_OPENROUTER_API_KEY
   const envKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY;
   const trimmedKey = (apiKey || envKey || '').trim();
   const dynamicFreeModels = await fetchDynamicFreeModels(trimmedKey);
@@ -218,14 +211,8 @@ export async function runOpenRouterPrompt({
   let lastErrorMessage = 'openrouter_request_failed';
   const requestTemperature = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.7;
   const messages = [
-    {
-      role: 'system',
-      content: systemPrompt || DEFAULT_SYSTEM_SETTINGS.openrouter_system_prompt
-    },
-    {
-      role: 'user',
-      content: prompt || 'Responde: conexión OpenRouter verificada para Komet.'
-    }
+    { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_SETTINGS.openrouter_system_prompt },
+    { role: 'user', content: prompt || 'Responde: conexión OpenRouter verificada para Komet.' }
   ];
 
   if (!candidateModels.length) {
@@ -234,12 +221,24 @@ export async function runOpenRouterPrompt({
     throw authError;
   }
 
+  if (!trimmedKey) {
+    const error = new Error(
+      isDev
+        ? 'OpenRouter deshabilitado: crea un archivo .env con VITE_OPENROUTER_API_KEY=sk-or-v1-...'
+        : 'OpenRouter deshabilitado: configura la API key en Sistema > Configuración o agrega VITE_OPENROUTER_API_KEY en las variables de entorno de Vercel.'
+    );
+    error.code = 'openrouter_missing_api_key';
+    throw error;
+  }
+
   // Prefer OpenRouter auto-routing constrained to free models.
-  const autoResponse = await requestOpenRouterAutoCompletion({
+  const autoResponse = await callViaProxy({
     trimmedKey,
+    candidateModel: 'openrouter/auto',
     freeModels: candidateModels,
     requestTemperature,
-    messages
+    messages,
+    isAuto: true
   });
 
   if (autoResponse.ok) {
@@ -251,11 +250,12 @@ export async function runOpenRouterPrompt({
   lastErrorMessage = autoErrorMessage || lastErrorMessage;
 
   for (const candidateModel of candidateModels) {
-    const response = await requestOpenRouterCompletion({
+    const response = await callViaProxy({
       trimmedKey,
       candidateModel,
       requestTemperature,
-      messages
+      messages,
+      isAuto: false
     });
 
     if (response.ok) {
@@ -267,9 +267,7 @@ export async function runOpenRouterPrompt({
     lastErrorMessage = errorMessage || lastErrorMessage;
 
     const noEndpointError = response.status === 404 && String(errorMessage).toLowerCase().includes('no endpoints found');
-    if (!noEndpointError) {
-      break;
-    }
+    if (!noEndpointError) break;
   }
 
   const requestError = new Error(lastErrorMessage || 'openrouter_request_failed');
@@ -1152,7 +1150,7 @@ function aggregateByKey(items, key, countKey = 'total') {
 }
 
 export async function getEvaluationReportMetrics(filters = {}) {
-  const { role, program, center } = filters;
+  const { role, program, center, campusId, centerId } = filters;
   const pageSize = 200;
   let allRows = [];
   let page = 0;
@@ -1160,7 +1158,7 @@ export async function getEvaluationReportMetrics(filters = {}) {
   while (true) {
     const from = page * pageSize;
     const to = from + pageSize - 1;
-    const { data, error } = await supabase
+    let query = supabase
       .from('evaluations')
       .select(`
         id,
@@ -1178,7 +1176,17 @@ export async function getEvaluationReportMetrics(filters = {}) {
         center:center_id(name),
         student:student_id(full_name,program),
         tutor:tutor_id(full_name,specialty)
-      `)
+      `);
+
+    // Filtros server-side — evitan traer datos innecesarios
+    if (campusId) {
+      query = query.eq('campus_id', campusId);
+    }
+    if (centerId) {
+      query = query.eq('center_id', centerId);
+    }
+
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .range(from, to);
 

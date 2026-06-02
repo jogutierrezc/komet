@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart, FileUp } from 'lucide-react';
 import {
+  getCampuses,
+  getConvenios,
   getEvaluationReportMetrics,
   getSystemSettings,
   runOpenRouterPrompt,
@@ -27,35 +29,74 @@ export default function KometPresenta() {
   const [selectedCenter, setSelectedCenter] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
 
+  // Listas de opciones para los dropdowns — cargadas desde Supabase al montar
+  const [campusesMeta, setCampusesMeta] = useState([]);
+  const [centersMeta, setCentersMeta] = useState([]);
+
+  useEffect(() => {
+    Promise.all([getCampuses(), getConvenios()])
+      .then(([campuses, convenios]) => {
+        setCampusesMeta(campuses || []);
+        setCentersMeta(convenios || []);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Mapa nombre → id para traducir el filtro textual al UUID de Supabase
+  const campusIdMap = useMemo(() => {
+    const map = new Map();
+    campusesMeta.forEach((c) => map.set(c.name, c.id));
+    return map;
+  }, [campusesMeta]);
+
+  const centerIdMap = useMemo(() => {
+    const map = new Map();
+    centersMeta.forEach((c) => map.set(c.name, c.id));
+    return map;
+  }, [centersMeta]);
+
+  // Fetch data con filtros server-side cuando cambia campus o centro
   useEffect(() => {
     setLoading(true);
-    getEvaluationReportMetrics()
+    setError('');
+
+    const campusId = campusIdMap.get(selectedCampus) || null;
+    const centerId = centerIdMap.get(selectedCenter) || null;
+
+    getEvaluationReportMetrics({ campusId, centerId })
       .then((result) => setRows(result?.rows || []))
       .catch(() => {
         setRows([]);
         setError('No se pudo cargar información de evaluaciones.');
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedCampus, selectedCenter, campusIdMap, centerIdMap]);
 
+  // Opciones de dropdown derivadas de metadatos + datos
   const campusOptions = useMemo(() => {
-    return ['Todos', ...new Set(rows.map((row) => norm(row.campus)).filter(Boolean))];
-  }, [rows]);
+    return ['Todos', ...campusesMeta.map((c) => c.name).filter(Boolean)];
+  }, [campusesMeta]);
+
+  const centerOptions = useMemo(() => {
+    if (selectedCampus === 'Todos') {
+      return ['Todos', ...centersMeta.map((c) => c.name).filter(Boolean)];
+    }
+    return ['Todos', ...centersMeta
+      .filter((c) => c.campus_id === campusIdMap.get(selectedCampus))
+      .map((c) => c.name)
+      .filter(Boolean)
+    ];
+  }, [centersMeta, selectedCampus, campusIdMap]);
 
   const baseFiltered = useMemo(() => {
     return rows.filter((row) => {
-      if (selectedCampus !== 'Todos' && norm(row.campus) !== selectedCampus) return false;
       if (selectedLevel !== 'Todos') {
         const level = resolveLevel(row);
         if (level && level !== selectedLevel) return false;
       }
       return true;
     });
-  }, [rows, selectedCampus, selectedLevel]);
-
-  const centerOptions = useMemo(() => {
-    return ['Todos', ...new Set(baseFiltered.map((row) => norm(row.center || 'Sin sitio')).filter(Boolean))];
-  }, [baseFiltered]);
+  }, [rows, selectedLevel]);
 
   const programOptions = useMemo(() => {
     const source = selectedCenter === 'Todos'
@@ -64,10 +105,6 @@ export default function KometPresenta() {
     const programs = [...new Set(source.map((row) => resolveProgram(row)).filter((value) => value && value !== 'Sin programa'))];
     return ['Todos', ...programs];
   }, [baseFiltered, selectedCenter]);
-
-  useEffect(() => {
-    if (!centerOptions.includes(selectedCenter)) setSelectedCenter('Todos');
-  }, [centerOptions, selectedCenter]);
 
   useEffect(() => {
     if (!programOptions.includes(selectedProgram)) setSelectedProgram('Todos');
@@ -335,7 +372,10 @@ export default function KometPresenta() {
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Segmentación de la Muestra</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCampus} onChange={(e) => setSelectedCampus(e.target.value)}>
+          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCampus} onChange={(e) => {
+            setSelectedCampus(e.target.value);
+            setSelectedCenter('Todos');
+          }}>
             {campusOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
           </select>
           <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)}>
