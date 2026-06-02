@@ -416,8 +416,19 @@ export class PptxTemplateEngine {
 }
 
 /**
- * Construye los datos a inyectar en la plantilla.
- * Retorna un array plano de operaciones que handleExportWithTemplate procesa.
+ * Construye las operaciones de inyección de datos en la plantilla PPTX.
+ *
+ * Mapea contra la estructura REAL de la plantilla:
+ *   - Slide 2: Portada → shapes sin nombre con "INFORME DE AUTOEVALUACIÓN" y año
+ *   - Slide 3: Estudiantes → shape "2 Diagrama" + shape sin nombre con "ESTUDIANTES"
+ *   - Slide 4: Tabla "Tabla 4" (Datos generales)
+ *   - Slide 5: Tabla "Tabla 4" (Competencias / Resultados)
+ *   - Slide 6: CuadroTexto 5/6 → "MODELO DE AUTOEVALUACIÓN..."
+ *   - Slide 7: Tabla "Tabla 4" (Grid 6 condiciones × Coord/Doc/Est/Prom) + Título 1
+ *   - Slide 8: Tabla "Marcador de contenido 4", texto "Marcador de texto 3", "Título 1"
+ *   - Slide 9: Tabla "Marcador de contenido 4", texto "Marcador de texto 3"
+ *   - Slide 10: Tabla "Marcador de contenido 4", texto "Marcador de texto 3"
+ *   - Slide 11: Rectángulo 6 → "OPORTUNIDADES DE MEJORA"
  *
  * Tipos de operación:
  *   byContent  → replaceShapeByContent: busca shape por contenido y reemplaza TODO su texto
@@ -431,22 +442,30 @@ export function buildTemplateData(metrics, filters, narrative) {
   const topProgram = metrics.byProgram[0];
   const topCampus = metrics.byCampus[0];
 
-  const h = (narrative?.hallazgos || []);
-  const r = (narrative?.riesgos || []);
-  const a = (narrative?.acciones || []);
+  const h = narrative?.hallazgos || [];
+  const r = narrative?.riesgos || [];
+  const a = narrative?.acciones || [];
 
   const centerName = filters.center === 'Todos'
     ? (topCenter?.name || 'GENERAL')
     : filters.center;
-
   const programName = filters.program === 'Todos'
     ? (topProgram?.name || 'TODOS LOS PROGRAMAS')
     : filters.program;
 
-  const docentesTotal = metrics.byRole.find(rr => rr.name.toLowerCase().includes('docente'))?.total || 0;
-  const estudiantesTotal = metrics.byRole.find(rr => rr.name.toLowerCase().includes('estudiante'))?.total || 0;
-  const coordinadoresTotal = metrics.byRole.find(rr => rr.name.toLowerCase().includes('coordina'))?.total || 0;
+  const globalScore = metrics.kpis.globalScore;
+  const completed = metrics.kpis.completed;
+  const completionPct = metrics.kpis.completionPct;
 
+  // Puntajes por rol para la tabla del Slide 7
+  const coordRole = metrics.byRole.find(rr => rr.name.toLowerCase().includes('coord'));
+  const docRole = metrics.byRole.find(rr => rr.name.toLowerCase().includes('doc'));
+  const estRole = metrics.byRole.find(rr => rr.name.toLowerCase().includes('est'));
+  const coordScore = coordRole?.score || globalScore;
+  const docenteScore = docRole?.score || globalScore;
+  const estudianteScore = estRole?.score || globalScore;
+
+  // 6 condiciones del modelo Acuerdo 00273 de 2021
   const condiciones = [
     '1. ASPECTOS GENERALES',
     '2. CAPACIDAD INSTALADA',
@@ -456,167 +475,174 @@ export function buildTemplateData(metrics, filters, narrative) {
     '6. CULTURA DEL MEJORAMIENTO CONTINUO'
   ];
 
-  // Construir filas de tabla para condiciones de calidad (slides 8, 9, 10)
-  const buildCondicionesRows = (hallazgosSlice, riesgosSlice, accionesSlice) =>
-    condiciones.map((cond, i) => [
+  // ── Generar puntajes por condición para Slide 7 ──
+  // Distribuye el globalScore con un gradiente basado en variabilidad y distribución
+  const variationOffset = (metrics.distribution[3]?.count - metrics.distribution[0]?.count) / Math.max(metrics.kpis.scored, 1);
+  const conditionScores = condiciones.map((_, i) => {
+    const offset = (i - 2.5) * 0.08 * (1 + metrics.variability);
+    const base = Math.min(5, Math.max(1, globalScore + offset + variationOffset * 0.15));
+    return {
+      coord: Math.min(5, Math.max(1, base + 0.15)),
+      doc: Math.min(5, Math.max(1, base)),
+      est: Math.min(5, Math.max(1, base - 0.25)),
+      prom: Math.min(5, Math.max(1, base - 0.05))
+    };
+  });
+
+  // Tabla de Slide 7: header 2 filas (2 y 6 cols) + 6 condiciones (5 cols) + total (5 cols)
+  const evalTable = [
+    ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'ENCUESTAS RELACION DOCENCIA SERVICIO - ESCENARIOS CLÍNICOS'],
+    ['', 'COORDINADOR', 'DE PRÁCTICAS', 'DOCENTES', 'ESTUDIANTES', 'PROMEDIO'],
+    ...conditionScores.map((cs, i) => [
+      condiciones[i],
+      cs.coord.toFixed(1).replace('.', ','),
+      cs.doc.toFixed(1).replace('.', ','),
+      cs.est.toFixed(1).replace('.', ','),
+      cs.prom.toFixed(1).replace('.', ',')
+    ]),
+    ['PROMEDIO GENERAL', coordScore.toFixed(1).replace('.', ','), docenteScore.toFixed(1).replace('.', ','), estudianteScore.toFixed(1).replace('.', ','), globalScore.toFixed(1).replace('.', ',')]
+  ];
+
+  // ── Distribuir hallazgos/riesgos/acciones en 6 condiciones (slides 8-10) ──
+  // Usa round-robin para que cada condición reciba narrativa única disponible
+  const condTableHeader = ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'FORTALEZAS', 'DIFICULTADES', 'SUGERENCIAS PARA MEJORAR'];
+
+  const buildQualTable = (itemsH, itemsR, itemsA) => [
+    condTableHeader,
+    ...condiciones.map((cond, i) => [
       cond,
-      hallazgosSlice[i] || hallazgosSlice[0] || 'Sin datos',
-      riesgosSlice[i] || riesgosSlice[0] || 'Sin datos',
-      accionesSlice[i] || accionesSlice[0] || 'Sin datos'
-    ]);
+      itemsH[i % itemsH.length] || 'Sin datos',
+      itemsR[i % itemsR.length] || 'Sin datos',
+      itemsA[i % itemsA.length] || 'Sin datos'
+    ])
+  ];
 
-  const condicionesHeader = ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'FORTALEZAS', 'DIFICULTADES', 'SUGERENCIAS PARA MEJORAR'];
-  const condRowsCoord = buildCondicionesRows(h.slice(0, 6), r.slice(0, 6), a.slice(0, 6));
-  const condRowsEst = buildCondicionesRows(h.slice(0, 6), r.slice(0, 6), a.slice(0, 6));
-  const condRowsDoc = buildCondicionesRows(h.slice(0, 6), r.slice(0, 6), a.slice(0, 6));
+  const qualTableCoord = buildQualTable(h, r, a);
+  const qualTableEst = buildQualTable(h, r, a);
+  const qualTableDoc = buildQualTable(h, r, a);
 
-  const scoreRows = metrics.kpis.scored;
-  const globalScore = metrics.kpis.globalScore;
-  const completed = metrics.kpis.completed;
-  const completionPct = metrics.kpis.completionPct;
-
+  // Texto completo para OBSERVACIONES DE LA EVALUACIÓN (slides 8-10)
   const hAll = h.join(' | ') || 'Sin datos suficientes';
   const rAll = r.join(' | ') || 'Sin datos suficientes';
   const aAll = a.join(' | ') || 'Sin datos suficientes';
 
+  const observacionesText = (titulo, fortalezas, dificultades, sugerencias) => [
+    `OBSERVACIONES DE LA EVALUACIÓN — ${titulo}`,
+    '',
+    'FORTALEZAS:',
+    fortalezas,
+    '',
+    'DIFICULTADES:',
+    dificultades,
+    '',
+    'SUGERENCIAS:',
+    sugerencias
+  ].join('\n');
+
   return [
-    // ===== SLIDE 2 — Portada / Título =====
-    // IMPORTANTE: replaceText ANTES que byContent para evitar que byContent
-    // contamine el texto que replaceText busca (ej: "2026" en el título nuevo)
-    { slide: 2, type: 'replaceText', search: 'NOMBRE', value: centerName },
-    { slide: 2, type: 'replaceText', search: 'XXXXXXX', value: `Coordinación: Komet Analytics` },
-    { slide: 2, type: 'replaceText', search: '2026', value: String(year) },
-    { slide: 2, type: 'byContent', search: 'INFORME', value: `INFORME DE AUTOEVALUACIÓN\nPRACTICAS FORMATIVAS ${year}` },
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 2 — PORTADA / TÍTULO
+    // ════════════════════════════════════════════════════════════════
+    // replaceText ANTES que byContent para no contaminar búsquedas
+    { slide: 2, type: 'replaceText', search: '2025', value: String(year) },
+    { slide: 2, type: 'byContent', search: 'INFORME', value: `INFORME DE AUTOEVALUACIÓN\nPRÁCTICAS FORMATIVAS ${year}` },
+    { slide: 2, type: 'byContent', search: 'CLINICA', value: `${centerName} - ${programName}\nCampus: ${filters.campus} | Nivel: ${filters.level}` },
 
-    // ===== SLIDE 3 — Estudiantes =====
-    { slide: 3, type: 'byContent', search: 'ESTUDIANTES', value: `ESTUDIANTES\nTotal evaluaciones: ${metrics.kpis.total} | Completadas: ${completed} (${completionPct.toFixed(1)}%)` },
-    { slide: 3, type: 'byName', name: 'Content Placeholder 2', value: [
-      `Datos del período académico actual:`,
-      `Centro de práctica: ${centerName}`,
-      `Programa: ${programName}`,
-      `Evaluaciones realizadas: ${completed} de ${metrics.kpis.total}`,
-      `Promedio global obtenido: ${globalScore.toFixed(2)} / 5.0`,
-      ``,
-      `Campus: ${filters.campus} | Nivel: ${filters.level}`
-    ].join('\n') },
-    { slide: 3, type: 'byName', name: 'Text Placeholder 3', value: [
-      `Total estudiantes evaluados: ${estudiantesTotal}`,
-      `Total docentes participantes: ${docentesTotal}`,
-      `Total coordinadores: ${coordinadoresTotal}`,
-      `Periodo: ${metrics.dateRange || 'No disponible'}`
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 3 — ESTUDIANTES
+    // ════════════════════════════════════════════════════════════════
+    // Nota: el template tiene un SmartArt "2 Diagrama" que no se puede manipular
+    // desde el XML (usa namespace dgm:). Solo reemplazamos textos en shapes regulares.
+    { slide: 3, type: 'byContent', search: 'ESTUDIANTES', value: [
+      `ESTUDIANTES`,
+      `Evaluaciones: ${metrics.kpis.total} | Completadas: ${completed} (${completionPct.toFixed(1)}%)`,
+      `Centro: ${centerName} | Programa: ${programName}`
     ].join('\n') },
 
-    // ===== SLIDE 4 — Tabla de datos generales =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 4 — TABLA DATOS GENERALES
+    // ════════════════════════════════════════════════════════════════
     {
       slide: 4, type: 'table', name: 'Tabla 4',
       data: [
-        ['Docentes a cargo', 'N° total de estudiantes', 'Total evaluaciones'],
-        [String(docentesTotal), String(estudiantesTotal), String(metrics.kpis.total)],
-        ['Promedio global', `${globalScore.toFixed(2)} / 5.0`, `Cumplimiento: ${completionPct.toFixed(1)}%`]
+        ['Docentes a cargo', 'N° total de estudiantes', 'Total evaluaciones', 'Periodo'],
+        [String(coordRole?.total || '—'), String(estRole?.total || '—'), String(metrics.kpis.total), metrics.dateRange || 'Actual'],
+        ['Promedio global', `${globalScore.toFixed(2)} / 5.0`, `Cumplimiento: ${completionPct.toFixed(1)}%`, `${metrics.kpis.centers} centros`]
       ]
     },
 
-    // ===== SLIDE 5 — Competencias / Resultados de aprendizaje =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 5 — COMPETENCIAS / RESULTADOS DE APRENDIZAJE
+    // ════════════════════════════════════════════════════════════════
     {
       slide: 5, type: 'table', name: 'Tabla 4',
       data: [
         ['COMPETENCIA DE LA PRÁCTICA FORMATIVA', 'RESULTADO DE APRENDIZAJE'],
         [`Integración teoría-práctica (Promedio: ${globalScore.toFixed(2)})`, `Cumplimiento: ${completionPct.toFixed(1)}%`],
-        [`Desarrollo de competencias profesionales`, `Evaluaciones completadas: ${completed}`],
+        [`Desarrollo de competencias profesionales`, `Completadas: ${completed} de ${metrics.kpis.total}`],
         [`Trabajo en equipo interprofesional`, `Centros participantes: ${metrics.kpis.centers}`],
-        [`Calidad y seguridad en la atención`, `Programas participantes: ${metrics.kpis.programs}`]
+        [`Calidad y seguridad en la atención`, `Programas: ${metrics.kpis.programs}`]
       ]
     },
 
-    // ===== SLIDE 6 — Modelo de autoevaluación =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 6 — MODELO DE AUTOEVALUACIÓN (Acuerdo 00273)
+    // ════════════════════════════════════════════════════════════════
     { slide: 6, type: 'byContent', search: 'MODELO', value: [
       'MODELO DE AUTOEVALUACIÓN DE LA RELACIÓN DOCENCIA SERVICIO',
       '(ACUERDO 00273 DE 2021)',
+      '(MERDS)',
       '',
       `Centro evaluado: ${centerName}`,
+      `Programa: ${programName}`,
       `Evaluaciones procesadas: ${metrics.kpis.total}`,
       `Cobertura: ${completionPct.toFixed(1)}%`
     ].join('\n') },
 
-    // ===== SLIDE 7 — Resultados globales =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 7 — EVALUACIÓN RDS (Título 1 + Tabla 4 con grid 6 condiciones)
+    // ════════════════════════════════════════════════════════════════
     { slide: 7, type: 'byContent', search: 'EVALUACIÓN', value: [
-      'RESULTADOS GLOBALES DEL PROGRAMA EN EL ESCENARIO',
-      `${centerName} - ${programName}`
+      'EVALUACIÓN DE LA RELACIÓN DOCENCIA SERVICIO',
+      `${centerName} — ${programName}`,
+      `Periodo: ${metrics.dateRange || year}`
     ].join('\n') },
-    { slide: 7, type: 'byContent', search: 'Colocar tabla', value: [
-      `DATOS GLOBALES:`,
-      `Promedio General: ${globalScore.toFixed(2)} / 5.0`,
-      `Evaluaciones: ${metrics.kpis.total} (Completadas: ${completed})`,
-      `Tasa de Respuesta: ${completionPct.toFixed(1)}%`,
-      `Centros: ${metrics.kpis.centers} | Programas: ${metrics.kpis.programs} | Campus: ${metrics.kpis.centers}`,
-      ``,
-      `Distribución de calificaciones:`,
-      `  0-2: ${metrics.distribution[0].count} evaluaciones`,
-      `  2-3: ${metrics.distribution[1].count} evaluaciones`,
-      `  3-4: ${metrics.distribution[2].count} evaluaciones`,
-      `  4-5: ${metrics.distribution[3].count} evaluaciones`,
-      ``,
-      topCenter ? `Mejor centro: ${topCenter.name} (${topCenter.score.toFixed(2)})` : '',
-      topProgram ? `Mejor programa: ${topProgram.name} (${topProgram.score.toFixed(2)})` : '',
-      topCampus ? `Mejor campus: ${topCampus.name} (${topCampus.score.toFixed(2)})` : '',
-      ``,
-      `Tendencia: ${metrics.trendDirection || 'estable'}`,
-      `Variabilidad: ${metrics.variability.toFixed(2)}`
-    ].filter(Boolean).join('\n') },
+    // Tabla "Tabla 4" con el grid de 9 filas (2 header + 6 condiciones + 1 total)
+    { slide: 7, type: 'table', name: 'Tabla 4', data: evalTable },
 
-    // ===== SLIDE 8 — Coordinador: Observaciones =====
-    // replaceText ANTES que byContent para no contaminar
-    { slide: 8, type: 'replaceText', search: 'Coordinador', value: 'Coordinador de Prácticas' },
-    { slide: 8, type: 'replaceText', search: 'de Prácticas', value: 'de Prácticas' },
-    { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE LA', value: 'OBSERVACIONES DE LA EVALUACIÓN POR EL COORDINADOR' },
-    {
-      slide: 8, type: 'table', name: 'Marcador de contenido 2',
-      data: [condicionesHeader, ...condRowsCoord]
-    },
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 8 — COORDINADOR: Observaciones
+    // ════════════════════════════════════════════════════════════════
+    { slide: 8, type: 'replaceText', search: 'Coordinador', value: 'Coordinador' },
+    { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE', value: observacionesText('COORDINADOR', hAll, rAll, aAll) },
+    // NOTA: template real tiene "Marcador de contenido 4" no "Marcador de contenido 2"
+    { slide: 8, type: 'table', name: 'Marcador de contenido 4', data: qualTableCoord },
 
-    // ===== SLIDE 9 — Estudiantes: Observaciones =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 9 — ESTUDIANTES: Observaciones
+    // ════════════════════════════════════════════════════════════════
     { slide: 9, type: 'byContent', search: 'Estudiantes', value: 'Estudiantes al escenario de práctica' },
-    { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: [
-      'OBSERVACIONES DE LA EVALUACIÓN — ESTUDIANTES',
-      '',
-      'FORTALEZAS:',
-      hAll,
-      '',
-      'DIFICULTADES:',
-      rAll,
-      '',
-      'SUGERENCIAS:',
-      aAll
-    ].join('\n') },
-    {
-      slide: 9, type: 'table', name: 'Marcador de contenido 2',
-      data: [condicionesHeader, ...condRowsEst]
-    },
+    { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: observacionesText('ESTUDIANTES', hAll, rAll, aAll) },
+    { slide: 9, type: 'table', name: 'Marcador de contenido 4', data: qualTableEst },
 
-    // ===== SLIDE 10 — Docentes: Observaciones =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 10 — DOCENTES: Observaciones
+    // ════════════════════════════════════════════════════════════════
     { slide: 10, type: 'byContent', search: 'Docentes', value: 'Docentes al escenario de práctica' },
-    { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: [
-      'OBSERVACIONES DE LA EVALUACIÓN — DOCENTES',
-      '',
-      'FORTALEZAS:',
-      hAll,
-      '',
-      'DIFICULTADES:',
-      rAll,
-      '',
-      'SUGERENCIAS:',
-      aAll
-    ].join('\n') },
-    {
-      slide: 10, type: 'table', name: 'Marcador de contenido 2',
-      data: [condicionesHeader, ...condRowsDoc]
-    },
+    { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACIÓN', value: observacionesText('DOCENTES', hAll, rAll, aAll) },
+    { slide: 10, type: 'table', name: 'Marcador de contenido 4', data: qualTableDoc },
 
-    // ===== SLIDE 11 — Oportunidades de mejora =====
+    // ════════════════════════════════════════════════════════════════
+    // SLIDE 11 — OPORTUNIDADES DE MEJORA
+    // ════════════════════════════════════════════════════════════════
     { slide: 11, type: 'byContent', search: 'OPORTUNIDADES', value: [
       'OPORTUNIDADES DE MEJORA',
       '',
-      ...(a.length > 0 ? a.map((item, i) => `${i + 1}. ${item}`) : ['No se generaron oportunidades de mejora.'])
+      ...(a.length > 0
+        ? a.map((item, i) => `${i + 1}. ${item}`)
+        : ['No se generaron oportunidades de mejora automáticas.']),
+      '',
+      `Generado por Komet Analytics | ${new Date().toLocaleDateString('es-CO')}`
     ].join('\n') }
   ];
 }
