@@ -23,6 +23,7 @@ export default function KometPresenta() {
   const [exportingTemplate, setExportingTemplate] = useState(false);
   const [error, setError] = useState('');
   const [aiNarrative, setAiNarrative] = useState(null);
+  const [aiReady, setAiReady] = useState(false); // marca si la IA ya ha generado al menos una vez
 
   const [selectedCampus, setSelectedCampus] = useState('Todos');
   const [selectedLevel, setSelectedLevel] = useState('Todos');
@@ -221,6 +222,10 @@ export default function KometPresenta() {
 
   const fallbackNarrative = useMemo(() => buildNarrativeFallback(metrics), [metrics]);
 
+  /**
+   * Genera la narrativa IA de forma automática al cargar datos o cambiar filtros.
+   * Construye un prompt estructurado y profundo con todas las métricas disponibles.
+   */
   async function handleGenerateAiNarrative() {
     setGeneratingAi(true);
     setError('');
@@ -237,38 +242,108 @@ export default function KometPresenta() {
         selectedProgram
       );
 
+      // ── Prompt estructurado y profundo ──
       const prompt = [
-        'Eres un analista de datos avanzado especialista en calidad de educación y salud.',
-        'Analiza las siguientes métricas y entrega SOLO un JSON válido con esta estructura exacta:',
-        '{"resumen":"texto de 2 lineas","analisis_completo":"Un estudio detallado interpretando los datos, tendencias temporales, correlaciones y conclusiones fuertes basadas en las desviaciones.","hallazgos":["..."],"riesgos":["..."],"acciones":["Sugerencia accionable 1..."]}',
-        'Máximo 5 hallazgos, 5 riesgos y 5 acciones (sugerencias estratégicas de mejora).',
+        'Eres un analista de datos senior especializado en calidad educativa y relación docencia-servicio (RDS).',
+        'Debes generar un análisis ESTRUCTURADO, PROFUNDO y ACCIONABLE basado en las métricas proporcionadas.',
+        '',
+        '=== INSTRUCCIONES ===',
+        '1. Analiza TODOS los datos disponibles: globales, distribución, centros, programas, roles, tendencias.',
+        '2. Identifica correlaciones entre variables (ej: ¿los centros con más evaluaciones tienen mejor puntaje? ¿hay roles que consistentemente puntúan más bajo?).',
+        '3. Proporciona Insights concretos basados en los datos, no generalidades.',
+        '4. Las sugerencias de acción deben ser específicas, priorizadas y accionables.',
+        '5. Responde ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones adicionales).',
+        '',
+        '=== ESTRUCTURA JSON REQUERIDA ===',
+        '{',
+        '  "resumen": "Resumen ejecutivo de 3-4 líneas con los hallazgos más importantes",',
+        '  "analisis_completo": "Análisis detallado de 8-12 párrafos que cubra: 1) contexto general, 2) distribución de resultados, 3) análisis por rol, 4) análisis por centro, 5) análisis por programa, 6) tendencia temporal, 7) correlaciones identificadas, 8) conclusiones estratégicas",',
+        '  "hallazgos": ["Hallazgo 1 basado en datos", "Hallazgo 2", "Hallazgo 3", "Hallazgo 4", "Hallazgo 5"],',
+        '  "riesgos": ["Riesgo 1 con impacto identificado", "Riesgo 2", "Riesgo 3", "Riesgo 4", "Riesgo 5"],',
+        '  "acciones": ["Acción prioritaria 1 con responsable sugerido", "Acción 2", "Acción 3", "Acción 4", "Acción 5"]',
+        '}',
+        '',
+        '=== DATOS DEL ESTUDIO ===',
         `Filtros aplicados: ${formatFilters(filters)}`,
-        `Data: Total evaluaciones=${metrics.kpis.total}, Cumplimiento=${metrics.kpis.completionPct}%, Promedio=${metrics.kpis.globalScore}`,
-        `Distribución de notas: 0-2(${metrics.distribution[0].count}), 2-3(${metrics.distribution[1].count}), 3-4(${metrics.distribution[2].count}), 4-5(${metrics.distribution[3].count})`,
-        `Top 3 Centros: ${metrics.byCenter.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
-        `Top 3 Programas: ${metrics.byProgram.slice(0, 3).map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
-        `Tendencia Mensual: ${metrics.monthly.map((item) => `${item.name}:${item.score.toFixed(2)}`).join(', ') || 'N/A'}`,
-        `Desviación Estándar Global: ${metrics.variability}`,
-        `ANÁLISIS POR CENTRO DE PRÁCTICA:\n${centerAnalysisText}`
+        `Período analizado: ${metrics.dateRange}`,
+        '',
+        '--- 1. MÉTRICAS GLOBALES ---',
+        `Total evaluaciones: ${metrics.kpis.total}`,
+        `Completadas: ${metrics.kpis.completed} (${metrics.kpis.completionPct.toFixed(1)}%)`,
+        `Puntaje global: ${metrics.kpis.globalScore.toFixed(2)} / 5,0`,
+        `Desviación estándar: ${metrics.variability.toFixed(2)}`,
+        `Centros evaluados: ${metrics.kpis.centers}`,
+        `Programas académicos: ${metrics.kpis.programs}`,
+        '',
+        '--- 2. DISTRIBUCIÓN DE RESULTADOS ---',
+        `Rango 0-2 (Crítico): ${metrics.distribution[0].count} evaluaciones`,
+        `Rango 2-3 (Bajo): ${metrics.distribution[1].count} evaluaciones`,
+        `Rango 3-4 (Aceptable): ${metrics.distribution[2].count} evaluaciones`,
+        `Rango 4-5 (Sobresaliente): ${metrics.distribution[3].count} evaluaciones`,
+        '',
+        '--- 3. RANKING DE CENTROS DE PRÁCTICA ---',
+        metrics.byCenter.slice(0, 10).map((c, i) => `${i + 1}. ${c.name}: ${c.score.toFixed(2)} (${c.total} eval., ${c.completionPct.toFixed(1)}% cumplimiento)`).join('\n'),
+        '',
+        '--- 4. ANÁLISIS DETALLADO POR CENTRO (CON DESGLOSE POR ROL) ---',
+        centerAnalysisText,
+        '',
+        '--- 5. RANKING DE PROGRAMAS ACADÉMICOS ---',
+        metrics.byProgram.slice(0, 8).map((p, i) => `${i + 1}. ${p.name}: ${p.score.toFixed(2)} (${p.total} eval.)`).join('\n'),
+        '',
+        '--- 6. PERCEPCIÓN POR ROL DEL EVALUADOR ---',
+        metrics.byRole.map(r => `${r.name}: ${r.score.toFixed(2)} (${r.total} registros, ${r.completionPct.toFixed(1)}% cumplimiento)`).join('\n'),
+        '',
+        '--- 7. TENDENCIA MENSUAL ---',
+        metrics.monthly.length > 0
+          ? metrics.monthly.map(m => `${m.name}: ${m.score.toFixed(2)} (${m.total} eval.)`).join('\n')
+          : 'Sin datos mensuales',
+        `Tendencia general: ${metrics.trendDirection}`,
+        '',
+        '--- 8. DISTRIBUCIÓN POR CAMPUS ---',
+        metrics.byCampus.map(c => `${c.name}: ${c.score.toFixed(2)} (${c.total} eval.)`).join('\n'),
+        '',
+        '=== INDICACIONES ADICIONALES ===',
+        '- Si hay datos suficientes (>10 evaluaciones), haz análisis de correlaciones entre variables.',
+        '- Identifica centros con desempeño consistentemente alto o bajo en todos los roles.',
+        '- Sugiere acciones diferenciadas por tipo de centro/programa según su desempeño.',
+        '- Prioriza las acciones: primero las críticas (urgentes), luego las estratégicas.',
+        '- Los puntajes son sobre 5,0. El umbral mínimo aceptable es 3,5.',
+        '- Incluye en el análisis_completo referencias a los datos específicos (no seas genérico).'
       ].join('\n');
 
       const raw = await runOpenRouterPrompt({
         apiKey: settings?.openrouter_api_key || '',
         model: selectedModel,
-        systemPrompt: settings?.openrouter_system_prompt || 'Eres un Chief Data Officer experto en generar insights a partir de data cruda.',
+        systemPrompt: 'Eres un Chief Data Officer y experto en calidad educativa con 20 años de experiencia en ' +
+          'análisis de datos de evaluación institucional. Tu especialidad es la relación docencia-servicio (RDS) ' +
+          'y el modelo de autoevaluación basado en el Acuerdo 00273 de 2021. Generas análisis profundos, ' +
+          'estructurados y accionables, siempre respaldados por datos concretos. Respondes exclusivamente en JSON.',
         prompt,
-        temperature: 0.6
+        temperature: 0.4 // más baja para mayor consistencia estructural
       });
 
       const parsed = parseAiPayload(raw);
       setAiNarrative(parsed);
+      setAiReady(true);
     } catch (aiError) {
       setAiNarrative(fallbackNarrative);
+      setAiReady(true);
       setError(`No se pudo generar análisis profundo IA: ${aiError?.message || 'error no identificado'}`);
     } finally {
       setGeneratingAi(false);
     }
   }
+
+  // ── Auto-generación: se dispara cuando cambian los datos ──
+  useEffect(() => {
+    if (loading || !metrics.kpis.total) return;
+    // Pequeño debounce para evitar ciclos con cambios rápidos de filtros
+    const timer = setTimeout(() => {
+      handleGenerateAiNarrative();
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metrics.kpis.total, metrics.kpis.completed, selectedCampus, selectedLevel, selectedCenter, selectedProgram]);
 
   async function handleExportPptx() {
     setExporting(true);
@@ -349,6 +424,25 @@ export default function KometPresenta() {
           </div>
 
           <div className="flex flex-wrap gap-3">
+            {/* Indicador de estado de IA */}
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 text-sm text-slate-600 border border-slate-200">
+              {generatingAi ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                  <span>Analizando datos con IA...</span>
+                </>
+              ) : aiReady ? (
+                <>
+                  <Sparkles className="w-4 h-4 text-emerald-500" />
+                  <span className="text-emerald-700 font-medium">Análisis IA completado</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 text-slate-400" />
+                  <span>Esperando datos...</span>
+                </>
+              )}
+            </div>
             <button
               type="button"
               onClick={handleGenerateAiNarrative}
@@ -356,7 +450,7 @@ export default function KometPresenta() {
               className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50 inline-flex items-center gap-2 transition-all"
             >
               {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-yellow-400" />}
-              Analizar Dataset (IA)
+              Regenerar Análisis
             </button>
             <button
               type="button"
@@ -440,14 +534,21 @@ export default function KometPresenta() {
             Estudio Profundo de Datos
           </h3>
           {generatingAi ? (
+            <div className="flex flex-col items-center justify-center h-56 text-slate-400">
+              <Loader2 className="w-8 h-8 animate-spin mb-3 text-blue-500" />
+              <p className="text-sm font-medium">Generando análisis profundo con IA...</p>
+              <p className="text-xs text-slate-400 mt-1">Procesando métricas, distribuciones, centros, programas y tendencias</p>
+            </div>
+          ) : !aiReady ? (
             <div className="flex flex-col items-center justify-center h-40 text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin mb-2" />
-              <p className="text-sm">Analizando correlaciones y varianzas...</p>
+              <p className="text-sm">Cargando datos para el análisis...</p>
             </div>
           ) : (
-            <p className="text-sm text-slate-600 leading-relaxed text-justify">
-              {activeNarrative.analisis_completo}
-            </p>
+            <div className="text-sm text-slate-600 leading-relaxed text-justify max-h-96 overflow-y-auto pr-2">
+              {activeNarrative.analisis_completo.split('\n').map((line, i) => (
+                line.trim() ? <p key={i} className="mb-1">{line}</p> : <br key={i} />
+              ))}
+            </div>
           )}
         </div>
 
