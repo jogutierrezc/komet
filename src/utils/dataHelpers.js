@@ -97,12 +97,29 @@ export function shortList(items = [], max = 5) {
 
 /**
  * Normaliza un nombre de rol (inglés/español) a un nombre estándar en español.
+ * Cubre todas las variantes comunes: student, estudiante, alumno, teacher, docente,
+ * profesor, maestro, tutor, coordinator, coordinador, admin, etc.
  */
 export function normalizeRoleName(role) {
   const lower = String(role || '').toLowerCase().trim();
-  if (lower.includes('est')) return 'Estudiantes';
-  if (lower.includes('doc') || lower.includes('prof') || lower.includes('teache')) return 'Docentes';
-  if (lower.includes('coord') || lower.includes('admin')) return 'Coordinadores';
+  if (!lower) return 'Sin definir';
+
+  // Estudiantes
+  if (lower.includes('est') || lower.includes('alum') || lower.includes('aprend')) {
+    return 'Estudiantes';
+  }
+
+  // Docentes
+  if (lower.includes('doc') || lower.includes('prof') || lower.includes('maestr')
+    || lower.includes('teache') || lower.includes('tut')) {
+    return 'Docentes';
+  }
+
+  // Coordinadores
+  if (lower.includes('coord') || lower.includes('admin') || lower.includes('direct')) {
+    return 'Coordinadores';
+  }
+
   return role;
 }
 
@@ -199,12 +216,45 @@ export function calculateRoleGrid(centerAnalysis = []) {
   const rows = centerAnalysis.map((center) => [
     center.name,
     center.byRole['Estudiantes']?.score?.toFixed(1)?.replace('.', ',') || '—',
-    center.byRole['Docentes']?.score?.toFixed(1)?.replace('.', ',') || center.byRole['Profesores']?.score?.toFixed(1)?.replace('.', ',') || '—',
+    center.byRole['Docentes']?.score?.toFixed(1)?.replace('.', ',') || '—',
     center.byRole['Coordinadores']?.score?.toFixed(1)?.replace('.', ',') || '—',
     center.score.toFixed(1).replace('.', ',')
   ]);
 
   return { headers, rows };
+}
+
+/**
+ * Construye una matriz cruzada Centro × Programa a partir del análisis por centros.
+ * Retorna: { allCenters, allPrograms, matrix }
+ *   - matrix[centerName][programName] = { score, total } o null si no hay datos
+ *   - Ademas incluye un resumen de promedio por centro y por programa
+ */
+export function calculateCrossMatrix(centerAnalysis = []) {
+  if (!centerAnalysis.length) {
+    return { allCenters: [], allPrograms: [], matrix: {} };
+  }
+
+  // Todos los programas únicos (ordenados por nombre)
+  const allPrograms = [...new Set(
+    centerAnalysis.flatMap(c => (c.programs || []).map(p => p.name))
+  )].sort();
+
+  const allCenters = centerAnalysis.map(c => c.name);
+
+  // Matriz: centerName → programName → { score, total }
+  const matrix = {};
+  for (const center of centerAnalysis) {
+    matrix[center.name] = {};
+    for (const prog of allPrograms) {
+      const progData = (center.programs || []).find(p => p.name === prog);
+      matrix[center.name][prog] = progData
+        ? { score: progData.score, total: progData.total }
+        : null;
+    }
+  }
+
+  return { allCenters, allPrograms, matrix };
 }
 
 /**

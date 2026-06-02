@@ -965,10 +965,24 @@ export async function getRecentEvaluations() {
 function normalizeRole(value) {
   if (!value) return 'Sin definir';
   const normalized = String(value).trim().toLowerCase();
-  if (normalized.includes('todos')) return 'Todos';
-  if (normalized.includes('estudiante')) return 'Estudiantes';
-  if (normalized.includes('profesor') || normalized.includes('tutor')) return 'Profesores';
-  if (normalized.includes('coordinador')) return 'Coordinadores';
+  if (normalized.includes('todos') || normalized.includes('all')) return 'Todos';
+  // Estudiantes: español e inglés
+  if (normalized.includes('estudiante') || normalized.includes('alumno')
+    || normalized.includes('est') || normalized.includes('student')) {
+    return 'Estudiantes';
+  }
+  // Docentes: español e inglés (consistente con dataHelpers.js normalizeRoleName)
+  if (normalized.includes('profesor') || normalized.includes('tutor')
+    || normalized.includes('docente') || normalized.includes('maestro')
+    || normalized.includes('teache') || normalized.includes('professor')
+    || normalized.includes('docent')) {
+    return 'Docentes';
+  }
+  // Coordinadores: español e inglés
+  if (normalized.includes('coordinador') || normalized.includes('coordinator')
+    || normalized.includes('admin') || normalized.includes('director')) {
+    return 'Coordinadores';
+  }
   return String(value).trim();
 }
 

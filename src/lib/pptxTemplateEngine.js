@@ -404,107 +404,6 @@ function aggregateSectionScores(rows = []) {
 }
 
 /**
- * Extrae texto cualitativo (fortalezas, mejoras, observaciones) desde rawAnswers
- * y los agrupa por rol (coordinador, estudiante, docente).
- */
-function extractQualitativeByRole(rows = []) {
-  const roles = { COORDINADOR: [], ESTUDIANTES: [], DOCENTES: [] };
-
-  rows.forEach((row) => {
-    const raw = row?.rawAnswers || {};
-    const role = String(row?.role || '').toLowerCase();
-
-    const fortalezas = raw.fortalezas || raw.strengths || '';
-    const mejoras = raw.aspectosMejora || raw.mejoras || '';
-    const observaciones = raw.observaciones || raw.comments || '';
-
-    if (role.includes('coord')) {
-      if (fortalezas) roles.COORDINADOR.push(fortalezas);
-      if (mejoras) roles.COORDINADOR.push(mejoras);
-      if (observaciones) roles.COORDINADOR.push(observaciones);
-    } else if (role.includes('est')) {
-      if (fortalezas) roles.ESTUDIANTES.push(fortalezas);
-      if (mejoras) roles.ESTUDIANTES.push(mejoras);
-      if (observaciones) roles.ESTUDIANTES.push(observaciones);
-    } else if (role.includes('doc') || role.includes('prof')) {
-      if (fortalezas) roles.DOCENTES.push(fortalezas);
-      if (mejoras) roles.DOCENTES.push(mejoras);
-      if (observaciones) roles.DOCENTES.push(observaciones);
-    }
-  });
-
-  return roles;
-}
-
-/**
- * Construye un texto analítico tipo "supervisor del sitio de práctica"
- * basado en datos cuantitativos (secciones) y cualitativos (comentarios).
- */
-function buildSupervisorObservations(titulo, sections, qualComments, globalScore, completionPct, totalEvals) {
-  const score = sections.length ? avg(sections.map(s => s.score)) : globalScore;
-  const nivel = score >= 4.5 ? 'SOBRESALIENTE'
-    : score >= 4.0 ? 'ALTO'
-    : score >= 3.5 ? 'SATISFACTORIO'
-    : score >= 3.0 ? 'ACEPTABLE'
-    : score >= 2.0 ? 'BAJO'
-    : 'CRITICO';
-
-  const lines = [];
-  lines.push(`OBSERVACIONES DE LA EVALUACION — ${titulo}`);
-  lines.push('');
-  lines.push(`=== DIAGNOSTICO DEL SITIO DE PRACTICA ===`);
-  lines.push(`Nivel de desempeno: ${nivel} (${score.toFixed(1).replace('.', ',')} / 5,0)`);
-  lines.push(`Evaluaciones procesadas: ${totalEvals} | Tasa de respuesta: ${completionPct.toFixed(1)}%`);
-  lines.push('');
-
-  // Secciones con mejor y peor puntaje
-  const conScore = sections.filter(s => s.score !== null).sort((a, b) => b.score - a.score);
-  if (conScore.length > 0) {
-    lines.push('=== ANALISIS POR SECCION ===');
-    conScore.forEach((s) => {
-      lines.push(`  ${s.titulo}: ${s.score.toFixed(1).replace('.', ',')} — ${s.interpretacion}`);
-    });
-    lines.push('');
-
-    if (conScore.length >= 2) {
-      const mejor = conScore[0];
-      const peor = conScore[conScore.length - 1];
-      const brecha = (mejor.score - peor.score).toFixed(1).replace('.', ',');
-      lines.push(`Brecha inter-seccion: ${brecha} puntos`);
-      lines.push(`Fortaleza principal: ${mejor.titulo} (${mejor.score.toFixed(1).replace('.', ',')})`);
-      lines.push(`Area de mejora prioritaria: ${peor.titulo} (${peor.score.toFixed(1).replace('.', ',')})`);
-      lines.push('');
-    }
-  }
-
-  // Comentarios cualitativos
-  const validos = qualComments.filter(c => c && c.length > 10);
-  if (validos.length > 0) {
-    lines.push('=== RETROALIMENTACION CUALITATIVA ===');
-    const unicos = [...new Set(validos)];
-    unicos.forEach((c, i) => {
-      lines.push(`  ${i + 1}. ${c.length > 200 ? c.slice(0, 200) + '...' : c}`);
-    });
-    lines.push('');
-  }
-
-  lines.push('=== RECOMENDACIONES DEL SUPERVISOR ===');
-  if (score < 3.5) {
-    lines.push('  - Implementar plan de mejora inmediato con metas a 30, 60 y 90 dias.');
-    lines.push('  - Realizar visitas de supervision quincenales hasta estabilizar indicadores.');
-  } else if (score < 4.0) {
-    lines.push('  - Diseniar plan de acompanamiento para elevar estandares a nivel ALTO.');
-    lines.push('  - Socializar brechas identificadas con el Comite Docencia-Servicio.');
-  } else {
-    lines.push('  - Mantener estandares de calidad y documentar buenas practicas.');
-    lines.push('  - Compartir modelo de gestion con otros escenarios como referencia.');
-  }
-  lines.push(`  - Monitorear periodicamente los indicadores de las ${conScore.length} condiciones evaluadas.`);
-
-  return lines.join('\n');
-}
-
-/**
  * Construye las operaciones de inyeccion de datos en la plantilla PPTX.
  *
  * @param {Object} metrics - Metricas computadas desde KometPresenta
@@ -540,20 +439,6 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
   const docenteScore = docRole?.score || globalScore;
   const estudianteScore = estRole?.score || globalScore;
 
-  // Datos reales desde las filas
-  const sections = aggregateSectionScores(rows);
-  const qualByRole = extractQualitativeByRole(rows);
-
-  // 6 condiciones del modelo Acuerdo 00273 de 2021
-  const condiciones = [
-    '1. ASPECTOS GENERALES',
-    '2. CAPACIDAD INSTALADA',
-    '3. SEGURIDAD, PROTECCION Y BIENESTAR',
-    '4. ORGANIZACION ADMINISTRATIVA PARA LA DOCENCIA SERVICIO',
-    '5. PRACTICAS FORMATIVAS',
-    '6. CULTURA DEL MEJORAMIENTO CONTINUO'
-  ];
-
   // ── Analisis por centro y rol ──
   const centerAnalysis = metrics.centerAnalysis || [];
 
@@ -561,32 +446,6 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
   const avgCenterScore = centerAnalysis.length
     ? centerAnalysis.reduce((s, c) => s + c.score, 0) / centerAnalysis.length
     : 0;
-
-  // ── Tabla cualitativa (slides 8-10) con datos reales ──
-  const condTableHeader = ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'FORTALEZAS', 'DIFICULTADES', 'SUGERENCIAS PARA MEJORAR'];
-
-  // Usar datos cualitativos reales si existen, si no, caer a narrativa IA
-  const qualH = qualByRole.COORDINADOR.length ? qualByRole.COORDINADOR : h;
-  const qualEst = qualByRole.ESTUDIANTES.length ? qualByRole.ESTUDIANTES : h;
-  const qualDoc = qualByRole.DOCENTES.length ? qualByRole.DOCENTES : h;
-
-  // Para dificultades y sugerencias, mezclar riesgos y acciones como fallback
-  const qualR = r.length ? r : qualH;
-  const qualA = a.length ? a : qualR;
-
-  const buildQualTable = (itemsH, itemsR, itemsA) => [
-    condTableHeader,
-    ...condiciones.map((cond, i) => [
-      cond,
-      itemsH[i % itemsH.length] || 'Sin datos cualitativos',
-      itemsR[i % itemsR.length] || 'Sin datos cualitativos',
-      itemsA[i % itemsA.length] || 'Sin datos cualitativos'
-    ])
-  ];
-
-  const qualTableCoord = buildQualTable(qualH, qualR, qualA);
-  const qualTableEst = buildQualTable(qualEst, qualR, qualA);
-  const qualTableDoc = buildQualTable(qualDoc, qualR, qualA);
 
   // Texto de ranking de centros con desglose completo por rol y desviacion vs promedio
   const centerRankingText = centerAnalysis.length > 0
@@ -600,7 +459,7 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
         const total = String(c.total).padStart(5);
         const score = c.score.toFixed(2).replace('.', ',').padStart(5);
         const est = (c.byRole['Estudiantes']?.score || 0).toFixed(1).replace('.', ',').padStart(4);
-        const doc = (c.byRole['Docentes']?.score || c.byRole['Profesores']?.score || 0).toFixed(1).replace('.', ',').padStart(6);
+        const doc = (c.byRole['Docentes']?.score || 0).toFixed(1).replace('.', ',').padStart(6);
         const coord = (c.byRole['Coordinadores']?.score || 0).toFixed(1).replace('.', ',').padStart(6);
         return `${name} | ${total} | ${score} | ${est} | ${doc} | ${coord} | ${diffStr}`;
       }).join('\n') +
@@ -611,41 +470,40 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
       ` | Brecha: ${(centerAnalysis[0].score - centerAnalysis[centerAnalysis.length - 1].score).toFixed(2).replace('.', ',')} pts`
     : '';
 
-  // Texto supervisor para slides 8-10 (con datos reales)
-  const obsCoord = buildSupervisorObservations('COORDINADOR', sections, qualByRole.COORDINADOR, globalScore, completionPct, metrics.kpis.total);
-  const obsEst = buildSupervisorObservations('ESTUDIANTES', sections, qualByRole.ESTUDIANTES, globalScore, completionPct, metrics.kpis.total);
-  const obsDoc = buildSupervisorObservations('DOCENTES', sections, qualByRole.DOCENTES, globalScore, completionPct, metrics.kpis.total);
+  // Secciones del instrumento (para slide 7: PUNTAJES POR SECCION)
+  const sections = aggregateSectionScores(rows);
 
-  // Tabla de competencias (slide 5) - basada en secciones reales
-  const competenciasTable = sections.length > 0
-    ? [
-        ['COMPETENCIA DE LA PRACTICA FORMATIVA', 'RESULTADO DE APRENDIZAJE'],
-        ...sections.map((s) => [
-          `${s.titulo}`,
-          s.score !== null
-            ? `${s.score.toFixed(1).replace('.', ',')} / 5,0 — ${s.interpretacion}`
-            : 'Sin datos suficientes para evaluacion'
-        ])
-      ]
-    : [
-        ['COMPETENCIA DE LA PRACTICA FORMATIVA', 'RESULTADO DE APRENDIZAJE'],
-        ['Integracion teoria-practica', `Promedio: ${globalScore.toFixed(1).replace('.', ',')} / 5,0`],
-        ['Desarrollo de competencias profesionales', `Completadas: ${completed} de ${metrics.kpis.total}`],
-        ['Trabajo en equipo interprofesional', `Centros: ${metrics.kpis.centers}`],
-        ['Calidad y seguridad en la atencion', `Programas: ${metrics.kpis.programs}`]
-      ];
+  const analisisCompleto = narrative?.analisis_completo || '';
+  const resumen = narrative?.resumen || '';
 
   return [
     // ═══ SLIDE 2 — PORTADA ═══
     { slide: 2, type: 'replaceText', search: '2025', value: String(year) },
     { slide: 2, type: 'byContent', search: 'INFORME', value: `INFORME DE AUTOEVALUACION\nPRACTICAS FORMATIVAS ${year}` },
-    { slide: 2, type: 'byContent', search: 'CLINICA', value: `${centerName} - ${programName}\nCampus: ${filters.campus} | Nivel: ${filters.level}` },
+    { slide: 2, type: 'byContent', search: 'CLINICA', value: `${centerName}` },
+    { slide: 2, type: 'byContent', search: 'ESPECIALIDAD', value: `${programName}` },
+    { slide: 2, type: 'byContent', search: 'SEDE', value: `Campus: ${filters.campus} | Nivel: ${filters.level}` },
+    { slide: 2, type: 'byContent', search: 'FECHA', value: `${year}` },
 
     // ═══ SLIDE 3 — ESTUDIANTES ═══
     { slide: 3, type: 'byContent', search: 'ESTUDIANTES', value: [
-      'ESTUDIANTES',
-      `Evaluaciones: ${metrics.kpis.total} | Completadas: ${completed} (${completionPct.toFixed(1)}%)`,
-      `Centro: ${centerName} | Programa: ${programName}`
+      'DATOS GENERALES DE LA EVALUACION',
+      '',
+      `Centro evaluado: ${centerName}`,
+      `Programa: ${programName}`,
+      `Campus: ${filters.campus} | Nivel: ${filters.level}`,
+      '',
+      `Total evaluaciones: ${metrics.kpis.total}`,
+      `Completadas: ${completed} (${completionPct.toFixed(1)}%)`,
+      '',
+      '--- EVALUADORES POR ROL ---',
+      `Estudiantes que evaluaron: ${estRole?.total || 0}`,
+      `Docentes que evaluaron: ${docRole?.total || 0}`,
+      `Coordinadores que evaluaron: ${coordRole?.total || 0}`,
+      '',
+      `Puntaje promedio estudiantes: ${estudianteScore.toFixed(1).replace('.', ',')} / 5,0`,
+      `Puntaje promedio docentes: ${docenteScore.toFixed(1).replace('.', ',')} / 5,0`,
+      `Puntaje promedio coordinadores: ${coordScore.toFixed(1).replace('.', ',')} / 5,0`
     ].join('\n') },
 
     // ═══ SLIDE 4 — TABLA DATOS GENERALES ═══
@@ -668,10 +526,19 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
       ]
     },
 
-    // ═══ SLIDE 5 — COMPETENCIAS / RESULTADOS DE APRENDIZAJE (datos reales) ═══
+    // ═══ SLIDE 5 — COMPETENCIAS / RESULTADOS DE APRENDIZAJE (contenido IA) ═══
     {
-      slide: 5, type: 'table', name: 'Tabla 4',
-      data: competenciasTable
+      slide: 5, type: 'byContent', search: 'COMPETENCIA', value: [
+        'RESULTADOS DE APRENDIZAJE — ANALISIS IA',
+        '',
+        ...(h.length > 0
+          ? h.map((item, i) => `${i + 1}. ${item}`)
+          : ['No se generaron hallazgos automaticos.']
+        ),
+        '',
+        '--- SUGERENCIAS PRIORIZADAS ---',
+        ...(a.slice(0, 5).map((item, i) => `  ${String.fromCharCode(65 + i)}. ${item}`))
+      ].join('\n')
     },
 
     // ═══ SLIDE 6 — MODELO DE AUTOEVALUACION ═══
@@ -713,20 +580,47 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
       )
     ].join('\n') },
 
-    // ═══ SLIDE 8 — COORDINADOR ═══
-    { slide: 8, type: 'replaceText', search: 'Coordinador', value: 'Coordinador' },
-    { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE', value: obsCoord },
-    { slide: 8, type: 'table', name: 'Marcador de contenido 2', data: qualTableCoord },
+    // ═══ SLIDE 8 — COORDINADOR (contenido IA) ═══
+    { slide: 8, type: 'byContent', search: 'OBSERVACIONES DE', value: [
+      'ANALISIS IA — VISION ESTRATEGICA',
+      '',
+      resumen || 'Sin resumen ejecutivo disponible.',
+      '',
+      '--- ANALISIS COMPLETO ---',
+      analisisCompleto || 'No se genero analisis profundo.'
+    ].join('\n') },
 
-    // ═══ SLIDE 9 — ESTUDIANTES ═══
-    { slide: 9, type: 'byContent', search: 'Estudiantes', value: 'Estudiantes al escenario de practica' },
-    { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACI'+'ÓN', value: obsEst },
-    { slide: 9, type: 'table', name: 'Marcador de contenido 2', data: qualTableEst },
+    // ═══ SLIDE 9 — ESTUDIANTES (contenido IA) ═══
+    { slide: 9, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACI'+'ÓN', value: [
+      'HALLAZGOS PRINCIPALES — PERCEPCION ESTUDIANTIL',
+      '',
+      ...(h.length > 0
+        ? h.map((item, i) => `${i + 1}. ${item}`)
+        : ['No se generaron hallazgos automaticos.']
+      ),
+      '',
+      '--- RIESGOS IDENTIFICADOS ---',
+      ...(r.length > 0
+        ? r.map((item, i) => `  ${String.fromCharCode(65 + i)}. ${item}`)
+        : ['No se identificaron riesgos significativos.']
+      )
+    ].join('\n') },
 
-    // ═══ SLIDE 10 — DOCENTES ═══
-    { slide: 10, type: 'byContent', search: 'Docentes', value: 'Docentes al escenario de practica' },
-    { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACI'+'ÓN', value: obsDoc },
-    { slide: 10, type: 'table', name: 'Marcador de contenido 2', data: qualTableDoc },
+    // ═══ SLIDE 10 — DOCENTES (contenido IA) ═══
+    { slide: 10, type: 'byContent', search: 'OBSERVACIONES DE LA EVALUACI'+'ÓN', value: [
+      'PLAN DE ACCION Y SUGERENCIAS ESTRATEGICAS',
+      '',
+      ...(a.length > 0
+        ? a.map((item, i) => `${i + 1}. ${item}`)
+        : ['No se generaron sugerencias automaticas.']
+      ),
+      '',
+      '--- ACCIONES PRIORITARIAS ---',
+      ...(h.slice(0, 3).length > 0
+        ? h.slice(0, 3).map((item, i) => `  ${i + 1}. ${item}`)
+        : ['Sin informacion adicional.']
+      )
+    ].join('\n') },
 
     // ═══ SLIDE 11 — OPORTUNIDADES DE MEJORA ═══
     { slide: 11, type: 'byContent', search: 'OPORTUNIDADES', value: [

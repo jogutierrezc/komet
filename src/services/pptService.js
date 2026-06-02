@@ -77,7 +77,7 @@ export function addCenterAnalysisTable(slide, x, y, w, centerAnalysis = []) {
         { text: String(center.total), options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
         { text: center.score.toFixed(2), options: { fill, fontSize: 9, align: 'center', valign: 'middle', bold: true } },
         { text: center.byRole['Estudiantes']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
-        { text: center.byRole['Docentes']?.score?.toFixed(1) || center.byRole['Profesores']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
+        { text: center.byRole['Docentes']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
         { text: center.byRole['Coordinadores']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
         {
           text: `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}`,

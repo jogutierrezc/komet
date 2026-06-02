@@ -14,6 +14,7 @@ import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine
 import { norm, avg, stdDev, resolveProgram, resolveLevel, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
 import { parseAiPayload, buildNarrativeFallback } from '../services/aiService';
 import { createPresentationDeck } from '../services/pptService';
+import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
 
 export default function KometPresenta() {
   const [rows, setRows] = useState([]);
@@ -132,7 +133,7 @@ export default function KometPresenta() {
     const byCenter = rankBy(filteredRows, (row) => norm(row.center || 'Sin sitio'), (row) => row.scoreSummary?.globalScore);
     const byProgram = rankBy(filteredRows, (row) => resolveProgram(row), (row) => row.scoreSummary?.globalScore)
       .filter((item) => item.name !== 'Sin programa');
-    const byRole = rankBy(filteredRows, (row) => norm(row.role || 'Sin definir'), (row) => row.scoreSummary?.globalScore);
+    const byRole = rankBy(filteredRows, (row) => normalizeRoleName(norm(row.role || 'Sin definir')), (row) => row.scoreSummary?.globalScore);
 
     const monthMap = new Map();
     filteredRows.forEach((row) => {
@@ -571,6 +572,14 @@ export default function KometPresenta() {
         </div>
       </div>
 
+      {/* ── Módulo de Análisis Comparativo: Centros × Programas ── */}
+      {!loading && metrics.centerAnalysis.length > 0 && (
+        <ComparadorCentrosProgramas
+          centerAnalysis={metrics.centerAnalysis}
+          loading={loading}
+        />
+      )}
+
       {/* ── Análisis por Centro de Práctica ── */}
       {!loading && metrics.centerAnalysis.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -615,7 +624,7 @@ export default function KometPresenta() {
                         {center.byRole['Estudiantes']?.score?.toFixed(1) || '—'}
                       </td>
                       <td className="text-center p-2 border border-slate-200">
-                        {center.byRole['Docentes']?.score?.toFixed(1) || center.byRole['Profesores']?.score?.toFixed(1) || '—'}
+                        {center.byRole['Docentes']?.score?.toFixed(1) || '—'}
                       </td>
                       <td className="text-center p-2 border border-slate-200">
                         {center.byRole['Coordinadores']?.score?.toFixed(1) || '—'}
