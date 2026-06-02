@@ -557,6 +557,11 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
   // ── Analisis por centro y rol ──
   const centerAnalysis = metrics.centerAnalysis || [];
 
+  // Promedio general de centros para calcular desviacion vs promedio
+  const avgCenterScore = centerAnalysis.length
+    ? centerAnalysis.reduce((s, c) => s + c.score, 0) / centerAnalysis.length
+    : 0;
+
   // ── Tabla cualitativa (slides 8-10) con datos reales ──
   const condTableHeader = ['CONDICIONES DE CALIDAD DE LA RDS EVALUADAS', 'FORTALEZAS', 'DIFICULTADES', 'SUGERENCIAS PARA MEJORAR'];
 
@@ -583,15 +588,27 @@ export function buildTemplateData(metrics, filters, narrative, rows = []) {
   const qualTableEst = buildQualTable(qualEst, qualR, qualA);
   const qualTableDoc = buildQualTable(qualDoc, qualR, qualA);
 
-  // Texto de ranking de centros
+  // Texto de ranking de centros con desglose completo por rol y desviacion vs promedio
   const centerRankingText = centerAnalysis.length > 0
-    ? '\n\nRANKING DE CENTROS POR PUNTAJE:\n' +
-      centerAnalysis.slice(0, 6).map((c, i) =>
-        `${i + 1}. ${c.name}: ${c.score.toFixed(1).replace('.', ',')} ` +
-        `(Est: ${(c.byRole['Estudiantes']?.score || 0).toFixed(1).replace('.', ',')} ` +
-        `Doc: ${(c.byRole['Docentes']?.score || c.byRole['Profesores']?.score || 0).toFixed(1).replace('.', ',')} ` +
-        `Coord: ${(c.byRole['Coordinadores']?.score || 0).toFixed(1).replace('.', ',')})`
-      ).join('\n')
+    ? '\n\n═══ ANALISIS DETALLADO POR CENTRO DE PRACTICA ═══\n' +
+      'Centro                 | Total | Prom. | Estud. | Docentes | Coord. | Vs Prom.\n' +
+      '───────────────────────|───────|───────|────────|──────────|────────|─────────\n' +
+      centerAnalysis.slice(0, 8).map((c) => {
+        const diff = c.score - avgCenterScore;
+        const diffStr = `${diff >= 0 ? '+' : ''}${diff.toFixed(2).replace('.', ',')}`;
+        const name = c.name.padEnd(22).substring(0, 22);
+        const total = String(c.total).padStart(5);
+        const score = c.score.toFixed(2).replace('.', ',').padStart(5);
+        const est = (c.byRole['Estudiantes']?.score || 0).toFixed(1).replace('.', ',').padStart(4);
+        const doc = (c.byRole['Docentes']?.score || c.byRole['Profesores']?.score || 0).toFixed(1).replace('.', ',').padStart(6);
+        const coord = (c.byRole['Coordinadores']?.score || 0).toFixed(1).replace('.', ',').padStart(6);
+        return `${name} | ${total} | ${score} | ${est} | ${doc} | ${coord} | ${diffStr}`;
+      }).join('\n') +
+      '\n──────────────────────────────────────────────────────────────────────' +
+      `\nPromedio general centros: ${avgCenterScore.toFixed(2).replace('.', ',')}` +
+      ` | Mejor: ${centerAnalysis[0].name} (${centerAnalysis[0].score.toFixed(2).replace('.', ',')})` +
+      ` | Menor: ${centerAnalysis[centerAnalysis.length - 1].name} (${centerAnalysis[centerAnalysis.length - 1].score.toFixed(2).replace('.', ',')})` +
+      ` | Brecha: ${(centerAnalysis[0].score - centerAnalysis[centerAnalysis.length - 1].score).toFixed(2).replace('.', ',')} pts`
     : '';
 
   // Texto supervisor para slides 8-10 (con datos reales)

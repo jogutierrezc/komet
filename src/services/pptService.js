@@ -54,6 +54,47 @@ export function addNativeTable(slide, x, y, w, rows, headers) {
 }
 
 /**
+ * Agrega una tabla detallada de análisis por centro con desglose por rol.
+ * Columnas: Centro | Total | Promedio | Estud. | Docentes | Coord. | Vs Prom.
+ */
+export function addCenterAnalysisTable(slide, x, y, w, centerAnalysis = []) {
+  if (!centerAnalysis.length || !slide.addTable) return;
+
+  const avgScore = centerAnalysis.reduce((s, c) => s + c.score, 0) / centerAnalysis.length;
+  const colWs = [w * 0.28, w * 0.10, w * 0.12, w * 0.12, w * 0.13, w * 0.12, w * 0.13];
+
+  const headers = ['Centro de Práctica', 'Total', 'Promedio', 'Estud.', 'Docentes', 'Coord.', 'Vs Prom.'];
+
+  const tableData = [
+    headers.map(h => ({ text: h, options: { fill: '6D28D9', color: 'FFFFFF', bold: true, fontSize: 9, align: 'center', valign: 'middle' } })),
+    ...centerAnalysis.slice(0, 10).map((center, idx) => {
+      const diff = center.score - avgScore;
+      const isEven = idx % 2 === 0;
+      const fill = isEven ? 'F5F3FF' : 'FFFFFF';
+
+      return [
+        { text: center.name, options: { fill, fontSize: 9, align: 'left', valign: 'middle', bold: idx === 0 } },
+        { text: String(center.total), options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
+        { text: center.score.toFixed(2), options: { fill, fontSize: 9, align: 'center', valign: 'middle', bold: true } },
+        { text: center.byRole['Estudiantes']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
+        { text: center.byRole['Docentes']?.score?.toFixed(1) || center.byRole['Profesores']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
+        { text: center.byRole['Coordinadores']?.score?.toFixed(1) || '—', options: { fill, fontSize: 9, align: 'center', valign: 'middle' } },
+        {
+          text: `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}`,
+          options: { fill, fontSize: 9, align: 'center', valign: 'middle', color: diff >= 0 ? '059669' : 'DC2626', bold: Math.abs(diff) > 0.5 }
+        }
+      ];
+    })
+  ];
+
+  slide.addTable(tableData, {
+    x, y, w, rowH: 0.35,
+    border: { pt: 0.5, color: 'DDD6FE' },
+    colW: colWs
+  });
+}
+
+/**
  * Crea una presentación PPTX completa con portada, KPIs, gráficos, tablas y narrativa IA.
  */
 export function createPresentationDeck({ filters, metrics, narrative }) {
@@ -239,7 +280,33 @@ export function createPresentationDeck({ filters, metrics, narrative }) {
     addFooter(slide, footer);
   }
 
-  // 11. Calidad de dato
+  // 11. Análisis Detallado por Centro de Práctica (con desglose por rol)
+  {
+    const slide = pptx.addSlide();
+    addSlideHeader(slide, 'Análisis Detallado por Centro de Práctica', 'Desempeño comparativo con desglose por rol del evaluador');
+
+    if (metrics.centerAnalysis && metrics.centerAnalysis.length > 0) {
+      addCenterAnalysisTable(slide, 0.7, 1.8, 11.8, metrics.centerAnalysis);
+
+      // Pie con insights
+      const top = metrics.centerAnalysis[0];
+      const last = metrics.centerAnalysis[metrics.centerAnalysis.length - 1];
+      const brecha = (top.score - last.score).toFixed(2);
+      const above40 = metrics.centerAnalysis.filter(c => c.score >= 4.0).length;
+      const below35 = metrics.centerAnalysis.filter(c => c.score < 3.5).length;
+
+      slide.addText(
+        `🏆 Mejor: ${top.name} (${top.score.toFixed(2)})  |  ⚠️ Menor: ${last.name} (${last.score.toFixed(2)})  |  📊 Brecha: ${brecha} pts  |  ✅ >=4.0: ${above40} centros  |  🔴 <3.5: ${below35} centros`,
+        { x: 0.7, y: 5.8, w: 11.8, h: 0.5, fontSize: 10, color: '475569', align: 'center', italic: true }
+      );
+    } else {
+      slide.addText('No hay datos de centros disponibles.', { x: 0.5, y: 3, w: 12, align: 'center', color: '64748B' });
+    }
+
+    addFooter(slide, footer);
+  }
+
+  // 12. Calidad de dato
   {
     const slide = pptx.addSlide();
     addSlideHeader(slide, 'Diagnóstico de Calidad de Datos', 'Nivel de confianza de la muestra analizada');
@@ -260,7 +327,7 @@ export function createPresentationDeck({ filters, metrics, narrative }) {
     addFooter(slide, footer);
   }
 
-  // 12. Análisis Profundo IA
+  // 13. Análisis Profundo IA
   {
     const slide = pptx.addSlide();
     addSlideHeader(slide, 'Deep Data Analysis (IA)', 'Estudio completo e integral del ecosistema de datos');
@@ -272,7 +339,7 @@ export function createPresentationDeck({ filters, metrics, narrative }) {
     addFooter(slide, footer);
   }
 
-  // 13. Hallazgos IA
+  // 14. Hallazgos IA
   {
     const slide = pptx.addSlide();
     addSlideHeader(slide, 'Descubrimientos y Hallazgos', 'Insights extraídos mediante modelado estratégico');
@@ -280,7 +347,7 @@ export function createPresentationDeck({ filters, metrics, narrative }) {
     addFooter(slide, footer);
   }
 
-  // 14. Riesgos IA
+  // 15. Riesgos IA
   {
     const slide = pptx.addSlide();
     addSlideHeader(slide, 'Mapa de Riesgos Operativos', 'Focos de atención y posibles desviaciones institucionales');
@@ -288,7 +355,7 @@ export function createPresentationDeck({ filters, metrics, narrative }) {
     addFooter(slide, footer);
   }
 
-  // 15. Plan de Acción
+  // 16. Plan de Acción
   {
     const slide = pptx.addSlide();
     addSlideHeader(slide, 'Sugerencias y Plan de Acción Estratégico', 'Recomendaciones Data-Driven para mejora continua');
