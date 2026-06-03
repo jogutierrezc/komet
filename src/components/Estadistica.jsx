@@ -272,6 +272,7 @@ export default function Estadistica() {
   const [selectedCenterView, setSelectedCenterView] = useState('Todos');
   const [combineSimilarCenters, setCombineSimilarCenters] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
+  const [comparativeMode, setComparativeMode] = useState('general');
   const [isGeneratingAnalitic, setIsGeneratingAnalitic] = useState(false);
   const [analiticError, setAnaliticError] = useState('');
   const [analiticOutput, setAnaliticOutput] = useState(null);
@@ -468,6 +469,54 @@ export default function Estadistica() {
       estado0273: row.score >= 4.0 ? 'Fortaleza' : row.score >= 3.7 ? 'Cumple' : row.score >= 3.2 ? 'Vigilancia' : 'Intervencion'
     }));
   }, [byCenter, kpis.globalScore]);
+
+  const comparativeData = useMemo(() => {
+    const globalScore = kpis.globalScore;
+
+    if (comparativeMode === 'program' && selectedProgram !== 'Todos') {
+      const selectedRows = filtered.filter((row) => resolveProgram(row) === selectedProgram);
+      const selectedScore = avg(selectedRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number'));
+      return {
+        type: 'program',
+        label: selectedProgram,
+        selectedScore,
+        selectedCount: selectedRows.length,
+        baselineScore: globalScore,
+        gapToBaseline: Number((selectedScore - globalScore).toFixed(2))
+      };
+    }
+
+    if (comparativeMode === 'program-vs-rest' && selectedProgram !== 'Todos') {
+      const selectedRows = filtered.filter((row) => resolveProgram(row) === selectedProgram);
+      const restRows = filtered.filter((row) => resolveProgram(row) !== selectedProgram);
+      const selectedScore = avg(selectedRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number'));
+      const restScore = avg(restRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number'));
+      return {
+        type: 'program-vs-rest',
+        label: selectedProgram,
+        selectedScore,
+        selectedCount: selectedRows.length,
+        restScore,
+        restCount: restRows.length,
+        gapToRest: Number((selectedScore - restScore).toFixed(2))
+      };
+    }
+
+    if (comparativeMode === 'center' && selectedCenter !== 'Todos') {
+      const selectedRows = filtered.filter((row) => getRowCenter(row, combineSimilarCenters) === selectedCenter);
+      const selectedScore = avg(selectedRows.map((row) => row.scoreSummary?.globalScore).filter((value) => typeof value === 'number'));
+      return {
+        type: 'center',
+        label: selectedCenter,
+        selectedScore,
+        selectedCount: selectedRows.length,
+        baselineScore: globalScore,
+        gapToBaseline: Number((selectedScore - globalScore).toFixed(2))
+      };
+    }
+
+    return { type: 'general' };
+  }, [filtered, selectedProgram, selectedCenter, combineSimilarCenters, comparativeMode, kpis.globalScore]);
 
   const criteriaSectionStats = useMemo(() => {
     const map = new Map();
@@ -1123,6 +1172,36 @@ export default function Estadistica() {
   const crossMatrix = useMemo(() => {
     return calculateCrossMatrix(centerAnalysis);
   }, [centerAnalysis]);
+
+  const activeCrossMatrix = useMemo(() => {
+    if (comparativeMode === 'program' && selectedProgram !== 'Todos') {
+      const program = selectedProgram;
+      const allCenters = crossMatrix.allCenters.filter(cName => crossMatrix.matrix[cName]?.[program]?.total > 0);
+      const matrix = {};
+      allCenters.forEach((cName) => {
+        matrix[cName] = { [program]: crossMatrix.matrix[cName]?.[program] || null };
+      });
+      return { allCenters, allPrograms: [program], matrix };
+    }
+
+    if (comparativeMode === 'program-vs-rest' && selectedProgram !== 'Todos') {
+      const program = selectedProgram;
+      const allCenters = crossMatrix.allCenters;
+      const matrix = {};
+      allCenters.forEach((cName) => {
+        matrix[cName] = { [program]: crossMatrix.matrix[cName]?.[program] || null };
+      });
+      return { allCenters, allPrograms: [program], matrix };
+    }
+
+    if (comparativeMode === 'center' && selectedCenter !== 'Todos') {
+      const center = selectedCenter;
+      const allPrograms = crossMatrix.allPrograms.filter((p) => crossMatrix.matrix[center]?.[p]?.total > 0);
+      return { allCenters: [center], allPrograms, matrix: { [center]: crossMatrix.matrix[center] || {} } };
+    }
+
+    return crossMatrix;
+  }, [crossMatrix, comparativeMode, selectedProgram, selectedCenter]);
 
   function buildFilteredExportRows(rows) {
     const sectionNames = [...new Set(
@@ -2171,6 +2250,66 @@ export default function Estadistica() {
         {/* ── TAB: ANÁLISIS COMPARATIVO ── */}
         {activeTab === 'comparativo' && (
           <div className="space-y-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm">
+                <span className="font-semibold">Modo comparativo:</span>
+                <select
+                  value={comparativeMode}
+                  onChange={(e) => setComparativeMode(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="general">Vista general</option>
+                  <option value="program" disabled={selectedProgram === 'Todos'}>
+                    {selectedProgram === 'Todos' ? 'Elige un programa' : 'Programa seleccionado vs global'}
+                  </option>
+                  <option value="program-vs-rest" disabled={selectedProgram === 'Todos'}>
+                    {selectedProgram === 'Todos' ? 'Elige un programa' : 'Programa seleccionado vs resto'}
+                  </option>
+                  <option value="center" disabled={selectedCenter === 'Todos'}>
+                    {selectedCenter === 'Todos' ? 'Elige un centro' : 'Centro seleccionado vs global'}
+                  </option>
+                </select>
+              </label>
+              <span className="text-xs text-slate-500">Filtros activos: {selectedCampus} · {selectedLevel} · {selectedCenter} · {selectedProgram}</span>
+            </div>
+
+            <ChartCard title="Resumen comparativo" subtitle="Revisa el desempeño seleccionado frente a un benchmark de referencia">
+              {comparativeData.type === 'general' ? (
+                <p className="text-sm text-slate-600">Selecciona un programa o centro para comparar su promedio con el benchmark actual.</p>
+              ) : (
+                <div className="space-y-3">
+                  {comparativeData.type === 'program' && (
+                    <>
+                      <p className="text-sm text-slate-700">Programa: <strong>{comparativeData.label}</strong></p>
+                      <p className="text-sm text-slate-600">Evaluaciones: <strong>{comparativeData.selectedCount}</strong></p>
+                      <p className="text-sm text-slate-600">Puntaje del programa: <strong>{comparativeData.selectedScore.toFixed(2)}</strong></p>
+                      <p className="text-sm text-slate-600">Promedio global actual: <strong>{comparativeData.baselineScore.toFixed(2)}</strong></p>
+                      <p className="text-sm text-slate-600">Diferencia con el promedio: <strong>{comparativeData.gapToBaseline >= 0 ? '+' : ''}{comparativeData.gapToBaseline.toFixed(2)}</strong></p>
+                    </>
+                  )}
+
+                  {comparativeData.type === 'program-vs-rest' && (
+                    <>
+                      <p className="text-sm text-slate-700">Programa: <strong>{comparativeData.label}</strong></p>
+                      <p className="text-sm text-slate-600">Promedio del programa: <strong>{comparativeData.selectedScore.toFixed(2)}</strong> ({comparativeData.selectedCount} evaluaciones)</p>
+                      <p className="text-sm text-slate-600">Promedio del resto: <strong>{comparativeData.restScore.toFixed(2)}</strong> ({comparativeData.restCount} evaluaciones)</p>
+                      <p className="text-sm text-slate-600">Diferencia: <strong>{comparativeData.gapToRest >= 0 ? '+' : ''}{comparativeData.gapToRest.toFixed(2)}</strong></p>
+                    </>
+                  )}
+
+                  {comparativeData.type === 'center' && (
+                    <>
+                      <p className="text-sm text-slate-700">Centro: <strong>{comparativeData.label}</strong></p>
+                      <p className="text-sm text-slate-600">Evaluaciones: <strong>{comparativeData.selectedCount}</strong></p>
+                      <p className="text-sm text-slate-600">Puntaje del centro: <strong>{comparativeData.selectedScore.toFixed(2)}</strong></p>
+                      <p className="text-sm text-slate-600">Promedio global actual: <strong>{comparativeData.baselineScore.toFixed(2)}</strong></p>
+                      <p className="text-sm text-slate-600">Diferencia con el promedio: <strong>{comparativeData.gapToBaseline >= 0 ? '+' : ''}{comparativeData.gapToBaseline.toFixed(2)}</strong></p>
+                    </>
+                  )}
+                </div>
+              )}
+            </ChartCard>
+
             {/* Matriz comparativa Centros × Programas */}
             <ComparadorCentrosProgramas
               centerAnalysis={centerAnalysis}
@@ -2179,7 +2318,7 @@ export default function Estadistica() {
 
             {/* Mapa de calor: Centros × Programas */}
             <ChartCard title="Mapa de calor: Centros × Programas" subtitle="Intensidad de color según puntaje promedio por combinación centro-programa" span={2}>
-              {crossMatrix.allCenters.length === 0 || crossMatrix.allPrograms.length === 0 ? (
+              {activeCrossMatrix.allCenters.length === 0 || activeCrossMatrix.allPrograms.length === 0 ? (
                 <p className="text-sm text-slate-400">Sin datos suficientes para el mapa de calor comparativo.</p>
               ) : (
                 <div className="overflow-x-auto">
@@ -2187,7 +2326,7 @@ export default function Estadistica() {
                     <thead>
                       <tr>
                         <th className="text-left p-2 text-slate-500 font-semibold min-w-[160px]">Centro</th>
-                        {crossMatrix.allPrograms.map((p) => (
+                        {activeCrossMatrix.allPrograms.map((p) => (
                           <th key={p} className="p-2 text-slate-500 font-semibold text-center max-w-[100px] min-w-[70px]">
                             <span className="block truncate" title={p}>{p.length > 14 ? p.slice(0, 14) + '…' : p}</span>
                           </th>
@@ -2196,9 +2335,9 @@ export default function Estadistica() {
                       </tr>
                     </thead>
                     <tbody>
-                      {crossMatrix.allCenters.map((cName, idx) => {
-                        const centerScores = crossMatrix.allPrograms
-                          .map(p => crossMatrix.matrix[cName]?.[p]?.score)
+                      {activeCrossMatrix.allCenters.map((cName, idx) => {
+                        const centerScores = activeCrossMatrix.allPrograms
+                          .map(p => activeCrossMatrix.matrix[cName]?.[p]?.score)
                           .filter(s => s !== null && s !== undefined);
                         const centerAvg = centerScores.length ? avg(centerScores) : 0;
                         return (
@@ -2206,8 +2345,8 @@ export default function Estadistica() {
                             <td className="p-2 text-slate-700 font-medium truncate max-w-[160px]" title={cName}>
                               {cName}
                             </td>
-                            {crossMatrix.allPrograms.map((p) => {
-                              const cell = crossMatrix.matrix[cName]?.[p];
+                            {activeCrossMatrix.allPrograms.map((p) => {
+                              const cell = activeCrossMatrix.matrix[cName]?.[p];
                               const val = cell?.score;
                               const total = cell?.total || 0;
                               const color = val !== null && val !== undefined ? heatColor(val) : '#e2e8f0';
@@ -2246,9 +2385,9 @@ export default function Estadistica() {
                     <tfoot>
                       <tr className="bg-indigo-50/80">
                         <td className="p-2 font-semibold text-indigo-700 text-xs">Prom. Programa</td>
-                        {crossMatrix.allPrograms.map((p) => {
-                          const progScores = crossMatrix.allCenters
-                            .map(c => crossMatrix.matrix[c]?.[p]?.score)
+                        {activeCrossMatrix.allPrograms.map((p) => {
+                          const progScores = activeCrossMatrix.allCenters
+                            .map(c => activeCrossMatrix.matrix[c]?.[p]?.score)
                             .filter(s => s !== null && s !== undefined);
                           const progAvg = progScores.length ? avg(progScores) : 0;
                           return (
@@ -2267,8 +2406,8 @@ export default function Estadistica() {
                         })}
                         <td className="p-2 text-center bg-indigo-100 font-bold text-indigo-800 text-xs">
                           {(() => {
-                            const allScores = crossMatrix.allCenters.flatMap(c =>
-                              crossMatrix.allPrograms.map(p => crossMatrix.matrix[c]?.[p]?.score)
+                            const allScores = activeCrossMatrix.allCenters.flatMap(c =>
+                              activeCrossMatrix.allPrograms.map(p => activeCrossMatrix.matrix[c]?.[p]?.score)
                             ).filter(s => s !== null && s !== undefined);
                             return allScores.length ? avg(allScores).toFixed(2) : '—';
                           })()}
@@ -2290,13 +2429,13 @@ export default function Estadistica() {
 
             {/* Comparativa por centro: barras agrupadas por programa */}
             <ChartCard title="Desempeño por centro y programa" subtitle="Barras agrupadas: puntaje de cada centro desglosado por programa académico" span={2}>
-              {crossMatrix.allCenters.length > 0 && crossMatrix.allPrograms.length > 0 ? (
-                <ResponsiveContainer width="100%" height={Math.max(300, crossMatrix.allCenters.length * 50)}>
+              {activeCrossMatrix.allCenters.length > 0 && activeCrossMatrix.allPrograms.length > 0 ? (
+                <ResponsiveContainer width="100%" height={Math.max(300, activeCrossMatrix.allCenters.length * 50)}>
                   <BarChart
-                    data={crossMatrix.allCenters.map(cName => {
+                    data={activeCrossMatrix.allCenters.map(cName => {
                       const row = { name: cName.length > 20 ? cName.slice(0, 20) + '…' : cName };
-                      crossMatrix.allPrograms.forEach(p => {
-                        row[p] = crossMatrix.matrix[cName]?.[p]?.score || 0;
+                      activeCrossMatrix.allPrograms.forEach(p => {
+                        row[p] = activeCrossMatrix.matrix[cName]?.[p]?.score || 0;
                       });
                       return row;
                     })}
@@ -2311,7 +2450,7 @@ export default function Estadistica() {
                     <Tooltip formatter={(v) => Number(v).toFixed(2)} />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                     <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'top', fontSize: 10, fill: '#f97316' }} />
-                    {crossMatrix.allPrograms.map((p, i) => (
+                    {activeCrossMatrix.allPrograms.map((p, i) => (
                       <Bar key={p} dataKey={p} name={p.length > 14 ? p.slice(0, 14) + '…' : p} fill={PALETTE[i % PALETTE.length]} radius={[0, 4, 4, 0]} />
                     ))}
                   </BarChart>
@@ -2325,21 +2464,21 @@ export default function Estadistica() {
             <ChartCard title="Relación centros vs programas" subtitle="Cada punto = combinación centro-programa, ejes = promedios del centro y del programa">
               {(() => {
                 const scatterData = [];
-                crossMatrix.allCenters.forEach((cName) => {
-                  crossMatrix.allPrograms.forEach((p) => {
-                    const cell = crossMatrix.matrix[cName]?.[p];
+                activeCrossMatrix.allCenters.forEach((cName) => {
+                  activeCrossMatrix.allPrograms.forEach((p) => {
+                    const cell = activeCrossMatrix.matrix[cName]?.[p];
                     if (cell?.score !== null && cell?.score !== undefined && cell?.total > 0) {
                       scatterData.push({
                         name: cName,
                         program: p,
                         centerScore: avg(
-                          crossMatrix.allPrograms
-                            .map(p2 => crossMatrix.matrix[cName]?.[p2]?.score)
+                          activeCrossMatrix.allPrograms
+                            .map(p2 => activeCrossMatrix.matrix[cName]?.[p2]?.score)
                             .filter(s => s !== null && s !== undefined)
                         ),
                         programScore: avg(
-                          crossMatrix.allCenters
-                            .map(c => crossMatrix.matrix[c]?.[p]?.score)
+                          activeCrossMatrix.allCenters
+                            .map(c => activeCrossMatrix.matrix[c]?.[p]?.score)
                             .filter(s => s !== null && s !== undefined)
                         ),
                         score: cell.score,
@@ -2380,9 +2519,9 @@ export default function Estadistica() {
             <ChartCard title="Cobertura de evaluación" subtitle="Volumen de evaluaciones registradas por cada combinación centro-programa">
               {(() => {
                 const coberturaData = [];
-                crossMatrix.allCenters.forEach((cName) => {
-                  crossMatrix.allPrograms.forEach((p) => {
-                    const cell = crossMatrix.matrix[cName]?.[p];
+                activeCrossMatrix.allCenters.forEach((cName) => {
+                  activeCrossMatrix.allPrograms.forEach((p) => {
+                    const cell = activeCrossMatrix.matrix[cName]?.[p];
                     if (cell?.total > 0) {
                       coberturaData.push({
                         name: `${cName.length > 18 ? cName.slice(0, 18) + '…' : cName} - ${p.length > 12 ? p.slice(0, 12) + '…' : p}`,
