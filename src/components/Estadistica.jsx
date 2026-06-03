@@ -7,7 +7,7 @@ import {
   LabelList
 } from 'recharts';
 import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download } from 'lucide-react';
-import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt } from '../lib/data';
+import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, OPENROUTER_FREE_MODELS } from '../lib/data';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
@@ -846,9 +846,13 @@ export default function Estadistica() {
         '\n\nReglas:\n- Interpreta tendencias, dispersion y comparativos entre centros, programas, roles y secciones.\n- Compara explicitamente cada programa frente al promedio global y frente al umbral 3.7.\n- Si hay un programa seleccionado, comparalo contra los demas programas del dataset filtrado.\n- Usa el marco del algoritmo MEN 00273 de 2021 para clasificar el nivel de riesgo.\n- Analiza todos los criterios presentes en criterioPorSeccion.\n- Si hay conflictos entre datos cuantitativos y comentarios, explicalos como tension de evidencia.\n- Usa comentarios para construir oportunidades de mejora concretas.\n- No omitas ningun escenario presente en escenariosPractica.\n\nDataset filtrado:\n' +
         JSON.stringify(payload);
 
+      const selectedModel = String(settings?.openrouter_model || '').includes(':free')
+        ? settings.openrouter_model
+        : OPENROUTER_FREE_MODELS[0];
+
       const raw = await runOpenRouterPrompt({
         apiKey: trimmedApiKey,
-        model: settings?.openrouter_model,
+        model: selectedModel,
         systemPrompt: [systemPrompt, settings?.openrouter_system_prompt].filter(Boolean).join('\n\n'),
         temperature: Number(settings?.openrouter_temperature ?? 0.6),
         prompt

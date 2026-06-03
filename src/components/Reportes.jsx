@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
-import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, getProgramsByCampus } from '../lib/data';
+import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, getProgramsByCampus, OPENROUTER_FREE_MODELS } from '../lib/data';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
 import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
 
@@ -1304,9 +1304,13 @@ Dataset:
 ${JSON.stringify(compactDataset)}
       `.trim();
 
+      const selectedModel = String(settings?.openrouter_model || '').includes(':free')
+        ? settings.openrouter_model
+        : OPENROUTER_FREE_MODELS[0];
+
       const rawNarrative = await runOpenRouterPrompt({
         apiKey: settings?.openrouter_api_key,
-        model: settings?.openrouter_model,
+        model: selectedModel,
         systemPrompt: [systemPrompt, settings?.openrouter_system_prompt].filter(Boolean).join('\n\n'),
         temperature: Number(settings?.openrouter_temperature ?? 0.6),
         prompt
