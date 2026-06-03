@@ -6,6 +6,28 @@ export function norm(value) {
   return String(value || '').trim();
 }
 
+export function normalizeCenterName(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Sin sitio';
+
+  const normalized = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s*[-–—]\s*/g, ' ')
+    .replace(/\s*\(.*?\)\s*/g, ' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  return normalized || 'Sin sitio';
+}
+
+export function getRowCenter(row = {}, combine = false) {
+  const center = row.center || row.centro || '';
+  return combine ? normalizeCenterName(center) : norm(center || 'Sin sitio');
+}
+
 export function avg(values = []) {
   if (!values.length) return 0;
   return Number((values.reduce((sum, item) => sum + item, 0) / values.length).toFixed(2));

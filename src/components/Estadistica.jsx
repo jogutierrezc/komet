@@ -6,8 +6,10 @@ import {
   LineChart, Line, FunnelChart, Funnel,
   LabelList
 } from 'recharts';
-import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download } from 'lucide-react';
+import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download, Table2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, OPENROUTER_FREE_MODELS } from '../lib/data';
+import { calculateCenterAnalysis, calculateCrossMatrix } from '../utils/dataHelpers';
+import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
@@ -27,6 +29,28 @@ function stdDev(values = []) {
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length;
   return Number(Math.sqrt(variance).toFixed(3));
+}
+
+function normalizeCenterName(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Sin sitio';
+
+  const normalized = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s*[-–—]\s*/g, ' ')
+    .replace(/\s*\(.*?\)\s*/g, ' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  return normalized || 'Sin sitio';
+}
+
+function getRowCenter(row = {}, combine = false) {
+  const center = row.center || row.centro || '';
+  return combine ? normalizeCenterName(center) : norm(center || 'Sin sitio');
 }
 
 function norm(v) { return String(v || '').trim(); }
@@ -102,6 +126,10 @@ function resolveLevel(row = {}) {
   return '';
 }
 
+// Secciones a excluir del mapa de calor (campos de texto abierto, no numéricos)
+const HEATMAP_EXCLUDED_SECTIONS = /observ|comentario|recomend|sugerencia|texto_libre|justific|fortaleza|debilidad|opinion|retroaliment|mejora/i;
+const SECTION_EXCLUDED_SECTIONS = /observaciones|fortalezas|aspectos por mejorar/i;
+
 function escapeHtml(value = '') {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -139,10 +167,9 @@ function alertColor(score) {
 
 function heatColor(score) {
   if (typeof score !== 'number' || Number.isNaN(score) || score <= 0) return '#e2e8f0';
-  const clamped = Math.max(1, Math.min(5, score));
-  const pct = (clamped - 1) / 4;
-  const hue = Math.round(pct * 120); // 0=rojo,120=verde
-  return `hsl(${hue}, 74%, 46%)`;
+  if (score <= 3.0) return '#ef4444';
+  if (score < 4.5) return '#f97316';
+  return '#22c55e';
 }
 
 // Paleta de colores para roles / programas
@@ -243,6 +270,7 @@ export default function Estadistica() {
   const [selectedCenter, setSelectedCenter] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
   const [selectedCenterView, setSelectedCenterView] = useState('Todos');
+  const [combineSimilarCenters, setCombineSimilarCenters] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [isGeneratingAnalitic, setIsGeneratingAnalitic] = useState(false);
   const [analiticError, setAnaliticError] = useState('');
@@ -252,6 +280,10 @@ export default function Estadistica() {
   const [isExportingCharts, setIsExportingCharts] = useState(false);
   const chartAreaRef = useRef(null);
 
+  // Cargar evaluaciones:
+  // 1. En montaje: carga completa (Todos) — solo una vez
+  // 2. Cuando cambia campus: recarga con filtro (más rápido, menos datos)
+  // Cargar datos al montar (una sola vez, filtrado es 100% cliente)
   useEffect(() => {
     setLoading(true);
     getEvaluationReportMetrics()
@@ -275,7 +307,7 @@ export default function Estadistica() {
   // filtro final (centro y programa)
   const filtered = useMemo(() => {
     return baseFiltered.filter((row) => {
-      const rowCenter = norm(row.center || 'Sin sitio');
+      const rowCenter = getRowCenter(row, combineSimilarCenters);
       const rowProgram = resolveProgram(row);
       if (selectedCenter !== 'Todos' && rowCenter !== selectedCenter) return false;
       if (selectedProgram !== 'Todos' && rowProgram !== selectedProgram) return false;
@@ -285,20 +317,20 @@ export default function Estadistica() {
 
   // opciones de campus
   const campusOptions = useMemo(() => {
-    return ['Todos', ...[...new Set(rows.map((r) => norm(r.campus)).filter(Boolean))].sort()];
+    return ['Todos', ...[...new Set(rows.map((r) => norm(r.campus || 'Sin campus')).filter(Boolean).filter((value) => value !== 'Todos'))].sort()];
   }, [rows]);
 
   const centerOptions = useMemo(() => {
-    return ['Todos', ...[...new Set(baseFiltered.map((r) => norm(r.center || 'Sin sitio')).filter(Boolean))].sort()];
-  }, [baseFiltered]);
+    return ['Todos', ...[...new Set(baseFiltered.map((r) => getRowCenter(r, combineSimilarCenters)).filter(Boolean))].filter((value) => value !== 'Todos').sort()];
+  }, [baseFiltered, combineSimilarCenters]);
 
   const programOptions = useMemo(() => {
     const source = selectedCenter === 'Todos'
       ? baseFiltered
-      : baseFiltered.filter((r) => norm(r.center || 'Sin sitio') === selectedCenter);
-    const programs = [...new Set(source.map((r) => resolveProgram(r)).filter((p) => p && p !== 'Sin programa'))].sort();
+      : baseFiltered.filter((r) => getRowCenter(r, combineSimilarCenters) === selectedCenter);
+    const programs = [...new Set(source.map((r) => resolveProgram(r)).filter((p) => p && p !== 'Sin programa'))].filter((value) => value !== 'Todos').sort();
     return ['Todos', ...programs];
-  }, [baseFiltered, selectedCenter]);
+  }, [baseFiltered, selectedCenter, combineSimilarCenters]);
 
   useEffect(() => {
     if (!centerOptions.includes(selectedCenter)) setSelectedCenter('Todos');
@@ -308,9 +340,16 @@ export default function Estadistica() {
     if (!programOptions.includes(selectedProgram)) setSelectedProgram('Todos');
   }, [programOptions, selectedProgram]);
 
+  useEffect(() => {
+    if (combineSimilarCenters) {
+      if (selectedCenter !== 'Todos') setSelectedCenter(normalizeCenterName(selectedCenter));
+      if (selectedCenterView !== 'Todos') setSelectedCenterView(normalizeCenterName(selectedCenterView));
+    }
+  }, [combineSimilarCenters]);
+
   const centerViewOptions = useMemo(() => {
-    return ['Todos', ...[...new Set(filtered.map((r) => norm(r.center || 'Sin sitio')).filter(Boolean))].sort()];
-  }, [filtered]);
+    return ['Todos', ...[...new Set(filtered.map((r) => getRowCenter(r, combineSimilarCenters)).filter(Boolean))].filter((value) => value !== 'Todos').sort()];
+  }, [filtered, combineSimilarCenters]);
 
   useEffect(() => {
     if (!centerViewOptions.includes(selectedCenterView)) setSelectedCenterView('Todos');
@@ -320,7 +359,7 @@ export default function Estadistica() {
   const kpis = useMemo(() => {
     const scores = filtered.map((r) => r.scoreSummary?.globalScore).filter((v) => typeof v === 'number');
     const completed = filtered.filter((r) => r.status === 'Completada').length;
-    const centers = new Set(filtered.map((r) => norm(r.center || 'Sin sitio'))).size;
+    const centers = new Set(filtered.map((r) => getRowCenter(r, combineSimilarCenters))).size;
     const programs = new Set(filtered.map((r) => resolveProgram(r)).filter((p) => p !== 'Sin programa')).size;
     return {
       total: filtered.length,
@@ -357,7 +396,7 @@ export default function Estadistica() {
       const cur = map.get(key) || { name: key, total: 0, completed: 0, scores: [], centers: new Set() };
       cur.total += 1;
       if (row.status === 'Completada') cur.completed += 1;
-      cur.centers.add(norm(row.center || 'Sin sitio'));
+      cur.centers.add(getRowCenter(row, combineSimilarCenters));
       const s = row.scoreSummary?.globalScore;
       if (typeof s === 'number') cur.scores.push(s);
       map.set(key, cur);
@@ -379,7 +418,7 @@ export default function Estadistica() {
   const byCenter = useMemo(() => {
     const map = new Map();
     filtered.forEach((row) => {
-      const key = norm(row.center || 'Sin sitio');
+      const key = getRowCenter(row, combineSimilarCenters);
       const cur = map.get(key) || { name: key, scores: [], total: 0, completed: 0 };
       cur.total += 1;
       if (row.status === 'Completada') cur.completed += 1;
@@ -394,8 +433,7 @@ export default function Estadistica() {
         total: d.total,
         completionPct: d.total ? Number(((d.completed / d.total) * 100).toFixed(1)) : 0,
       }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
+      .sort((a, b) => b.score - a.score);
   }, [filtered]);
 
   const topCentersByVolume = useMemo(() => {
@@ -466,7 +504,7 @@ export default function Estadistica() {
     filtered.forEach((row) => {
       extractOpenTextResponses(row).slice(0, 2).forEach((item) => {
         snippets.push({
-          center: norm(row.center || 'Sin sitio'),
+          center: getRowCenter(row, combineSimilarCenters),
           program: resolveProgram(row),
           role: norm(row.role || 'Sin rol'),
           question: item.question,
@@ -481,7 +519,7 @@ export default function Estadistica() {
   const comentariosPorCentro = useMemo(() => {
     const map = new Map();
     filtered.forEach((row) => {
-      const center = norm(row.center || 'Sin sitio');
+      const center = getRowCenter(row, combineSimilarCenters);
       const cur = map.get(center) || { center, comments: [], studentComments: [], scores: [], roles: new Set() };
       const role = norm(row.role || 'Sin rol');
       cur.roles.add(role);
@@ -534,14 +572,14 @@ export default function Estadistica() {
   const centerComments = useMemo(() => {
     const source = selectedCenterView === 'Todos'
       ? filtered
-      : filtered.filter((r) => norm(r.center || 'Sin sitio') === selectedCenterView);
+      : filtered.filter((r) => getRowCenter(r, combineSimilarCenters) === selectedCenterView);
 
     const records = [];
     source.forEach((row) => {
       const snippets = extractOpenTextResponses(row).slice(0, 3);
       snippets.forEach((snippet) => {
         records.push({
-          center: norm(row.center || 'Sin sitio'),
+          center: getRowCenter(row, combineSimilarCenters),
           program: resolveProgram(row),
           role: norm(row.role || 'Sin rol'),
           person: norm(row.person || 'Evaluador'),
@@ -650,7 +688,7 @@ export default function Estadistica() {
         const level = resolveLevel(row);
         if (level && level !== selectedLevel) return false;
       }
-      if (selectedCenter !== 'Todos' && norm(row.center || 'Sin sitio') !== selectedCenter) return false;
+      if (selectedCenter !== 'Todos' && getRowCenter(row, combineSimilarCenters) !== selectedCenter) return false;
       if (selectedProgram !== 'Todos' && resolveProgram(row) !== selectedProgram) return false;
       return true;
     });
@@ -706,6 +744,7 @@ export default function Estadistica() {
     filtered.forEach((row) => {
       (row.scoreSummary?.sectionScores || []).forEach((sec) => {
         const key = norm(sec.title || sec.seccion || 'Sección');
+        if (SECTION_EXCLUDED_SECTIONS.test(key)) return;
         const cur = map.get(key) || { name: key, r1: 0, r2: 0, r3: 0, r4: 0, r5: 0, total: 0 };
         const rounded = Math.round(Number(sec.score || 0));
         if (rounded >= 1 && rounded <= 5) {
@@ -744,7 +783,7 @@ export default function Estadistica() {
     const map = new Map();
 
     filtered.forEach((row) => {
-      const center = norm(row.center || 'Sin sitio');
+      const center = getRowCenter(row, combineSimilarCenters);
       const cur = map.get(center) || { name: center, total: 0, studentImpact: 0, scores: [], campus: norm(row.campus || 'Sin campus') };
       cur.total += 1;
       const role = norm(row.role || '').toLowerCase();
@@ -898,6 +937,7 @@ export default function Estadistica() {
     filtered.forEach((row) => {
       (row.scoreSummary?.sectionScores || []).forEach((sec) => {
         const key = norm(sec.title || sec.seccion || 'Sección');
+        if (SECTION_EXCLUDED_SECTIONS.test(key)) return;
         const cur = map.get(key) || { name: key, scores: [] };
         if (typeof sec.score === 'number') cur.scores.push(sec.score);
         map.set(key, cur);
@@ -1045,7 +1085,7 @@ export default function Estadistica() {
   const heatmap = useMemo(() => {
     const centerMap = new Map();
     filtered.forEach((row) => {
-      const center = norm(row.center || 'Sin sitio');
+      const center = getRowCenter(row, combineSimilarCenters);
       const cur = centerMap.get(center) || { center, campus: norm(row.campus || 'Sin campus'), sections: new Map(), total: 0 };
       cur.total += 1;
       (row.scoreSummary?.sectionScores || []).forEach((sec) => {
@@ -1057,17 +1097,16 @@ export default function Estadistica() {
       centerMap.set(center, cur);
     });
 
-    const topCenters = [...centerMap.values()]
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 12);
+    const allCenters = [...centerMap.values()]
+      .sort((a, b) => b.total - a.total);
 
-    // recopilar todas las secciones
+    // recopilar todas las secciones (excluyendo observaciones / texto abierto)
     const allSections = new Set();
-    topCenters.forEach((c) => c.sections.forEach((_, k) => allSections.add(k)));
-    const sections = [...allSections].slice(0, 6);
+    allCenters.forEach((c) => c.sections.forEach((_, k) => allSections.add(k)));
+    const sections = [...allSections].filter((s) => !HEATMAP_EXCLUDED_SECTIONS.test(s));
 
     return {
-      centers: topCenters.map((c) => ({
+      centers: allCenters.map((c) => ({
         campus: c.campus,
         center: c.center.length > 24 ? c.center.slice(0, 24) + '…' : c.center,
         sections: Object.fromEntries(sections.map((s) => [s, avg(c.sections.get(s) || [])])),
@@ -1075,6 +1114,15 @@ export default function Estadistica() {
       sections,
     };
   }, [filtered]);
+
+  // ── análisis comparativo centros × programas ────────────────────────────────
+  const centerAnalysis = useMemo(() => {
+    return calculateCenterAnalysis(filtered);
+  }, [filtered]);
+
+  const crossMatrix = useMemo(() => {
+    return calculateCrossMatrix(centerAnalysis);
+  }, [centerAnalysis]);
 
   function buildFilteredExportRows(rows) {
     const sectionNames = [...new Set(
@@ -1101,7 +1149,7 @@ export default function Estadistica() {
       }, {});
 
       return {
-        centro: norm(row.center || 'Sin sitio'),
+        centro: getRowCenter(row, combineSimilarCenters),
         campus: norm(row.campus || 'Sin campus'),
         programa: resolveProgram(row),
         rol: norm(row.role || 'Sin rol'),
@@ -1223,6 +1271,7 @@ export default function Estadistica() {
     { key: 'centros', label: 'Centros', icon: Building2 },
     { key: 'roles', label: 'Por Rol', icon: Users },
     { key: 'secciones', label: 'Secciones', icon: BarChart3 },
+    { key: 'comparativo', label: 'Análisis Comparativo', icon: Table2 },
     { key: 'analitic', label: 'Analitic Komet', icon: Brain },
   ];
 
@@ -1278,6 +1327,15 @@ export default function Estadistica() {
           >
             {programOptions.map((p) => <option key={p} value={p}>{p === 'Todos' ? 'Todos los programas' : p}</option>)}
           </select>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
+            <input
+              type="checkbox"
+              checked={combineSimilarCenters}
+              onChange={(e) => setCombineSimilarCenters(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            Combinar centros similares
+          </label>
         </div>
 
         <div className="flex flex-wrap gap-3">
@@ -1882,8 +1940,8 @@ export default function Estadistica() {
                         <th className="text-left p-2 text-slate-500 font-semibold min-w-[120px]">Sede</th>
                         <th className="text-left p-2 text-slate-500 font-semibold min-w-[150px]">Centro</th>
                         {heatmap.sections.map((s) => (
-                          <th key={s} className="p-2 text-slate-500 font-semibold text-center max-w-[90px]">
-                            <span className="block truncate max-w-[88px]" title={s}>{s.length > 14 ? s.slice(0, 14) + '…' : s}</span>
+                          <th key={s} className="p-2 text-slate-500 font-semibold text-center max-w-[100px] min-w-[70px]">
+                            <span className="block truncate" title={s}>{s.length > 16 ? s.slice(0, 16) + '…' : s}</span>
                           </th>
                         ))}
                       </tr>
@@ -1897,9 +1955,9 @@ export default function Estadistica() {
                             const val = row.sections[s] || 0;
                             const color = heatColor(val || null);
                             return (
-                              <td key={s} className="p-1 text-center">
+                              <td key={s} className="p-1 text-center overflow-hidden">
                                 <div
-                                  className="rounded-lg py-1.5 px-2 font-bold text-white text-xs"
+                                  className="rounded-lg py-1.5 px-1 font-bold text-white text-xs truncate"
                                   style={{ background: val > 0 ? color : '#e2e8f0', color: val > 0 ? '#fff' : '#94a3b8' }}
                                 >
                                   {val > 0 ? val.toFixed(1) : '–'}
@@ -1912,7 +1970,7 @@ export default function Estadistica() {
                     </tbody>
                   </table>
                   <div className="flex gap-4 mt-4 text-xs text-slate-500">
-                    {[['1.0', '#ef4444', 'Rojo crítico'], ['3.0', '#eab308', 'Zona media'], ['5.0', '#22c55e', 'Verde alto']].map(([range, color, label]) => (
+                    {[['1.0 - 3.0', '#ef4444', 'Rojo: crítico'], ['3.0 - 4.5', '#f97316', 'Naranja: riesgo medio'], ['4.5 - 5.0', '#22c55e', 'Verde: óptimo']].map(([range, color, label]) => (
                       <div key={label} className="flex items-center gap-1.5">
                         <span className="w-3 h-3 rounded" style={{ background: color }} />
                         <span>{range} — {label}</span>
@@ -2106,6 +2164,252 @@ export default function Estadistica() {
                   </BarChart>
                 </ResponsiveContainer>
               )}
+            </ChartCard>
+          </div>
+        )}
+
+        {/* ── TAB: ANÁLISIS COMPARATIVO ── */}
+        {activeTab === 'comparativo' && (
+          <div className="space-y-6">
+            {/* Matriz comparativa Centros × Programas */}
+            <ComparadorCentrosProgramas
+              centerAnalysis={centerAnalysis}
+              loading={loading}
+            />
+
+            {/* Mapa de calor: Centros × Programas */}
+            <ChartCard title="Mapa de calor: Centros × Programas" subtitle="Intensidad de color según puntaje promedio por combinación centro-programa" span={2}>
+              {crossMatrix.allCenters.length === 0 || crossMatrix.allPrograms.length === 0 ? (
+                <p className="text-sm text-slate-400">Sin datos suficientes para el mapa de calor comparativo.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left p-2 text-slate-500 font-semibold min-w-[160px]">Centro</th>
+                        {crossMatrix.allPrograms.map((p) => (
+                          <th key={p} className="p-2 text-slate-500 font-semibold text-center max-w-[100px] min-w-[70px]">
+                            <span className="block truncate" title={p}>{p.length > 14 ? p.slice(0, 14) + '…' : p}</span>
+                          </th>
+                        ))}
+                        <th className="p-2 text-indigo-600 font-semibold text-center min-w-[70px] bg-indigo-50">Prom. Centro</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {crossMatrix.allCenters.map((cName, idx) => {
+                        const centerScores = crossMatrix.allPrograms
+                          .map(p => crossMatrix.matrix[cName]?.[p]?.score)
+                          .filter(s => s !== null && s !== undefined);
+                        const centerAvg = centerScores.length ? avg(centerScores) : 0;
+                        return (
+                          <tr key={cName} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                            <td className="p-2 text-slate-700 font-medium truncate max-w-[160px]" title={cName}>
+                              {cName}
+                            </td>
+                            {crossMatrix.allPrograms.map((p) => {
+                              const cell = crossMatrix.matrix[cName]?.[p];
+                              const val = cell?.score;
+                              const total = cell?.total || 0;
+                              const color = val !== null && val !== undefined ? heatColor(val) : '#e2e8f0';
+                              return (
+                                <td key={p} className="p-1 text-center overflow-hidden">
+                                  <div
+                                    className="rounded-lg py-1.5 px-1 font-bold text-white text-xs truncate"
+                                    style={{
+                                      background: val !== null && val !== undefined ? color : '#e2e8f0',
+                                      color: val !== null && val !== undefined ? '#fff' : '#94a3b8'
+                                    }}
+                                  >
+                                    {val !== null && val !== undefined ? `${val.toFixed(1)}` : '–'}
+                                  </div>
+                                  {total > 0 && (
+                                    <div className="text-[10px] text-slate-400 mt-0.5">{total} eval.</div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 text-center border-l-2 border-indigo-100 bg-indigo-50/50 font-semibold">
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono"
+                                style={{
+                                  background: centerAvg >= 4.0 ? '#dcfce7' : centerAvg >= 3.5 ? '#fef3c7' : '#fee2e2',
+                                  color: centerAvg >= 4.0 ? '#166534' : centerAvg >= 3.5 ? '#92400e' : '#991b1b'
+                                }}
+                              >
+                                {centerAvg > 0 ? centerAvg.toFixed(2) : '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-indigo-50/80">
+                        <td className="p-2 font-semibold text-indigo-700 text-xs">Prom. Programa</td>
+                        {crossMatrix.allPrograms.map((p) => {
+                          const progScores = crossMatrix.allCenters
+                            .map(c => crossMatrix.matrix[c]?.[p]?.score)
+                            .filter(s => s !== null && s !== undefined);
+                          const progAvg = progScores.length ? avg(progScores) : 0;
+                          return (
+                            <td key={p} className="p-2 text-center font-semibold">
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono"
+                                style={{
+                                  background: progAvg >= 4.0 ? '#dcfce7' : progAvg >= 3.5 ? '#fef3c7' : '#fee2e2',
+                                  color: progAvg >= 4.0 ? '#166534' : progAvg >= 3.5 ? '#92400e' : '#991b1b'
+                                }}
+                              >
+                                {progAvg > 0 ? progAvg.toFixed(2) : '—'}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 text-center bg-indigo-100 font-bold text-indigo-800 text-xs">
+                          {(() => {
+                            const allScores = crossMatrix.allCenters.flatMap(c =>
+                              crossMatrix.allPrograms.map(p => crossMatrix.matrix[c]?.[p]?.score)
+                            ).filter(s => s !== null && s !== undefined);
+                            return allScores.length ? avg(allScores).toFixed(2) : '—';
+                          })()}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <div className="flex gap-4 mt-4 text-xs text-slate-500">
+                    {[['1.0 - 3.0', '#ef4444', 'Crítico'], ['3.0 - 4.5', '#f97316', 'Riesgo medio'], ['4.5 - 5.0', '#22c55e', 'Óptimo']].map(([range, color, label]) => (
+                      <div key={label} className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded" style={{ background: color }} />
+                        <span>{range} — {label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </ChartCard>
+
+            {/* Comparativa por centro: barras agrupadas por programa */}
+            <ChartCard title="Desempeño por centro y programa" subtitle="Barras agrupadas: puntaje de cada centro desglosado por programa académico" span={2}>
+              {crossMatrix.allCenters.length > 0 && crossMatrix.allPrograms.length > 0 ? (
+                <ResponsiveContainer width="100%" height={Math.max(300, crossMatrix.allCenters.length * 50)}>
+                  <BarChart
+                    data={crossMatrix.allCenters.map(cName => {
+                      const row = { name: cName.length > 20 ? cName.slice(0, 20) + '…' : cName };
+                      crossMatrix.allPrograms.forEach(p => {
+                        row[p] = crossMatrix.matrix[cName]?.[p]?.score || 0;
+                      });
+                      return row;
+                    })}
+                    layout="vertical"
+                    barSize={12}
+                    barGap={1}
+                    barCategoryGap="15%"
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v) => Number(v).toFixed(2)} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                    <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'top', fontSize: 10, fill: '#f97316' }} />
+                    {crossMatrix.allPrograms.map((p, i) => (
+                      <Bar key={p} dataKey={p} name={p.length > 14 ? p.slice(0, 14) + '…' : p} fill={PALETTE[i % PALETTE.length]} radius={[0, 4, 4, 0]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-sm text-slate-400 text-center py-8">No hay datos suficientes para mostrar la comparativa.</p>
+              )}
+            </ChartCard>
+
+            {/* Dispersión: centros vs programas */}
+            <ChartCard title="Relación centros vs programas" subtitle="Cada punto = combinación centro-programa, ejes = promedios del centro y del programa">
+              {(() => {
+                const scatterData = [];
+                crossMatrix.allCenters.forEach((cName) => {
+                  crossMatrix.allPrograms.forEach((p) => {
+                    const cell = crossMatrix.matrix[cName]?.[p];
+                    if (cell?.score !== null && cell?.score !== undefined && cell?.total > 0) {
+                      scatterData.push({
+                        name: cName,
+                        program: p,
+                        centerScore: avg(
+                          crossMatrix.allPrograms
+                            .map(p2 => crossMatrix.matrix[cName]?.[p2]?.score)
+                            .filter(s => s !== null && s !== undefined)
+                        ),
+                        programScore: avg(
+                          crossMatrix.allCenters
+                            .map(c => crossMatrix.matrix[c]?.[p]?.score)
+                            .filter(s => s !== null && s !== undefined)
+                        ),
+                        score: cell.score,
+                        total: cell.total
+                      });
+                    }
+                  });
+                });
+                return scatterData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="centerScore" type="number" name="Prom. Centro" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                      <YAxis dataKey="programScore" type="number" name="Prom. Programa" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                      <ZAxis dataKey="total" range={[40, 300]} />
+                      <Tooltip content={({ active, payload }) =>
+                        active && payload?.length ? (
+                          <div className="bg-white border border-slate-200 rounded-xl shadow px-4 py-2 text-sm">
+                            <p className="font-semibold">{payload[0]?.payload?.name}</p>
+                            <p className="text-xs text-slate-500">{payload[0]?.payload?.program}</p>
+                            <p>Puntaje: <strong>{Number(payload[0]?.payload?.score || 0).toFixed(2)}</strong></p>
+                            <p>Evaluaciones: <strong>{payload[0]?.payload?.total}</strong></p>
+                          </div>
+                        ) : null
+                      } />
+                      <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                      <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                      <Scatter data={scatterData} fill="#2563eb" fillOpacity={0.7} />
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-slate-400 text-center py-8">No hay suficientes datos para la gráfica de dispersión.</p>
+                );
+              })()}
+            </ChartCard>
+
+            {/* Resumen de cobertura */}
+            <ChartCard title="Cobertura de evaluación" subtitle="Volumen de evaluaciones registradas por cada combinación centro-programa">
+              {(() => {
+                const coberturaData = [];
+                crossMatrix.allCenters.forEach((cName) => {
+                  crossMatrix.allPrograms.forEach((p) => {
+                    const cell = crossMatrix.matrix[cName]?.[p];
+                    if (cell?.total > 0) {
+                      coberturaData.push({
+                        name: `${cName.length > 18 ? cName.slice(0, 18) + '…' : cName} - ${p.length > 12 ? p.slice(0, 12) + '…' : p}`,
+                        total: cell.total
+                      });
+                    }
+                  });
+                });
+                return coberturaData.length > 0 ? (
+                  <>
+                    <ResponsiveContainer width="100%" height={Math.max(200, Math.min(400, coberturaData.length * 28))}>
+                      <BarChart data={coberturaData.sort((a, b) => b.total - a.total).slice(0, 15)} layout="vertical" barSize={16}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                        <YAxis type="category" dataKey="name" width={200} tick={{ fontSize: 10 }} />
+                        <Tooltip />
+                        <Bar dataKey="total" name="Evaluaciones" fill="#6366f1" radius={[0, 6, 6, 0]}>
+                          <LabelList dataKey="total" position="right" style={{ fontSize: 11, fontWeight: 600 }} />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <p className="text-xs text-slate-400 mt-2">Mostrando las 15 combinaciones con mayor volumen.</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-400 text-center py-8">Sin datos de cobertura.</p>
+                );
+              })()}
             </ChartCard>
           </div>
         )}

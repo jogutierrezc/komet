@@ -11,7 +11,7 @@ import {
 import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine';
 
 // --- Módulos extraídos ---
-import { norm, avg, stdDev, resolveProgram, resolveLevel, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
+import { norm, avg, stdDev, resolveProgram, resolveLevel, normalizeRoleName, getRowCenter, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
 import { parseAiPayload, buildNarrativeFallback } from '../services/aiService';
 import { createPresentationDeck } from '../services/pptService';
 import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
@@ -30,6 +30,7 @@ export default function KometPresenta() {
   const [selectedLevel, setSelectedLevel] = useState('Todos');
   const [selectedCenter, setSelectedCenter] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
+  const [combineSimilarCenters, setCombineSimilarCenters] = useState(false);
 
   // Listas de opciones para los dropdowns — cargadas desde Supabase al montar
   const [campusesMeta, setCampusesMeta] = useState([]);
@@ -76,18 +77,16 @@ export default function KometPresenta() {
 
   // Opciones de dropdown derivadas de metadatos + datos
   const campusOptions = useMemo(() => {
-    return ['Todos', ...campusesMeta.map((c) => c.name).filter(Boolean)];
+    return ['Todos', ...[...new Set(campusesMeta.map((c) => c.name).filter(Boolean))]];
   }, [campusesMeta]);
 
   const centerOptions = useMemo(() => {
-    if (selectedCampus === 'Todos') {
-      return ['Todos', ...centersMeta.map((c) => c.name).filter(Boolean)];
-    }
-    return ['Todos', ...centersMeta
-      .filter((c) => c.campus_id === campusIdMap.get(selectedCampus))
-      .map((c) => c.name)
-      .filter(Boolean)
-    ];
+    const names = selectedCampus === 'Todos'
+      ? centersMeta.map((c) => c.name)
+      : centersMeta
+          .filter((c) => c.campus_id === campusIdMap.get(selectedCampus))
+          .map((c) => c.name);
+    return ['Todos', ...[...new Set(names.filter(Boolean))]];
   }, [centersMeta, selectedCampus, campusIdMap]);
 
   const baseFiltered = useMemo(() => {
@@ -105,7 +104,7 @@ export default function KometPresenta() {
       ? baseFiltered
       : baseFiltered.filter((row) => norm(row.center || 'Sin sitio') === selectedCenter);
     const programs = [...new Set(source.map((row) => resolveProgram(row)).filter((value) => value && value !== 'Sin programa'))];
-    return ['Todos', ...programs];
+    return ['Todos', ...programs.sort()];
   }, [baseFiltered, selectedCenter]);
 
   useEffect(() => {
@@ -122,15 +121,20 @@ export default function KometPresenta() {
     });
   }, [baseFiltered, selectedCenter, selectedProgram]);
 
+  const effectiveFilteredRows = useMemo(() => {
+    if (!combineSimilarCenters) return filteredRows;
+    return filteredRows.map((row) => ({ ...row, center: getRowCenter(row, true) }));
+  }, [filteredRows, combineSimilarCenters]);
+
   const metrics = useMemo(() => {
     const scoreRows = filteredRows
       .map((row) => row.scoreSummary?.globalScore)
       .filter((value) => typeof value === 'number');
 
-    const completed = filteredRows.filter((row) => row.status === 'Completada').length;
+    const completed = effectiveFilteredRows.filter((row) => row.status === 'Completada').length;
 
-    const byCampus = rankBy(filteredRows, (row) => norm(row.campus || 'Sin campus'), (row) => row.scoreSummary?.globalScore);
-    const byCenter = rankBy(filteredRows, (row) => norm(row.center || 'Sin sitio'), (row) => row.scoreSummary?.globalScore);
+    const byCampus = rankBy(effectiveFilteredRows, (row) => norm(row.campus || 'Sin campus'), (row) => row.scoreSummary?.globalScore);
+    const byCenter = rankBy(effectiveFilteredRows, (row) => norm(row.center || 'Sin sitio'), (row) => row.scoreSummary?.globalScore);
     const byProgram = rankBy(filteredRows, (row) => resolveProgram(row), (row) => row.scoreSummary?.globalScore)
       .filter((item) => item.name !== 'Sin programa');
     const byRole = rankBy(filteredRows, (row) => normalizeRoleName(norm(row.role || 'Sin definir')), (row) => row.scoreSummary?.globalScore);
@@ -183,7 +187,7 @@ export default function KometPresenta() {
       ? 'al alza'
       : 'a la baja';
 
-    const centerAnalysis = calculateCenterAnalysis(filteredRows);
+    const centerAnalysis = calculateCenterAnalysis(effectiveFilteredRows);
     const roleGrid = calculateRoleGrid(centerAnalysis);
 
     return {
@@ -193,7 +197,7 @@ export default function KometPresenta() {
         completionPct: filteredRows.length ? Number(((completed / filteredRows.length) * 100).toFixed(1)) : 0,
         globalScore: avg(scoreRows),
         programs: new Set(filteredRows.map((row) => resolveProgram(row)).filter((value) => value !== 'Sin programa')).size,
-        centers: new Set(filteredRows.map((row) => norm(row.center || 'Sin sitio'))).size,
+        centers: new Set(effectiveFilteredRows.map((row) => norm(row.center || 'Sin sitio'))).size,
         scored: scoreRows.length
       },
       distribution,
@@ -212,7 +216,7 @@ export default function KometPresenta() {
       centerAnalysis,
       roleGrid
     };
-  }, [filteredRows]);
+  }, [filteredRows, effectiveFilteredRows]);
 
   const filters = {
     campus: selectedCampus,
@@ -493,6 +497,15 @@ export default function KometPresenta() {
           <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCenter} onChange={(e) => setSelectedCenter(e.target.value)}>
             {centerOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
           </select>
+          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm">
+            <input
+              type="checkbox"
+              checked={combineSimilarCenters}
+              onChange={(e) => setCombineSimilarCenters(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            Combinar centros similares
+          </label>
           <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedProgram} onChange={(e) => setSelectedProgram(e.target.value)}>
             {programOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
           </select>

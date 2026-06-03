@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, getProgramsByCampus, OPENROUTER_FREE_MODELS } from '../lib/data';
+import { getRowCenter, normalizeCenterName } from '../utils/dataHelpers';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
 import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
 
@@ -142,11 +143,11 @@ function extractSectionScores(row) {
   }));
 }
 
-function buildCenterSummary(rows = []) {
+function buildCenterSummary(rows = [], combineCenters = false) {
   const map = new Map();
 
   rows.forEach((row) => {
-    const key = normalizeText(row.center || 'Sin sitio');
+    const key = getRowCenter(row, combineCenters);
     const current =
       map.get(key) || {
         center: key,
@@ -185,7 +186,7 @@ function buildCenterSummary(rows = []) {
     .sort((a, b) => b.avgScore - a.avgScore);
 }
 
-function buildProgramSummary(rows = []) {
+function buildProgramSummary(rows = [], combineCenters = false) {
   const map = new Map();
 
   rows.forEach((row) => {
@@ -203,7 +204,7 @@ function buildProgramSummary(rows = []) {
     current.total += 1;
     if (typeof score === 'number') current.scores.push(score);
 
-    const center = normalizeText(row.center || 'Sin sitio');
+    const center = getRowCenter(row, combineCenters);
     const role = normalizeText(row.role || 'Sin rol');
 
     current.centers.set(center, (current.centers.get(center) || 0) + 1);
@@ -271,7 +272,7 @@ function buildRoleSummary(rows = []) {
     .sort((a, b) => b.avgScore - a.avgScore);
 }
 
-function buildEvaluatedSummary(rows = []) {
+function buildEvaluatedSummary(rows = [], combineCenters = false) {
   const map = new Map();
 
   rows.forEach((row) => {
@@ -282,7 +283,7 @@ function buildEvaluatedSummary(rows = []) {
       map.get(key) || {
         person,
         role,
-        center: normalizeText(row.center || 'Sin sitio'),
+        center: getRowCenter(row, combineCenters),
         campus: normalizeText(row.campus || 'Sin campus'),
         total: 0,
         completed: 0,
@@ -1026,6 +1027,7 @@ export default function Reportes() {
   const [selectedLevel, setSelectedLevel] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
   const [selectedCenter, setSelectedCenter] = useState('Todos');
+  const [combineSimilarCenters, setCombineSimilarCenters] = useState(false);
   const [dbPrograms, setDbPrograms] = useState([]);
   const [selectedComplexity, setSelectedComplexity] = useState(NIVELES_COMPLEJIDAD.ALTA);
   const [reportHtml, setReportHtml] = useState('');
@@ -1131,8 +1133,9 @@ export default function Reportes() {
 
   const centerOptions = useMemo(() => {
     const scopedByProgram = roleRows.filter((row) => selectedProgram === 'Todos' || resolveProgram(row) === selectedProgram);
-    return [...new Set(scopedByProgram.map((row) => normalizeText(row.center || 'Sin sitio')))].sort();
-  }, [roleRows, selectedProgram]);
+    return [...new Set(scopedByProgram.map((row) => getRowCenter(row, combineSimilarCenters)))]
+      .sort((a, b) => a.localeCompare(b, 'es'));
+  }, [roleRows, selectedProgram, combineSimilarCenters]);
 
   useEffect(() => {
     if (selectedProgram !== 'Todos' && !programOptions.includes(selectedProgram)) {
@@ -1145,6 +1148,11 @@ export default function Reportes() {
       setSelectedCenter('Todos');
     }
   }, [centerOptions, selectedCenter]);
+
+  useEffect(() => {
+    if (!combineSimilarCenters) return;
+    if (selectedCenter !== 'Todos') setSelectedCenter(normalizeCenterName(selectedCenter));
+  }, [combineSimilarCenters]);
 
   const filteredRows = useMemo(() => {
     return roleRows.filter((row) => {
@@ -1159,10 +1167,10 @@ export default function Reportes() {
         }
       }
       if (selectedProgram !== 'Todos' && resolveProgram(row) !== selectedProgram) return false;
-      if (selectedCenter !== 'Todos' && normalizeText(row.center || 'Sin sitio') !== selectedCenter) return false;
+      if (selectedCenter !== 'Todos' && getRowCenter(row, combineSimilarCenters) !== selectedCenter) return false;
       return true;
     });
-  }, [roleRows, selectedProgram, selectedCenter, selectedLevel, validProgramNamesForLevel]);
+  }, [roleRows, selectedProgram, selectedCenter, selectedLevel, validProgramNamesForLevel, combineSimilarCenters]);
 
   const globalScore = useMemo(() => {
     const scores = filteredRows.map((row) => extractGlobalScore(row)).filter((value) => typeof value === 'number');
@@ -1184,10 +1192,10 @@ export default function Reportes() {
     setAiError('');
     setIsGenerating(true);
 
-    const centerSummary = buildCenterSummary(filteredRows);
-    const programSummary = buildProgramSummary(filteredRows);
+    const centerSummary = buildCenterSummary(filteredRows, combineSimilarCenters);
+    const programSummary = buildProgramSummary(filteredRows, combineSimilarCenters);
     const roleSummary = buildRoleSummary(filteredRows);
-    const evaluatedSummary = buildEvaluatedSummary(filteredRows);
+    const evaluatedSummary = buildEvaluatedSummary(filteredRows, combineSimilarCenters);
     const improvements = buildImprovementSummary(filteredRows);
     const informeOutput = generarInformeDesdeRows(filteredRows, {
       filtros: {
@@ -1500,6 +1508,16 @@ ${JSON.stringify(compactDataset)}
                 <option key={center} value={center}>{center}</option>
               ))}
             </select>
+          </label>
+
+          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={combineSimilarCenters}
+              onChange={(event) => setCombineSimilarCenters(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            Combinar centros similares
           </label>
 
           <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">

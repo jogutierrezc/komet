@@ -1028,7 +1028,7 @@ async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
   const uniqueEvaluationIds = Array.from(new Set(evaluationIds.filter(Boolean)));
   if (!uniqueEvaluationIds.length) return {};
 
-  const fetchChunk = async (chunk, chunkSize = 10) => {
+  const fetchChunk = async (chunk, chunkSize = 50) => {
     const { data, error } = await supabase
       .from('evaluation_responses')
       .select('evaluation_id,answers,submitted_at')
@@ -1048,7 +1048,7 @@ async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
     throw error;
   };
 
-  const chunkSize = 10;
+  const chunkSize = 50;
   const responseRows = [];
 
   for (let i = 0; i < uniqueEvaluationIds.length; i += chunkSize) {
@@ -1220,7 +1220,7 @@ function aggregateByKey(items, key, countKey = 'total') {
 
 export async function getEvaluationReportMetrics(filters = {}) {
   const { role, program, center, campusId, centerId } = filters;
-  const pageSize = 200;
+  const pageSize = 500;
   let allRows = [];
   let page = 0;
 
