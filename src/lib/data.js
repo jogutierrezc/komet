@@ -969,6 +969,30 @@ function getLatestResponseAnswers(item) {
   return sorted[0]?.answers || null;
 }
 
+// Ejecuta `fn` sobre cada elemento con un máximo de `limit` peticiones simultáneas, conservando el orden.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function fetchSurveysById(surveyIds = []) {
+  if (!surveyIds.length) return {};
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('id,title,questions,description,target_type')
+    .in('id', surveyIds);
+  if (error) throw error;
+  return (data || []).reduce((acc, item) => { acc[item.id] = item; return acc; }, {});
+}
+
 async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
   const uniqueEvaluationIds = Array.from(new Set(evaluationIds.filter(Boolean)));
   if (!uniqueEvaluationIds.length) return {};
@@ -994,12 +1018,11 @@ async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
   };
 
   const chunkSize = 50;
-  const responseRows = [];
-
+  const chunks = [];
   for (let i = 0; i < uniqueEvaluationIds.length; i += chunkSize) {
-    const chunk = uniqueEvaluationIds.slice(i, i + chunkSize);
-    responseRows.push(...(await fetchChunk(chunk, chunkSize)));
+    chunks.push(uniqueEvaluationIds.slice(i, i + chunkSize));
   }
+  const responseRows = (await mapWithConcurrency(chunks, 6, (chunk) => fetchChunk(chunk, chunkSize))).flat();
 
   return responseRows.reduce((acc, item) => {
     if (!item?.evaluation_id) return acc;
@@ -1163,17 +1186,33 @@ function aggregateByKey(items, key, countKey = 'total') {
   }, {});
 }
 
-export async function getEvaluationReportMetrics(filters = {}) {
-  const { role, program, center, campusId, centerId } = filters;
+// Varios módulos (Estadística, Informe, Presenta) piden lo mismo al abrirse: se comparte la petición en vuelo y se
+// reutiliza el resultado unos segundos. `force: true` lo ignora.
+const REPORT_CACHE_TTL_MS = 60 * 1000;
+const reportMetricsCache = new Map();
+
+export function getEvaluationReportMetrics(filters = {}) {
+  const key = JSON.stringify([filters.campusId || null, filters.centerId || null]);
+  const hit = reportMetricsCache.get(key);
+  if (!filters.force && hit && Date.now() - hit.at < REPORT_CACHE_TTL_MS) {
+    return hit.promise.then((base) => applyReportFilters(base, filters));
+  }
+  const promise = loadEvaluationReportRows(filters);
+  reportMetricsCache.set(key, { at: Date.now(), promise });
+  promise.catch(() => { if (reportMetricsCache.get(key)?.promise === promise) reportMetricsCache.delete(key); });
+  return promise.then((base) => applyReportFilters(base, filters));
+}
+
+async function loadEvaluationReportRows({ campusId, centerId } = {}) {
   const pageSize = 500;
   let allRows = [];
-  let page = 0;
+  let cursor = null; // { created_at, id } de la última fila leída
   // El período sale de la relación evaluation_periods si la migración ya se aplicó; si no, del texto periodoCorte.
   let usePeriodRelation = true;
 
+  // Paginación por cursor: un OFFSET grande obliga a Postgres a recorrer y descartar todas las filas anteriores,
+  // y con columnas jsonb pesadas terminaba en timeout (500). Con cursor cada página cuesta lo mismo.
   while (true) {
-    const from = page * pageSize;
-    const to = from + pageSize - 1;
     let query = supabase
       .from('evaluations')
       .select(`
@@ -1188,7 +1227,7 @@ export async function getEvaluationReportMetrics(filters = {}) {
         tipoPrograma,
         titulo,
         preguntas,
-        survey:survey_id(title,questions,description,target_type),
+        survey_id,
         campus:campus_id(name),
         center:center_id(name),
         student:student_id(full_name,program),
@@ -1202,10 +1241,14 @@ export async function getEvaluationReportMetrics(filters = {}) {
     if (centerId) {
       query = query.eq('center_id', centerId);
     }
+    if (cursor) {
+      query = query.or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`);
+    }
 
     const { data, error } = await query
       .order('created_at', { ascending: false })
-      .range(from, to);
+      .order('id', { ascending: false })
+      .limit(pageSize);
 
     if (error && usePeriodRelation && /period/i.test(`${error.message || ''} ${error.details || ''}`)) {
       usePeriodRelation = false;
@@ -1216,19 +1259,27 @@ export async function getEvaluationReportMetrics(filters = {}) {
 
     allRows = allRows.concat(data);
     if (data.length < pageSize) break;
-    page += 1;
+    const last = data[data.length - 1];
+    cursor = { created_at: last.created_at, id: last.id };
   }
 
-  const evaluationIds = allRows.map((item) => item.id).filter(Boolean);
-  if (evaluationIds.length) {
-    const responseMap = await fetchEvaluationResponsesByEvaluationIds(evaluationIds);
-    allRows = allRows.map((item) => ({
-      ...item,
-      evaluation_responses: responseMap[item.id] || []
-    }));
-  }
+  // Las encuestas (con todas sus preguntas) se piden una sola vez en lugar de repetirlas en cada fila.
+  const surveyIds = Array.from(new Set(allRows.map((item) => item.survey_id).filter(Boolean)));
+  const [surveyMap, responseMap] = await Promise.all([
+    fetchSurveysById(surveyIds),
+    fetchEvaluationResponsesByEvaluationIds(allRows.map((item) => item.id).filter(Boolean))
+  ]);
+  allRows = allRows.map((item) => ({
+    ...item,
+    survey: surveyMap[item.survey_id] || null,
+    evaluation_responses: responseMap[item.id] || []
+  }));
 
-  const rows = (allRows || []).map(mapEvaluationItem);
+  // El cálculo de puntajes se hace una vez y queda en caché junto con las filas.
+  return { rows: allRows.map(mapEvaluationItem) };
+}
+
+function applyReportFilters({ rows }, { role, program, center } = {}) {
   const filteredRows = rows.filter((item) => {
     if (role && role !== 'all' && item.role !== role) return false;
     if (program && program !== 'all' && item.program !== program) return false;
