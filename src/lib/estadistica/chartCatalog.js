@@ -1,9 +1,13 @@
 // Catálogo de gráficas de Estadística disponibles para Komet Presenta.
 // Cada entrada es una especificación de datos (categorías y series), no un componente:
 // el mismo formato que usa la canasta de capturas y que pptDeck.js convierte en gráfico nativo.
-// Los cálculos usan los mismos ayudantes que Estadística (utils/dataHelpers) y el mismo umbral.
+// Los números salen de las mismas funciones que Estadística (aggregations.js y utils/dataHelpers), no de una copia.
 import { UMBRAL_ACEPTABLE, fmtScore } from '../threshold';
-import { norm, avg, resolveProgram, normalizeRoleName, getMonthKey } from '../../utils/dataHelpers';
+import { norm, resolveProgram, normalizeRoleName, calculateCenterAnalysis, calculateCrossMatrix } from '../../utils/dataHelpers';
+import {
+  computeKpis, computeByProgram, computeByProgramExtended, computeByCenter, computeTopCentersByVolume,
+  computeByRole, computeHistogram, computeMonthlyTrend, computeFunnel,
+} from './aggregations';
 
 export const CHART_GROUPS = [
   { id: 'participacion', label: 'Participación' },
@@ -26,10 +30,8 @@ export const ESSENTIAL_CHART_IDS = [
 const TOP = 10;
 const round1 = (n) => Number(Number(n).toFixed(1));
 const round2 = (n) => Number(Number(n).toFixed(2));
-const scoreOf = (row) => row.scoreSummary?.globalScore;
 const isDone = (row) => row.status === 'Completada';
 const programOf = (row) => resolveProgram(row);
-const centerOf = (row) => norm(row.center || 'Sin sitio');
 const roleOf = (row) => normalizeRoleName(norm(row.role || 'Sin definir'));
 
 function groupBy(rows, keyFn) {
@@ -42,9 +44,6 @@ function groupBy(rows, keyFn) {
   });
   return [...map.entries()].map(([name, items]) => ({ name, rows: items }));
 }
-
-const scoresOf = (rows) => rows.map(scoreOf).filter((v) => typeof v === 'number');
-const meanScore = (rows) => avg(scoresOf(rows));
 
 /** Resume una gráfica en un título-mensaje y viñetas con cifras reales (sirve de texto si la IA no responde). */
 function describe(spec) {
@@ -94,90 +93,84 @@ export function buildChartCatalog(rows = []) {
     out.push({ ...spec, groupLabel, autoTitle, autoBullets });
   };
 
-  const total = rows.length;
-  const byProgram = groupBy(rows, programOf).filter((g) => g.name !== 'Sin programa').sort((a, b) => b.rows.length - a.rows.length);
-  const byCenter = groupBy(rows, centerOf).sort((a, b) => b.rows.length - a.rows.length);
-  const byRole = groupBy(rows, roleOf).sort((a, b) => b.rows.length - a.rows.length);
-  const topPrograms = byProgram.slice(0, TOP);
-  const topCenters = byCenter.slice(0, TOP);
-  const rankedPrograms = byProgram.map((g) => ({ ...g, score: meanScore(g.rows) })).filter((g) => g.score > 0).sort((a, b) => b.score - a.score).slice(0, TOP);
-  const rankedCenters = byCenter.map((g) => ({ ...g, score: meanScore(g.rows) })).filter((g) => g.score > 0).sort((a, b) => b.score - a.score).slice(0, TOP);
+  const kpis = computeKpis(rows);
+  const byProgramExt = computeByProgramExtended(rows); // por volumen
+  const byProgramScore = computeByProgram(rows).filter((g) => g.score > 0).slice(0, TOP); // por puntaje
+  const byCenter = computeByCenter(rows); // por puntaje
+  const topCenters = computeTopCentersByVolume(byCenter).slice(0, TOP);
+  const byRole = computeByRole(rows);
+  const topPrograms = byProgramExt.slice(0, TOP);
+  const G = (group) => ({ group });
 
   // ── Participación ──
-  const G = (group) => ({ group });
   push({ ...G('participacion'), id: 'participacion-programa', title: 'Participación por programa', subtitle: 'Porcentaje del total de evaluaciones que aporta cada programa', unit: '%',
-    ...bar(topPrograms.map((g) => g.name), topPrograms.map((g) => round1((g.rows.length / total) * 100)), '% del total') });
-  const studentsByProgram = byProgram
-    .map((g) => ({ name: g.name, count: g.rows.filter((r) => isDone(r) && roleOf(r) === 'Estudiantes').length }))
-    .filter((g) => g.count > 0).sort((a, b) => b.count - a.count).slice(0, TOP);
+    ...bar(topPrograms.map((g) => g.name), topPrograms.map((g) => round1((g.total / kpis.total) * 100)), '% del total') });
+  const studentsByProgram = groupBy(rows.filter((r) => isDone(r) && roleOf(r) === 'Estudiantes'), programOf)
+    .filter((g) => g.name !== 'Sin programa')
+    .map((g) => ({ name: g.name, count: g.rows.length })).sort((a, b) => b.count - a.count).slice(0, TOP);
   push({ ...G('participacion'), id: 'estudiantes-programa', title: 'Estudiantes que realizaron la evaluación', subtitle: 'Evaluaciones completadas por estudiantes, según programa',
     ...bar(studentsByProgram.map((g) => g.name), studentsByProgram.map((g) => g.count), 'Estudiantes') });
-  push({ ...G('participacion'), id: 'programas-realizaron', kind: 'table', title: 'Programas que realizaron la evaluación', subtitle: 'Evaluaciones, completadas, estudiantes y promedio por programa',
+  push({ ...G('participacion'), id: 'programas-realizaron', kind: 'table', title: 'Programas que realizaron la evaluación', subtitle: 'Evaluaciones, cumplimiento, centros y promedio por programa',
     categories: [], series: [],
     table: {
-      head: ['Programa', 'Evaluaciones', 'Completadas', 'Estudiantes', 'Promedio'],
-      rows: byProgram.slice(0, 20).map((g) => [
-        g.name, String(g.rows.length), String(g.rows.filter(isDone).length),
-        String(g.rows.filter((r) => isDone(r) && roleOf(r) === 'Estudiantes').length),
-        meanScore(g.rows) ? fmtScore(meanScore(g.rows)) : '—',
-      ]),
+      head: ['Programa', 'Evaluaciones', 'Cumplimiento', 'Centros', 'Promedio'],
+      rows: byProgramExt.map((g) => [g.name, String(g.total), `${String(g.completionPct).replace('.', ',')} %`, String(g.centerCount), g.score ? fmtScore(g.score) : '—']),
       scoreCol: 4,
     } });
   push({ ...G('participacion'), id: 'cumplimiento-programa', title: 'Cumplimiento por programa', subtitle: 'Porcentaje de evaluaciones completadas en cada programa', unit: '%',
-    ...bar(topPrograms.map((g) => g.name), topPrograms.map((g) => round1((g.rows.filter(isDone).length / g.rows.length) * 100)), '% completadas') });
+    ...bar(topPrograms.map((g) => g.name), topPrograms.map((g) => g.completionPct), '% completadas') });
 
   // ── Resultados ──
-  const bins = [['0-2', 0, 2], ['2-3', 2, 3], ['3-4', 3, 4], ['4-5', 4, 6]];
-  const scores = scoresOf(rows);
-  push({ ...G('resultados'), id: 'dist-calificaciones', title: 'Distribución de calificaciones', subtitle: 'Cuántas respuestas caen en cada rango de puntaje',
-    ...bar(bins.map((b) => b[0]), bins.map(([, lo, hi]) => scores.filter((s) => s >= lo && s < hi).length), 'Respuestas') });
-  const months = groupBy(rows, (r) => getMonthKey(r.completed_at || r.created_at)).filter((g) => g.name !== 'Sin fecha').sort((a, b) => a.name.localeCompare(b.name));
-  if (months.length > 1) {
+  const histogram = computeHistogram(rows);
+  push({ ...G('resultados'), id: 'dist-calificaciones', title: 'Distribución de calificaciones', subtitle: 'Cuántas puntuaciones por sección caen en cada nota de 1 a 5',
+    ...bar(histogram.map((h) => h.score), histogram.map((h) => h.count), 'Puntuaciones') });
+  const trend = computeMonthlyTrend(rows);
+  if (trend.length > 1) {
     push({ ...G('resultados'), id: 'tendencia-mensual', kind: 'line', title: 'Tendencia mensual del puntaje', subtitle: 'Promedio de cada mes frente al umbral aceptable',
-      categories: months.map((m) => m.name), series: [{ name: 'Promedio', values: months.map((m) => round2(meanScore(m.rows))) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
+      categories: trend.map((m) => m.month), series: [{ name: 'Promedio', values: trend.map((m) => m.score) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
   }
-  const done = rows.filter(isDone).length;
-  push({ ...G('resultados'), id: 'estado-evaluaciones', title: 'Estado de las evaluaciones', subtitle: 'Completadas frente a pendientes',
-    ...bar(['Completadas', 'Pendientes'], [done, total - done], 'Evaluaciones') });
+  const funnel = computeFunnel(rows);
+  push({ ...G('resultados'), id: 'estado-evaluaciones', title: 'Avance de las evaluaciones', subtitle: 'Asignadas, iniciadas y completadas',
+    ...bar(funnel.map((f) => f.name), funnel.map((f) => f.value), 'Evaluaciones') });
 
   // ── Programas ──
   push({ ...G('programas'), id: 'promedio-programa', title: 'Promedio por programa', subtitle: 'Ordenado de mayor a menor frente al umbral',
-    kind: 'bar', categories: rankedPrograms.map((g) => g.name), series: [{ name: 'Promedio', values: rankedPrograms.map((g) => round2(g.score)) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
+    kind: 'bar', categories: byProgramScore.map((g) => g.name), series: [{ name: 'Promedio', values: byProgramScore.map((g) => g.score) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
   push({ ...G('programas'), id: 'volumen-programa', title: 'Volumen de evaluaciones por programa', subtitle: 'Cantidad de evaluaciones registradas',
-    ...bar(topPrograms.map((g) => g.name), topPrograms.map((g) => g.rows.length), 'Evaluaciones') });
+    ...bar(topPrograms.map((g) => g.name), topPrograms.map((g) => g.total), 'Evaluaciones') });
 
   // ── Centros ──
+  const rankedCenters = byCenter.filter((g) => g.score > 0).slice(0, TOP);
   push({ ...G('centros'), id: 'promedio-centro', title: 'Promedio por centro de práctica', subtitle: 'Ordenado de mayor a menor frente al umbral',
-    kind: 'bar', categories: rankedCenters.map((g) => g.name), series: [{ name: 'Promedio', values: rankedCenters.map((g) => round2(g.score)) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
+    kind: 'bar', categories: rankedCenters.map((g) => g.name), series: [{ name: 'Promedio', values: rankedCenters.map((g) => g.score) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
   push({ ...G('centros'), id: 'volumen-centro', title: 'Centros con más evaluaciones', subtitle: 'Ranking por volumen de evaluaciones',
-    ...bar(topCenters.map((g) => g.name), topCenters.map((g) => g.rows.length), 'Evaluaciones') });
+    ...bar(topCenters.map((g) => g.name), topCenters.map((g) => g.total), 'Evaluaciones') });
   push({ ...G('centros'), id: 'cumplimiento-centro', title: 'Cumplimiento por centro', subtitle: 'Porcentaje de evaluaciones completadas', unit: '%',
-    ...bar(topCenters.map((g) => g.name), topCenters.map((g) => round1((g.rows.filter(isDone).length / g.rows.length) * 100)), '% completadas') });
+    ...bar(topCenters.map((g) => g.name), topCenters.map((g) => g.completionPct), '% completadas') });
 
   // ── Roles ──
   push({ ...G('roles'), id: 'participacion-rol', title: 'Participación por rol evaluador', subtitle: 'Evaluaciones aportadas por cada perfil',
-    ...bar(byRole.map((g) => g.name), byRole.map((g) => g.rows.length), 'Evaluaciones') });
-  const rankedRoles = byRole.map((g) => ({ ...g, score: meanScore(g.rows) })).filter((g) => g.score > 0).sort((a, b) => b.score - a.score);
+    ...bar(byRole.map((g) => g.name), byRole.map((g) => g.total), 'Evaluaciones') });
+  const rankedRoles = byRole.filter((g) => g.score > 0).sort((a, b) => b.score - a.score);
   push({ ...G('roles'), id: 'promedio-rol', title: 'Promedio por rol evaluador', subtitle: 'Puntaje promedio de cada perfil',
-    kind: 'bar', categories: rankedRoles.map((g) => g.name), series: [{ name: 'Promedio', values: rankedRoles.map((g) => round2(g.score)) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
+    kind: 'bar', categories: rankedRoles.map((g) => g.name), series: [{ name: 'Promedio', values: rankedRoles.map((g) => g.score) }], threshold: UMBRAL_ACEPTABLE, scoreScale: true });
 
-  // ── Centros × programas ──
-  const crossPrograms = byProgram.slice(0, 4);
-  const crossCenters = byCenter
-    .filter((c) => crossPrograms.some((p) => c.rows.some((r) => programOf(r) === p.name && typeof scoreOf(r) === 'number')))
-    .slice(0, 8);
-  const cell = (center, program) => meanScore(center.rows.filter((r) => programOf(r) === program.name));
+  // ── Centros × programas (la misma matriz de Estadística) ──
+  const { allCenters, matrix } = calculateCrossMatrix(calculateCenterAnalysis(rows));
+  const crossPrograms = topPrograms.slice(0, 4).map((g) => g.name);
+  const cellScore = (center, program) => matrix[center]?.[program]?.score || 0;
+  const crossCenters = allCenters.filter((c) => crossPrograms.some((p) => cellScore(c, p) > 0)).slice(0, 8);
   if (crossPrograms.length && crossCenters.length) {
     push({ ...G('cruces'), id: 'centros-por-programa', kind: 'bar', title: 'Puntaje de los centros de práctica por programa',
       subtitle: `Promedio de cada centro desglosado por los ${crossPrograms.length} programas con más evaluaciones`,
-      categories: crossCenters.map((c) => c.name),
-      series: crossPrograms.map((p) => ({ name: p.name, values: crossCenters.map((c) => round2(cell(c, p))) })),
+      categories: crossCenters,
+      series: crossPrograms.map((p) => ({ name: p, values: crossCenters.map((c) => round2(cellScore(c, p))) })),
       threshold: UMBRAL_ACEPTABLE, scoreScale: true });
     push({ ...G('cruces'), id: 'tabla-centros-programa', kind: 'table', title: 'Detalle de centros por programa', subtitle: 'Promedio por combinación centro y programa',
       categories: [], series: [],
       table: {
-        head: ['Centro', ...crossPrograms.map((p) => (p.name.length > 22 ? `${p.name.slice(0, 21)}…` : p.name))],
-        rows: byCenter.slice(0, 14).map((c) => [c.name, ...crossPrograms.map((p) => { const v = cell(c, p); return v ? fmtScore(v) : '—'; })]),
+        head: ['Centro', ...crossPrograms.map((p) => (p.length > 22 ? `${p.slice(0, 21)}…` : p))],
+        rows: allCenters.slice(0, 14).map((c) => [c, ...crossPrograms.map((p) => { const v = cellScore(c, p); return v ? fmtScore(v) : '—'; })]),
       } });
   }
 
