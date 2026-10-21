@@ -12,6 +12,15 @@ export function readInitialPeriod() {
   }
 }
 
+/** Como readInitialPeriod, pero devuelve null si nadie eligió un período: quien llama usa entonces latestPeriod(rows). */
+export function readInitialPeriodChoice() {
+  try {
+    return sessionStorage.getItem(PERIOD_FILTER_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
 export function clearInitialPeriod() {
   try {
     sessionStorage.removeItem(PERIOD_FILTER_KEY);
@@ -27,6 +36,11 @@ export function periodOptionsFrom(rows = []) {
   const codes = [...new Set(rows.map((row) => row.period).filter((p) => p && p !== UNDEFINED))].sort().reverse();
   const hasUndefined = rows.some((row) => !row.period || row.period === UNDEFINED);
   return ['Todos', ...codes, ...(hasUndefined ? [UNDEFINED] : [])];
+}
+
+/** Período más reciente con datos; 'Todos' si ninguna fila tiene período definido. */
+export function latestPeriod(rows = []) {
+  return periodOptionsFrom(rows).find((p) => p !== 'Todos' && p !== UNDEFINED) || 'Todos';
 }
 
 export const matchesPeriod = (row, selected) => selected === 'Todos' || (row.period || UNDEFINED) === selected;

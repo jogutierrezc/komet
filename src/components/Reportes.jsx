@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles } from 'lucide-react';
 import { useBasket, addCapture } from '../lib/presentationBasket';
-import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
+import { readInitialPeriodChoice, latestPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt, getProgramsByCampus } from '../lib/data';
 import { getRowCenter, normalizeCenterName } from '../utils/dataHelpers';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
@@ -1023,7 +1023,10 @@ export default function Reportes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rows, setRows] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  // Mientras nadie elija otro, se muestra el período más reciente en lugar de mezclar todos.
+  const [pickedPeriod, setSelectedPeriod] = useState(readInitialPeriodChoice);
+  const latest = useMemo(() => latestPeriod(rows), [rows]);
+  const selectedPeriod = pickedPeriod ?? latest;
   useEffect(() => { clearInitialPeriod(); }, []);
   const [settings, setSettings] = useState(null);
   const [selectedCampus, setSelectedCampus] = useState('Todos');

@@ -7,7 +7,7 @@ import {
   LabelList
 } from 'recharts';
 import { useBasket, toggleCapture } from '../lib/presentationBasket';
-import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
+import { readInitialPeriodChoice, latestPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download, Table2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt } from '../lib/data';
 import { calculateCenterAnalysis, calculateCrossMatrix } from '../utils/dataHelpers';
@@ -294,7 +294,10 @@ function FilterSelect({ label, value, onChange, children }) {
 export default function Estadistica({ onNavigate }) {
   const basket = useBasket();
   const [rows, setRows] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  // Mientras nadie elija otro, se muestra el período más reciente en lugar de mezclar todos.
+  const [pickedPeriod, setSelectedPeriod] = useState(readInitialPeriodChoice);
+  const latest = useMemo(() => latestPeriod(rows), [rows]);
+  const selectedPeriod = pickedPeriod ?? latest;
   useEffect(() => { clearInitialPeriod(); }, []);
   const [loading, setLoading] = useState(true);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
