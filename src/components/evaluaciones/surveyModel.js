@@ -210,8 +210,12 @@ export function duplicateItem(items, id) {
 // Programa, nivel, escenario y período se guardan en `description` con este formato. El portal público y el
 // formulario lo leen con las mismas expresiones: este es el único lugar que lo escribe y lo interpreta.
 
+// `Alcance` es el nivel al que está abierta la evaluación (Pregrado, Posgrado o Ambos). Las evaluaciones creadas antes
+// de que existiera no lo tienen: se tratan como Ambos, porque su `Nivel` era solo un valor por defecto.
+export const LEVELS = ['Pregrado', 'Posgrado', 'Ambos'];
+
 export function buildDescription({ programa = '', nivel = '', escenario = '', periodo = '' } = {}) {
-  return `Programa: ${programa} · Nivel: ${nivel} · Escenario: ${escenario} · Período: ${periodo}`;
+  return `Programa: ${programa} · Nivel: ${nivel} · Escenario: ${escenario} · Alcance: ${nivel || 'Ambos'} · Período: ${periodo}`;
 }
 
 export function parseDescription(description = '') {
@@ -220,6 +224,7 @@ export function parseDescription(description = '') {
     programa: pick(/Programa:\s*([^·]+)/i),
     nivel: pick(/Nivel:\s*([^·]+)/i),
     escenario: pick(/Escenario:\s*([^·]+)/i),
+    alcance: LEVELS.find((l) => l.toLowerCase() === pick(/Alcance:\s*([^·]+)/i).toLowerCase()) || 'Ambos',
     periodo: pick(/Per[ií]odo:\s*(.+)$/i),
   };
 }
@@ -229,7 +234,7 @@ export function emptyDraft(campusId = '') {
     title: 'Nueva evaluación',
     campusId,
     targetType: 'Estudiante',
-    meta: { programa: '', nivel: 'Pregrado', escenario: 'Todos', periodo: 'A' },
+    meta: { programa: '', nivel: 'Ambos', escenario: 'Todos', periodo: 'A' },
     items: [],
   };
 }
@@ -240,7 +245,7 @@ export function draftFromSurvey(survey) {
     title: survey.title || 'Nueva evaluación',
     campusId: survey.campus_id || '',
     targetType: survey.target_type || 'Estudiante',
-    meta: { programa: meta.programa, nivel: meta.nivel || 'Pregrado', escenario: meta.escenario || 'Todos', periodo: meta.periodo || 'A' },
+    meta: { programa: meta.programa, nivel: meta.alcance, escenario: meta.escenario || 'Todos', periodo: meta.periodo || 'A' },
     items: canonicalize(survey.questions || survey.preguntas || []),
   };
 }

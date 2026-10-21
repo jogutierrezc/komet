@@ -54,10 +54,8 @@ export default function PublicEvaluationPortal() {
 
   // El nivel que la evaluación tiene configurado (Pregrado / Posgrado) manda sobre lo que elija quien responde.
   const lockedLevel = useMemo(() => {
-    const nivel = parseDescription(sharedSurvey?.description).nivel.toLowerCase();
-    if (nivel === 'pregrado') return 'Pregrado';
-    if (nivel === 'posgrado') return 'Posgrado';
-    return '';
+    const { alcance } = parseDescription(sharedSurvey?.description);
+    return alcance === 'Pregrado' || alcance === 'Posgrado' ? alcance : '';
   }, [sharedSurvey]);
 
   useEffect(() => {
