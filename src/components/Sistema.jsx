@@ -226,7 +226,7 @@ export default function Sistema() {
     { id: 'plantillas', title: 'Plantillas de Correo', icon: <Mail size={28} />, color: 'bg-emerald-500', desc: 'Diseña correos automatizados.' },
     { id: 'resend', title: 'Configuración Resend', icon: <Send size={28} />, color: 'bg-slate-800', desc: 'Control de envíos SMTP/API.' },
     { id: 'api', title: 'Configuración API', icon: <Code size={28} />, color: 'bg-amber-500', desc: 'Conecta Komet con otras apps.' },
-    { id: 'ia', title: 'Configuración IA', icon: <Cpu size={28} />, color: 'bg-indigo-600', desc: 'Personaliza los modelos de ML.' },
+    { id: 'ia', title: 'Configuración Mistral AI', icon: <Cpu size={28} />, color: 'bg-indigo-600', desc: 'API key, modelo y system prompt de Mistral.' },
   ];
 
   const renderContent = () => {
@@ -728,15 +728,20 @@ const IaView = ({ settings, onChange, onSave, loading }) => {
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-gray-700">Modelo</label>
-            <select
-              value={settings.mistral_model || MISTRAL_MODELS[0]}
+            <input
+              type="text"
+              list="mistral-model-options"
+              value={settings.mistral_model || ''}
               onChange={(e) => onChange('mistral_model', e.target.value)}
+              placeholder={MISTRAL_MODELS[0]}
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-            >
+            />
+            <datalist id="mistral-model-options">
               {MISTRAL_MODELS.map((modelName) => (
-                <option key={modelName} value={modelName}>{modelName}</option>
+                <option key={modelName} value={modelName} />
               ))}
-            </select>
+            </datalist>
+            <p className="text-xs text-slate-500">Elige un modelo sugerido o escribe cualquier modelo de la API de Mistral (ej: mistral-large-latest).</p>
           </div>
 
           <div className="space-y-4">

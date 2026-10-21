@@ -2,7 +2,14 @@ import { supabase } from './supabaseClient';
 
 const SYSTEM_SETTINGS_KEY = 'komet_system';
 
-export const MISTRAL_MODELS = ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest'];
+export const MISTRAL_MODELS = [
+  'mistral-small-latest',
+  'mistral-medium-latest',
+  'mistral-large-latest',
+  'ministral-8b-latest',
+  'ministral-3b-latest',
+  'open-mistral-nemo'
+];
 
 export const DEFAULT_SYSTEM_SETTINGS = {
   resend_api_key: '',
@@ -53,8 +60,8 @@ export const DEFAULT_SYSTEM_SETTINGS = {
 
 function mergeSystemSettings(config = {}) {
   const currentConfig = { ...(config || {}) };
-  const legacyOpenRouterTemperature = currentConfig.openrouter_temperature;
-  const legacyOpenRouterSystemPrompt = currentConfig.openrouter_system_prompt;
+  // OpenRouter fue retirado del sistema: se eliminan sus claves antiguas para
+  // que no vuelvan a guardarse en la configuración.
   delete currentConfig.openrouter_api_key;
   delete currentConfig.openrouter_model;
   delete currentConfig.openrouter_temperature;
@@ -62,11 +69,10 @@ function mergeSystemSettings(config = {}) {
   return {
     ...DEFAULT_SYSTEM_SETTINGS,
     ...currentConfig,
-    // La clave de OpenRouter no sirve para autenticar con Mistral.
     mistral_api_key: config?.mistral_api_key || '',
     mistral_model: config?.mistral_model || MISTRAL_MODELS[0],
-    mistral_temperature: config?.mistral_temperature ?? legacyOpenRouterTemperature ?? DEFAULT_SYSTEM_SETTINGS.mistral_temperature,
-    mistral_system_prompt: config?.mistral_system_prompt || legacyOpenRouterSystemPrompt || DEFAULT_SYSTEM_SETTINGS.mistral_system_prompt,
+    mistral_temperature: config?.mistral_temperature ?? DEFAULT_SYSTEM_SETTINGS.mistral_temperature,
+    mistral_system_prompt: config?.mistral_system_prompt || DEFAULT_SYSTEM_SETTINGS.mistral_system_prompt,
     email_templates: {
       ...DEFAULT_SYSTEM_SETTINGS.email_templates,
       ...(config?.email_templates || {})

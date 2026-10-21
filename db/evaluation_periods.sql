@@ -119,7 +119,7 @@ returns trigger language plpgsql as $$
 begin
   new.family_id := coalesce(new.family_id, new.id);
   if new.period_id is null then
-    select id into new.period_id from public.evaluation_periods where status = 'abierto' limit 1;
+    new.period_id := (select id from public.evaluation_periods where status = 'abierto' limit 1);
   end if;
   return new;
 end
@@ -157,10 +157,10 @@ declare
   period_status text;
 begin
   if new.period_id is null and new.survey_id is not null then
-    select period_id into new.period_id from public.surveys where id = new.survey_id;
+    new.period_id := (select period_id from public.surveys where id = new.survey_id);
   end if;
   if new.period_id is null then
-    select id into new.period_id from public.evaluation_periods where status = 'abierto' limit 1;
+    new.period_id := (select id from public.evaluation_periods where status = 'abierto' limit 1);
   end if;
   select status into period_status from public.evaluation_periods where id = new.period_id;
   if period_status = 'cerrado' then
