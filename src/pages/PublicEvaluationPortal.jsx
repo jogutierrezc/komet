@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, User, GraduationCap, Building2, Calendar, AlertCircle, Fingerprint } from 'lucide-react';
+import { ArrowLeft, ArrowRight, User, UserCheck, GraduationCap, Building2, Calendar, AlertCircle, Fingerprint } from 'lucide-react';
 import KometMark from '../components/shared/KometMark';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail } from '../lib/data';
+import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail, getRotationsByConvenio } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
   const [searchParams] = useSearchParams();
@@ -27,6 +27,8 @@ export default function PublicEvaluationPortal() {
   const [selectedSurvey, setSelectedSurvey] = useState(null);
   const [centers, setCenters] = useState([]);
   const [selectedCenterId, setSelectedCenterId] = useState('');
+  const [siteRotations, setSiteRotations] = useState([]);
+  const [rotation, setRotation] = useState({ id: null, name: '', number: '', type: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [programOptions, setProgramOptions] = useState([]);
   const [allProgramOptions, setAllProgramOptions] = useState([]);
@@ -277,6 +279,51 @@ export default function PublicEvaluationPortal() {
     }
   }
 
+  // Rotaciones del sitio seleccionado: la pregunta de rotación se arma en base al sitio de práctica.
+  useEffect(() => {
+    setRotation({ id: null, name: '', number: '', type: '' });
+
+    if (!selectedCenterId) {
+      setSiteRotations([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadSiteRotations() {
+      try {
+        const data = await getRotationsByConvenio(selectedCenterId);
+        if (!cancelled) setSiteRotations(data || []);
+      } catch (error) {
+        console.error('Error cargando rotaciones del sitio:', error);
+        if (!cancelled) setSiteRotations([]);
+      }
+    }
+
+    loadSiteRotations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCenterId]);
+
+  const availableRotations = useMemo(() => {
+    const program = sharedSurveyId ? publicRespondent.program : userData?.program;
+    const normalized = String(program || '').trim().toLowerCase();
+    if (!normalized) return siteRotations;
+    const matching = siteRotations.filter((item) => !item.program || String(item.program).trim().toLowerCase() === normalized);
+    return matching.length ? matching : siteRotations.filter((item) => !item.program);
+  }, [siteRotations, sharedSurveyId, publicRespondent.program, userData]);
+
+  const rotationSummary = (rotationState = rotation) => {
+    const name = String(rotationState?.name || '').trim();
+    if (!name) return '';
+    const parts = [name];
+    if (rotationState.number) parts.push(`No. ${rotationState.number}`);
+    if (rotationState.type) parts.push(rotationState.type);
+    return parts.join(' · ');
+  };
+
   if (view === 'form') {
     return selectedSurvey ? (
       <div className="min-h-screen bg-slate-50">
@@ -293,7 +340,8 @@ export default function PublicEvaluationPortal() {
               ? 'Profesor'
               : capitalize(userData.role || ''),
             escenario: centers.find((center) => center.id === selectedCenterId)?.name || userData?.practice_center_name || userData?.campus_name,
-            periodo: sharedSurveyId ? getCurrentAcademicPeriod() : userData.started || userData.status || 'N/A'
+            periodo: sharedSurveyId ? getCurrentAcademicPeriod() : userData.started || userData.status || 'N/A',
+            rotacion: rotationSummary(rotation)
           }}
           onClose={() => setView(sharedSurveyId ? 'public-entry' : 'ready')}
           onSubmit={async (answers) => {
@@ -317,6 +365,14 @@ export default function PublicEvaluationPortal() {
                       practice_center_name: centers.find((center) => center.id === selectedCenterId)?.name || null
                     }
                   : null,
+                _rotation: rotation.name
+                  ? {
+                      id: rotation.id && rotation.id !== '__other__' ? rotation.id : null,
+                      name: rotation.name,
+                      number: rotation.number ? Number(rotation.number) : null,
+                      type: rotation.type || null
+                    }
+                  : null,
                 _source: sharedSurveyId ? 'public_link' : 'authenticated_portal',
                 _survey_link_id: sharedSurveyId || null
               };
@@ -326,6 +382,10 @@ export default function PublicEvaluationPortal() {
                   survey_id: selectedSurvey.id,
                   campus_id: selectedSurvey.campus_id || userData?.campus_id || null,
                   center_id: selectedCenterId || userData?.practice_center_id || null,
+                  rotation_id: rotation.id && rotation.id !== '__other__' ? rotation.id : null,
+                  rotation_name: rotation.name || null,
+                  rotation_number: rotation.number ? Number(rotation.number) : null,
+                  rotation_type: rotation.type || null,
                   student_id: sharedSurveyId ? null : userData.role === 'student' ? userData.user_id : null,
                   tutor_id: sharedSurveyId ? null : userData.role === 'professor' ? userData.user_id : null,
                   evaluator_user_id: sharedSurveyId ? null : userData.user_id || null,
@@ -425,6 +485,7 @@ export default function PublicEvaluationPortal() {
           <dl className="border-t border-line">
             {[
               ['Sitio', centerName],
+              ['Rotación', rotationSummary(rotation)],
               ['Rol', selectedPublicRole ? roleLabel(selectedPublicRole) : ''],
               ['Periodo', getCurrentAcademicPeriod()],
             ].filter(([, v]) => v).map(([k, v]) => (
@@ -445,6 +506,7 @@ export default function PublicEvaluationPortal() {
               setView('public-entry');
               setSelectedSurvey(sharedSurvey || selectedSurvey);
               setSelectedPublicRole('');
+              setRotation({ id: null, name: '', number: '', type: '' });
               setPublicRespondent({
                 email: '',
                 program_level: 'Pregrado',
@@ -484,6 +546,11 @@ export default function PublicEvaluationPortal() {
       }
       if (!selectedCenterId) {
         setError('Selecciona el sitio de práctica a evaluar.');
+        return;
+      }
+
+      if (!String(rotation.name || '').trim()) {
+        setError('Selecciona o indica la rotación que vas a evaluar.');
         return;
       }
 
@@ -612,6 +679,13 @@ export default function PublicEvaluationPortal() {
                 )}
                 <p className="k-label">{filteredCenters.length} de {centers.length} sitios · Periodo {getCurrentAcademicPeriod()}</p>
               </div>
+
+              <RotationPicker
+                rotations={availableRotations}
+                rotation={rotation}
+                onChange={setRotation}
+                hint={availableRotations.length ? `${availableRotations.length} rotación(es) configuradas para este sitio` : null}
+              />
             </>
           )}
 
@@ -722,6 +796,18 @@ export default function PublicEvaluationPortal() {
               </select>
             </div>
 
+            <RotationPicker
+              idPrefix="verify"
+              rotations={availableRotations}
+              rotation={rotation}
+              onChange={setRotation}
+              hint={availableRotations.length ? `${availableRotations.length} rotación(es) configuradas para este sitio` : null}
+            />
+
+            {error ? (
+              <div role="alert" className="rounded-lg border border-score-low/30 bg-score-low-bg p-3.5 text-sm font-medium text-score-low-fg">{error}</div>
+            ) : null}
+
             <p className="text-sm text-ink-2">
               {surveys.length > 0
                 ? 'Encontramos una evaluación activa para tu perfil. Continúa para revisarla.'
@@ -732,7 +818,18 @@ export default function PublicEvaluationPortal() {
               <button type="button" onClick={() => { setView('login'); setUserData(null); setUserId(''); }} className="k-btn-secondary sm:flex-1 !h-14 !rounded-xl !text-base">
                 No soy yo
               </button>
-              <button type="button" onClick={() => setView('ready')} className="k-btn sm:flex-[2] !h-14 !rounded-xl !text-base">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!String(rotation.name || '').trim()) {
+                    setError('Selecciona o indica la rotación que vas a evaluar.');
+                    return;
+                  }
+                  setError('');
+                  setView('ready');
+                }}
+                className="k-btn sm:flex-[2] !h-14 !rounded-xl !text-base"
+              >
                 Sí, soy yo
                 <ArrowRight size={20} />
               </button>
@@ -796,6 +893,89 @@ const ROLE_HINTS = {
   professor: 'Acompañas estudiantes en el sitio',
   coordinator: 'Gestionas el convenio o la práctica',
 };
+
+// Pregunta de rotación en base al sitio de práctica seleccionado.
+// Si el sitio tiene rotaciones configuradas se eligen del catálogo (y el No. y
+// el Tipo se completan solos); si no, se escriben a mano.
+function RotationPicker({ idPrefix = 'pub', rotations, rotation, onChange, hint }) {
+  const isOther = rotation.id === '__other__';
+  const selectedFromCatalog = rotations.some((item) => item.id === rotation.id);
+
+  const handleSelect = (value) => {
+    if (!value) {
+      onChange({ id: null, name: '', number: '', type: '' });
+      return;
+    }
+    if (value === '__other__') {
+      onChange({ id: '__other__', name: '', number: '', type: '' });
+      return;
+    }
+    const item = rotations.find((entry) => entry.id === value);
+    if (item) {
+      onChange({ id: item.id, name: item.name, number: item.number || '', type: item.type || '' });
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <label htmlFor={`${idPrefix}-rotation`} className="text-sm font-semibold">Rotación</label>
+      {rotations.length ? (
+        <select
+          id={`${idPrefix}-rotation`}
+          value={rotation.id || ''}
+          onChange={(e) => handleSelect(e.target.value)}
+          className="k-input !h-[52px] !rounded-[10px]"
+        >
+          <option value="">Selecciona la rotación</option>
+          {rotations.map((item) => (
+            <option key={item.id} value={item.id}>
+              {`${item.number ? `No. ${item.number} · ` : ''}${item.name}${item.type ? ` · ${item.type}` : ''}`}
+            </option>
+          ))}
+          <option value="__other__">Otra / no aparece en la lista</option>
+        </select>
+      ) : (
+        <p className="text-sm text-ink-2">
+          Este sitio no tiene rotaciones configuradas. Indica la rotación que realizaste en la práctica.
+        </p>
+      )}
+      {hint ? <p className="k-label">{hint}</p> : null}
+      {selectedFromCatalog ? (
+        <p className="text-sm font-medium text-score-high-fg">
+          Rotación seleccionada{rotation.number ? ` · No. ${rotation.number}` : ''}{rotation.type ? ` · Tipo: ${rotation.type}` : ''}
+        </p>
+      ) : null}
+      {(isOther || !rotations.length) && (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={rotation.name}
+            onChange={(e) => onChange({ ...rotation, id: '__other__', name: e.target.value })}
+            placeholder="Nombre de la rotación (ej: Cirugía)"
+            className="k-input !h-[52px] !rounded-[10px]"
+          />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min="1"
+              value={rotation.number}
+              onChange={(e) => onChange({ ...rotation, number: e.target.value })}
+              placeholder="No. de rotación"
+              className="k-input !h-[52px] !rounded-[10px] w-36"
+            />
+            <input
+              type="text"
+              value={rotation.type}
+              onChange={(e) => onChange({ ...rotation, type: e.target.value })}
+              placeholder="Tipo de rotación (ej: Asistencial)"
+              className="k-input !h-[52px] !rounded-[10px] flex-1"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Marco común del portal: marca arriba, progreso opcional y una sola columna pensada para celular.
 function PortalShell({ step, total, children }) {

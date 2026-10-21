@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Upload, Download, Pencil, Trash2, Ban, Search, X, ChevronRight, ClipboardCheck, Building2, MapPin, Image as ImageIcon } from 'lucide-react';
-import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio } from '../lib/data';
+import { Plus, Upload, Download, Pencil, Trash2, Ban, Search, X, ChevronRight, ClipboardCheck, Building2, MapPin, Image as ImageIcon, RotateCw } from 'lucide-react';
+import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio, getRotationsByConvenio, createRotation, deleteRotation } from '../lib/data';
 import { parseFile } from '../lib/importHelpers';
 
 export default function Convenios() {
@@ -11,6 +11,9 @@ export default function Convenios() {
   const [evaluationSummaries, setEvaluationSummaries] = useState({});
   const [convenioStudents, setConvenioStudents] = useState([]);
   const [convenioProfessors, setConvenioProfessors] = useState([]);
+  const [convenioRotations, setConvenioRotations] = useState([]);
+  const [rotationSaving, setRotationSaving] = useState(false);
+  const [rotationForm, setRotationForm] = useState({ name: '', number: '', type: '', program: '' });
   const [detailLoading, setDetailLoading] = useState(false);
   const [campuses, setCampuses] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -291,17 +294,66 @@ export default function Convenios() {
   const openConvenioDetail = async (convenio) => {
     setSelectedConvenio(convenio);
     setDetailLoading(true);
+    setConvenioRotations([]);
+    setRotationForm({ name: '', number: '', type: '', program: '' });
     try {
-      const [students, professors] = await Promise.all([
+      const [students, professors, rotations] = await Promise.all([
         getStudentsByConvenio(convenio.id),
-        getProfessorsByConvenio(convenio.id)
+        getProfessorsByConvenio(convenio.id),
+        getRotationsByConvenio(convenio.id, { onlyActive: false })
       ]);
       setConvenioStudents(students);
       setConvenioProfessors(professors);
+      setConvenioRotations(rotations);
     } catch (error) {
       setErrorMessage('No se pudieron cargar los datos asociados al convenio.');
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const handleAddRotation = async (e) => {
+    e.preventDefault();
+    if (!selectedConvenio) return;
+    const name = rotationForm.name.trim();
+    if (!name) {
+      setErrorMessage('El nombre de la rotación es obligatorio.');
+      return;
+    }
+    setRotationSaving(true);
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      const created = await createRotation({
+        convenio_id: selectedConvenio.id,
+        name,
+        number: rotationForm.number,
+        type: rotationForm.type.trim(),
+        program: rotationForm.program.trim()
+      });
+      setConvenioRotations((prev) => [...prev, created[0]].sort((a, b) => (a.number || 999) - (b.number || 999) || a.name.localeCompare(b.name)));
+      setRotationForm({ name: '', number: '', type: '', program: '' });
+      setStatusMessage(`Rotación "${name}" agregada a ${selectedConvenio.name}.`);
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(error?.code === '23505'
+        ? 'Ya existe una rotación con ese nombre en este sitio.'
+        : 'No se pudo guardar la rotación.');
+    } finally {
+      setRotationSaving(false);
+    }
+  };
+
+  const handleDeleteRotation = async (id) => {
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      await deleteRotation(id);
+      setConvenioRotations((prev) => prev.filter((rotation) => rotation.id !== id));
+      setStatusMessage('Rotación eliminada.');
+    } catch (error) {
+      console.error(error);
+      setErrorMessage('No se pudo eliminar la rotación.');
     }
   };
 
@@ -586,6 +638,77 @@ export default function Convenios() {
                 ))}
               </div>
             ) : null}
+
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <RotateCw size={15} aria-hidden="true" />
+                <p className="k-label">Rotaciones de práctica en este sitio</p>
+              </div>
+              {detailLoading ? (
+                <p className="text-sm text-ink-2">Cargando…</p>
+              ) : convenioRotations.length ? (
+                <ul className="flex flex-wrap gap-2">
+                  {convenioRotations.map((rotation) => (
+                    <li
+                      key={rotation.id}
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${rotation.is_active === false ? 'border-line bg-paper text-ink-2 opacity-70' : 'border-line-strong bg-white'}`}
+                    >
+                      <span className="font-semibold">{rotation.name}</span>
+                      {rotation.number ? <span className="k-label">No. {rotation.number}</span> : null}
+                      {rotation.type ? <span className="k-label">{rotation.type}</span> : null}
+                      {rotation.program ? <span className="k-label">· {rotation.program}</span> : null}
+                      <button
+                        type="button"
+                        aria-label={`Eliminar rotación ${rotation.name}`}
+                        onClick={() => handleDeleteRotation(rotation.id)}
+                        className="text-ink-2 hover:text-score-low-fg"
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-ink-2">Este sitio no tiene rotaciones configuradas. Quienes evalúen podrán escribir la rotación a mano.</p>
+              )}
+              <form onSubmit={handleAddRotation} className="space-y-2.5 border-t border-line pt-3">
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="text"
+                    value={rotationForm.name}
+                    onChange={(e) => setRotationForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Nombre de la rotación (ej: Cirugía)"
+                    className="h-10 flex-1 min-w-[160px] px-3 rounded-lg border border-line-strong bg-white text-sm outline-none focus:border-blue-600"
+                    required
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    value={rotationForm.number}
+                    onChange={(e) => setRotationForm((prev) => ({ ...prev, number: e.target.value }))}
+                    placeholder="No."
+                    className="h-10 w-20 px-3 rounded-lg border border-line-strong bg-white text-sm outline-none focus:border-blue-600"
+                  />
+                  <input
+                    type="text"
+                    value={rotationForm.type}
+                    onChange={(e) => setRotationForm((prev) => ({ ...prev, type: e.target.value }))}
+                    placeholder="Tipo (ej: Asistencial)"
+                    className="h-10 w-40 px-3 rounded-lg border border-line-strong bg-white text-sm outline-none focus:border-blue-600"
+                  />
+                  <input
+                    type="text"
+                    value={rotationForm.program}
+                    onChange={(e) => setRotationForm((prev) => ({ ...prev, program: e.target.value }))}
+                    placeholder="Programa (opcional)"
+                    className="h-10 w-44 px-3 rounded-lg border border-line-strong bg-white text-sm outline-none focus:border-blue-600"
+                  />
+                </div>
+                <button type="submit" disabled={rotationSaving} className="k-btn-secondary disabled:opacity-60 !h-10">
+                  <Plus size={16} /> {rotationSaving ? 'Guardando…' : 'Agregar rotación'}
+                </button>
+              </form>
+            </div>
 
             <div className="space-y-2.5">
               <p className="k-label">Estudiantes asociados</p>

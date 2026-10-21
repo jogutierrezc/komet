@@ -8,7 +8,7 @@ import {
 } from 'recharts';
 import { useBasket, toggleCapture } from '../lib/presentationBasket';
 import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download, Table2 } from 'lucide-react';
-import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, OPENROUTER_FREE_MODELS } from '../lib/data';
+import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt } from '../lib/data';
 import { calculateCenterAnalysis, calculateCrossMatrix } from '../utils/dataHelpers';
 import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
 
@@ -893,9 +893,9 @@ export default function Estadistica({ onNavigate }) {
       setAnaliticError('');
 
       const settings = await getSystemSettings();
-      const trimmedApiKey = String(settings?.openrouter_api_key || '').trim();
+      const trimmedApiKey = String(settings?.mistral_api_key || '').trim();
       if (!trimmedApiKey) {
-        throw new Error('Configura la API Key de OpenRouter en Sistema para generar Analitic Komet.');
+        throw new Error('Configura la API Key de Mistral en Sistema para generar Analitic Komet.');
       }
 
       const payload = {
@@ -963,15 +963,13 @@ export default function Estadistica({ onNavigate }) {
         '\n\nReglas:\n- Interpreta tendencias, dispersion y comparativos entre centros, programas, roles y secciones.\n- Compara explicitamente cada programa frente al promedio global y frente al umbral 3.7.\n- Si hay un programa seleccionado, comparalo contra los demas programas del dataset filtrado.\n- Usa el marco del algoritmo MEN 00273 de 2021 para clasificar el nivel de riesgo.\n- Analiza todos los criterios presentes en criterioPorSeccion.\n- Si hay conflictos entre datos cuantitativos y comentarios, explicalos como tension de evidencia.\n- Usa comentarios para construir oportunidades de mejora concretas.\n- No omitas ningun escenario presente en escenariosPractica.\n\nDataset filtrado:\n' +
         JSON.stringify(payload);
 
-      const selectedModel = String(settings?.openrouter_model || '').includes(':free')
-        ? settings.openrouter_model
-        : OPENROUTER_FREE_MODELS[0];
+      const selectedModel = settings?.mistral_model;
 
-      const raw = await runOpenRouterPrompt({
+      const raw = await runMistralPrompt({
         apiKey: trimmedApiKey,
         model: selectedModel,
-        systemPrompt: [systemPrompt, settings?.openrouter_system_prompt].filter(Boolean).join('\n\n'),
-        temperature: Number(settings?.openrouter_temperature ?? 0.6),
+        systemPrompt: [systemPrompt, settings?.mistral_system_prompt].filter(Boolean).join('\n\n'),
+        temperature: Number(settings?.mistral_temperature ?? 0.6),
         prompt
       });
 
@@ -2569,7 +2567,7 @@ export default function Estadistica({ onNavigate }) {
           <div className="space-y-6">
             <ChartCard
               title="Analitic Komet"
-              subtitle="Analitica IA dinamica usando los filtros superiores y modelos gratuitos en OpenRouter"
+              subtitle="Analítica IA dinámica usando los filtros superiores y modelos de Mistral"
               span={2}
             >
               <div className="flex flex-wrap items-center gap-3">

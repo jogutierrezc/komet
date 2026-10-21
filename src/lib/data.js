@@ -2,19 +2,7 @@ import { supabase } from './supabaseClient';
 
 const SYSTEM_SETTINGS_KEY = 'komet_system';
 
-export const OPENROUTER_FREE_MODELS = [
-  // Modelos gratuitos activos en OpenRouter (Junio 2026)
-  // La disponibilidad cambia frecuentemente — el fallback a modelo pago más barato
-  // (findCheapestPaidModel) se activa si todos estos fallan.
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'qwen/qwen3-coder:free',
-  'qwen/qwen-2.5-7b-instruct:free',
-  'deepseek/deepseek-r1-distill-qwen-7b:free',
-  'meta-llama/llama-3.2-3b-instruct:free'
-];
+export const MISTRAL_MODELS = ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest'];
 
 export const DEFAULT_SYSTEM_SETTINGS = {
   resend_api_key: '',
@@ -57,16 +45,28 @@ export const DEFAULT_SYSTEM_SETTINGS = {
       '<p>Ingresar: <a href="{{evaluation_link}}">{{evaluation_link}}</a></p>' +
       '<p>Equipo KOMET</p>'
   },
-  openrouter_api_key: '',
-  openrouter_model: OPENROUTER_FREE_MODELS[0],
-  openrouter_temperature: 0.7,
-  openrouter_system_prompt: 'Eres un asistente administrativo para el sistema Komet, ayudas a generar mensajes de email y notificaciones operativas.'
+  mistral_api_key: '',
+  mistral_model: MISTRAL_MODELS[0],
+  mistral_temperature: 0.7,
+  mistral_system_prompt: 'Eres un asistente administrativo para el sistema Komet, ayudas a generar mensajes de email y notificaciones operativas.'
 };
 
 function mergeSystemSettings(config = {}) {
+  const currentConfig = { ...(config || {}) };
+  const legacyOpenRouterTemperature = currentConfig.openrouter_temperature;
+  const legacyOpenRouterSystemPrompt = currentConfig.openrouter_system_prompt;
+  delete currentConfig.openrouter_api_key;
+  delete currentConfig.openrouter_model;
+  delete currentConfig.openrouter_temperature;
+  delete currentConfig.openrouter_system_prompt;
   return {
     ...DEFAULT_SYSTEM_SETTINGS,
-    ...config,
+    ...currentConfig,
+    // La clave de OpenRouter no sirve para autenticar con Mistral.
+    mistral_api_key: config?.mistral_api_key || '',
+    mistral_model: config?.mistral_model || MISTRAL_MODELS[0],
+    mistral_temperature: config?.mistral_temperature ?? legacyOpenRouterTemperature ?? DEFAULT_SYSTEM_SETTINGS.mistral_temperature,
+    mistral_system_prompt: config?.mistral_system_prompt || legacyOpenRouterSystemPrompt || DEFAULT_SYSTEM_SETTINGS.mistral_system_prompt,
     email_templates: {
       ...DEFAULT_SYSTEM_SETTINGS.email_templates,
       ...(config?.email_templates || {})
@@ -97,7 +97,7 @@ export async function saveSystemSettings(settings, configKey = SYSTEM_SETTINGS_K
   return mergeSystemSettings(data?.config_value || normalizedSettings);
 }
 
-export async function runOpenRouterPrompt({
+export async function runMistralPrompt({
   apiKey,
   model,
   systemPrompt,
@@ -105,229 +105,49 @@ export async function runOpenRouterPrompt({
   temperature = 0.7
 }) {
   const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
-
-  async function extractErrorBody(response) {
-    try {
-      const payload = await response.json();
-      if (payload?.error?.message) return payload.error.message;
-      return JSON.stringify(payload || {});
-    } catch {
-      return await response.text();
-    }
-  }
-
-  async function fetchDynamicFreeModels(trimmedKey) {
-    if (!trimmedKey) return [];
-    try {
-      const modelsResponse = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { Authorization: `Bearer ${trimmedKey}` }
-      });
-      if (!modelsResponse.ok) return [];
-      const payload = await modelsResponse.json();
-      const ids = Array.isArray(payload?.data) ? payload.data.map((item) => item?.id).filter(Boolean) : [];
-      return ids.filter((id) => String(id).includes(':free'));
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Llama a OpenRouter directamente desde el browser.
-   * Solo se usa en entorno de desarrollo (Vite) con VITE_OPENROUTER_API_KEY.
-   */
-  async function callDirectOpenRouter({ trimmedKey, model, requestTemperature, messages, freeModels }) {
-    if (!trimmedKey) {
-      const error = new Error(
-        isDev
-          ? 'No hay API key de OpenRouter. Crea un archivo .env con VITE_OPENROUTER_API_KEY=sk-or-v1-...'
-          : 'No hay API key de OpenRouter configurada. Ve a Sistema > Configuración e ingresa la llave.'
-      );
-      error.code = 'openrouter_missing_api_key';
-      throw error;
-    }
-
-    const browserOrigin = typeof window !== 'undefined' && window.location ? window.location.origin : 'https://komet.local';
-    const body = { model, temperature: requestTemperature, messages };
-    if (model === 'openrouter/auto' && freeModels?.length) {
-      body.models = freeModels;
-    }
-
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${trimmedKey}`,
-        'HTTP-Referer': browserOrigin,
-        'X-Title': 'Komet'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const errorBody = await extractErrorBody(response);
-      const error = new Error(`OpenRouter respondió con ${response.status}: ${errorBody}`);
-      error.code = 'openrouter_direct_call_failed';
-      error.status = response.status;
-      throw error;
-    }
-
-    return response;
-  }
-
-  /**
-   * Intenta la llamada primero via el proxy de Vercel /api/openrouter-chat.
-   * En dev (Vite) salta directo a llamada directa.
-   * En produccion, si el proxy falla con 404, lanza error claro.
-   */
-  async function callViaProxy({ trimmedKey, candidateModel, requestTemperature, messages, freeModels, isAuto }) {
-    if (isDev) {
-      // En dev no existe el proxy de Vercel, llamamos directo
-      return callDirectOpenRouter({ trimmedKey, model: candidateModel, requestTemperature, messages, freeModels });
-    }
-
-    const body = isAuto
-      ? { apiKey: trimmedKey || undefined, model: 'openrouter/auto', models: freeModels, temperature: requestTemperature, messages }
-      : { apiKey: trimmedKey, model: candidateModel, temperature: requestTemperature, messages };
-
-    const response = await fetch('/api/openrouter-chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (response.status === 404) {
-      // Si el proxy no está disponible pero tenemos VITE_OPENROUTER_API_KEY
-      // (bakeada en el bundle por Vite), podemos caer a llamada directa
-      if (trimmedKey) {
-        console.warn('[OpenRouter] Proxy 404, fallback a llamada directa desde el browser');
-        return callDirectOpenRouter({ trimmedKey, model: candidateModel, requestTemperature, messages, freeModels });
-      }
-
-      const error = new Error(
-        'El endpoint /api/openrouter-chat no está disponible en Vercel. ' +
-        'Haz redeploy del proyecto para que la API Serverless Function se active. ' +
-        'Si el problema persiste, configura VITE_OPENROUTER_API_KEY en las variables de entorno de Vercel.'
-      );
-      error.code = 'openrouter_proxy_not_found';
-      error.status = 404;
-      throw error;
-    }
-
-    return response;
-  }
-
-  const envKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY;
-  const trimmedKey = (apiKey || envKey || '').trim();
-  const dynamicFreeModels = await fetchDynamicFreeModels(trimmedKey);
-  const candidateModels = [...new Set([model, ...dynamicFreeModels, ...OPENROUTER_FREE_MODELS].filter(Boolean))];
-
-  let lastErrorMessage = 'openrouter_request_failed';
-  const requestTemperature = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.7;
-  const messages = [
-    { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_SETTINGS.openrouter_system_prompt },
-    { role: 'user', content: prompt || 'Responde: conexión OpenRouter verificada para Komet.' }
-  ];
-
-  if (!candidateModels.length) {
-    const authError = new Error('No hay modelos gratuitos configurados para OpenRouter.');
-    authError.code = 'openrouter_free_models_not_configured';
-    throw authError;
-  }
-
+  const devKey = isDev && typeof import.meta !== 'undefined' ? import.meta.env?.VITE_MISTRAL_API_KEY : '';
+  const trimmedKey = String(apiKey || devKey || '').trim();
   if (!trimmedKey) {
-    const error = new Error(
-      isDev
-        ? 'OpenRouter deshabilitado: crea un archivo .env con VITE_OPENROUTER_API_KEY=sk-or-v1-...'
-        : 'OpenRouter deshabilitado: configura la API key en Sistema > Configuración o agrega VITE_OPENROUTER_API_KEY en las variables de entorno de Vercel.'
-    );
-    error.code = 'openrouter_missing_api_key';
+    const error = new Error('Configura la API key de Mistral en Sistema > Configuración.');
+    error.code = 'mistral_missing_api_key';
     throw error;
   }
-
-  // Helper: intenta un modelo y captura excepciones para seguir al siguiente
-  async function tryModel(modelToTry, isAuto = false) {
-    try {
-      const response = await callViaProxy({
-        trimmedKey,
-        candidateModel: modelToTry,
-        freeModels: candidateModels,
-        requestTemperature,
-        messages,
-        isAuto
-      });
-
-      if (response.ok) {
-        const payload = await response.json();
-        const content = payload?.choices?.[0]?.message?.content || '';
-        if (content) return { ok: true, content };
-        return { ok: false, error: 'respuesta_vacia_del_modelo', skip: true };
-      }
-
-      const errorMessage = await extractErrorBody(response).catch(() => 'unknown_error');
-      const isNoEndpoint = response.status === 404 && String(errorMessage).toLowerCase().includes('no endpoints found');
-      return { ok: false, error: errorMessage, skip: isNoEndpoint };
-    } catch (err) {
-      const isNoEndpoint = String(err?.message || '').toLowerCase().includes('no endpoints found');
-      return { ok: false, error: err?.message || 'error', skip: isNoEndpoint };
-    }
+  const requestTemperature = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.7;
+  const messages = [
+    { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_SETTINGS.mistral_system_prompt },
+    { role: 'user', content: prompt || 'Responde: conexión Mistral verificada para Komet.' }
+  ];
+  const request = {
+    model: model || MISTRAL_MODELS[0],
+    temperature: requestTemperature,
+    messages
+  };
+  let response;
+  if (isDev) {
+    response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${trimmedKey}` },
+      body: JSON.stringify(request)
+    });
+  } else {
+    response = await fetch('/api/mistral-chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: trimmedKey, ...request })
+    });
   }
-
-  // 1. Intentar auto-routing con todos los modelos gratuitos como restricción
-  {
-    const result = await tryModel('openrouter/auto', true);
-    if (result.ok) return result.content;
-    if (result.error) lastErrorMessage = result.error;
-    console.warn('[OpenRouter] auto-routing falló:', result.error);
+  if (!response.ok) {
+    let detail = '';
+    try { const payload = await response.json(); detail = payload?.error?.message || JSON.stringify(payload); }
+    catch { detail = await response.text(); }
+    const error = new Error(`Mistral respondió con ${response.status}: ${detail}`);
+    error.code = 'mistral_request_failed';
+    error.status = response.status;
+    throw error;
   }
-
-  // 2. Probar cada modelo candidato individualmente
-  for (const candidateModel of candidateModels) {
-    const result = await tryModel(candidateModel, false);
-    if (result.ok) return result.content;
-    if (result.error) lastErrorMessage = result.error;
-    console.warn(`[OpenRouter] ${candidateModel} falló:`, result.error?.slice(0, 120));
-    // Si NO es un error de "no endpoints", no seguimos probando
-    if (!result.skip) break;
-  }
-
-  // 3. Fallback: buscar el modelo NO gratuito más barato disponible
-  async function findCheapestPaidModel(apiKey) {
-    if (!apiKey) return null;
-    try {
-      const resp = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { Authorization: `Bearer ${apiKey}` }
-      });
-      if (!resp.ok) return null;
-      const payload = await resp.json();
-      const models = Array.isArray(payload?.data) ? payload.data : [];
-      // Filtrar solo modelos que NO son free, ordenar por precio (completion más barato primero)
-      const paid = models
-        .filter(m => !String(m.id || '').includes(':free') && m.pricing?.completion)
-        .map(m => ({
-          id: m.id,
-          cost: parseFloat(m.pricing.completion)
-        }))
-        .filter(m => m.cost > 0 && m.cost < 1) // menos de $1 por token (razonable)
-        .sort((a, b) => a.cost - b.cost);
-      return paid[0]?.id || null;
-    } catch {
-      return null;
-    }
-  }
-
-  const cheapestModel = await findCheapestPaidModel(trimmedKey);
-  if (cheapestModel) {
-    console.warn(`[OpenRouter] Probando modelo económico: ${cheapestModel}`);
-    const result = await tryModel(cheapestModel, false);
-    if (result.ok) return result.content;
-    if (result.error) lastErrorMessage = result.error;
-  }
-
-  const requestError = new Error(
-    'Todos los modelos de OpenRouter fallaron (gratuitos y pagos mínimos). Último error: ' + (lastErrorMessage?.slice(0, 200) || 'desconocido')
-  );
-  requestError.code = 'openrouter_all_models_failed';
-  throw requestError;
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) throw new Error('Mistral devolvió una respuesta vacía.');
+  return content;
 }
 
 export async function getDbStatus() {
@@ -594,6 +414,52 @@ export async function deleteConvenio(id) {
   return true;
 }
 
+export async function getRotationsByConvenio(convenioId, { onlyActive = true } = {}) {
+  if (!convenioId) return [];
+  let query = supabase
+    .from('rotations')
+    .select('*')
+    .eq('convenio_id', convenioId);
+  if (onlyActive) {
+    query = query.eq('is_active', true);
+  }
+  const { data, error } = await query
+    .order('number', { ascending: true, nullsFirst: false })
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createRotation(rotation) {
+  const payload = {
+    convenio_id: rotation.convenio_id,
+    name: rotation.name,
+    number: rotation.number ? Number(rotation.number) : null,
+    type: rotation.type || null,
+    program: rotation.program || null,
+    is_active: rotation.is_active !== false
+  };
+  const { data, error } = await supabase.from('rotations').insert([payload]).select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function updateRotation(id, rotation) {
+  const { data, error } = await supabase
+    .from('rotations')
+    .update(rotation)
+    .eq('id', id)
+    .select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteRotation(id) {
+  const { error } = await supabase.from('rotations').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
 export async function getSurveys() {
   const { data, error } = await supabase
     .from('surveys')
@@ -776,8 +642,12 @@ function parseNumericAnswer(value) {
   return null;
 }
 
+// Solo las preguntas de escala 1-5 puntúan; un campo numérico o de fecha no debe contaminar el promedio.
+const isScoredQuestion = (q) => q.tipo === 'rating' || q.tipo === 'likert';
+
 function getSectionScore(section, answers) {
   const numericValues = section.questions
+    .filter(isScoredQuestion)
     .map((q) => parseNumericAnswer(answers[q.id]))
     .filter((value) => value !== null && !Number.isNaN(value));
 
@@ -802,7 +672,7 @@ export function calculateSurveyScoreSummary({ survey = {}, answers = {} }) {
   }));
 
   const allNumericAnswers = sections
-    .flatMap((section) => section.questions.map((q) => parseNumericAnswer(answers[q.id])))
+    .flatMap((section) => section.questions.filter(isScoredQuestion).map((q) => parseNumericAnswer(answers[q.id])))
     .filter((value) => value !== null && !Number.isNaN(value));
 
   const globalScore = allNumericAnswers.length

@@ -5,8 +5,7 @@ import {
   getConvenios,
   getEvaluationReportMetrics,
   getSystemSettings,
-  runOpenRouterPrompt,
-  OPENROUTER_FREE_MODELS
+  runMistralPrompt
 } from '../lib/data';
 import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine';
 
@@ -290,12 +289,10 @@ export default function KometPresenta({ onNavigate }) {
 
     try {
       const settings = await getSystemSettings();
-      const selectedModel = String(settings?.openrouter_model || '').includes(':free')
-        ? settings.openrouter_model
-        : OPENROUTER_FREE_MODELS[0];
+      const selectedModel = settings?.mistral_model;
 
-      const raw = await runOpenRouterPrompt({
-        apiKey: settings?.openrouter_api_key || '',
+      const raw = await runMistralPrompt({
+        apiKey: settings?.mistral_api_key || '',
         model: selectedModel,
         systemPrompt: 'Eres analista de datos senior en calidad educativa y relación docencia-servicio. ' +
           'Escribes textos breves para diapositivas ejecutivas, siempre con cifras tomadas de los datos recibidos. ' +

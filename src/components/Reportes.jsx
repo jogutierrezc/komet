@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles } from 'lucide-react';
 import { useBasket, addCapture } from '../lib/presentationBasket';
-import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, getProgramsByCampus, OPENROUTER_FREE_MODELS } from '../lib/data';
+import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt, getProgramsByCampus } from '../lib/data';
 import { getRowCenter, normalizeCenterName } from '../utils/dataHelpers';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
 import { generarInformeDesdeRows } from '../lib/informe/informeEngine';
@@ -1314,15 +1314,13 @@ Dataset:
 ${JSON.stringify(compactDataset)}
       `.trim();
 
-      const selectedModel = String(settings?.openrouter_model || '').includes(':free')
-        ? settings.openrouter_model
-        : OPENROUTER_FREE_MODELS[0];
+      const selectedModel = settings?.mistral_model;
 
-      const rawNarrative = await runOpenRouterPrompt({
-        apiKey: settings?.openrouter_api_key,
+      const rawNarrative = await runMistralPrompt({
+        apiKey: settings?.mistral_api_key,
         model: selectedModel,
-        systemPrompt: [systemPrompt, settings?.openrouter_system_prompt].filter(Boolean).join('\n\n'),
-        temperature: Number(settings?.openrouter_temperature ?? 0.6),
+        systemPrompt: [systemPrompt, settings?.mistral_system_prompt].filter(Boolean).join('\n\n'),
+        temperature: Number(settings?.mistral_temperature ?? 0.6),
         prompt
       });
 

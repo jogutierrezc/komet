@@ -32,9 +32,9 @@ import {
   getSystemSettings,
   saveSystemSettings,
   getDbStatus,
-  OPENROUTER_FREE_MODELS,
+  MISTRAL_MODELS,
   DEFAULT_SYSTEM_SETTINGS,
-  runOpenRouterPrompt
+  runMistralPrompt
 } from '../lib/data';
 
 const initialUser = {
@@ -686,54 +686,54 @@ const IaView = ({ settings, onChange, onSave, loading }) => {
     setTestError('');
     setTestLoading(true);
     try {
-      const output = await runOpenRouterPrompt({
-        apiKey: settings.openrouter_api_key,
-        model: settings.openrouter_model,
-        systemPrompt: settings.openrouter_system_prompt,
-        temperature: settings.openrouter_temperature,
-        prompt: 'Genera una línea de confirmación indicando que OpenRouter está conectado para Komet.'
+      const output = await runMistralPrompt({
+        apiKey: settings.mistral_api_key,
+        model: settings.mistral_model,
+        systemPrompt: settings.mistral_system_prompt,
+        temperature: settings.mistral_temperature,
+        prompt: 'Genera una línea de confirmación indicando que Mistral está conectado para Komet.'
       });
-      setTestResult(output || 'Conexión exitosa con OpenRouter.');
+      setTestResult(output || 'Conexión exitosa con Mistral.');
     } catch (error) {
-      setTestError(error?.message || 'No se pudo validar la conexión con OpenRouter.');
+      setTestError(error?.message || 'No se pudo validar la conexión con Mistral.');
       console.error(error);
     } finally {
       setTestLoading(false);
     }
   }
 
-  const currentTemperature = Number(settings.openrouter_temperature ?? 0.7);
+  const currentTemperature = Number(settings.mistral_temperature ?? 0.7);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 max-w-5xl">
       <div className="flex items-center gap-2">
         <Bot className="text-indigo-600" size={28} />
-        <h2 className="text-2xl font-bold text-gray-800">Configuración de OpenRouter</h2>
+        <h2 className="text-2xl font-bold text-gray-800">Configuración de Mistral AI</h2>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
           <div className="space-y-2">
             <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <Key size={16} /> API Key OpenRouter
+              <Key size={16} /> API Key de Mistral
             </label>
             <input
               type="password"
-              value={settings.openrouter_api_key || ''}
-              onChange={(e) => onChange('openrouter_api_key', e.target.value)}
-              placeholder="sk-or-v1-..."
+              value={settings.mistral_api_key || ''}
+              onChange={(e) => onChange('mistral_api_key', e.target.value)}
+              placeholder="API key de Mistral"
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
             />
-            <p className="text-xs text-slate-500">Guarda aquí la API key para usar modelos gratuitos de OpenRouter (terminación :free).</p>
+            <p className="text-xs text-slate-500">La API key se guarda en la configuración del sistema y se usa para las solicitudes a Mistral.</p>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700">Modelo Gratuito</label>
+            <label className="text-sm font-semibold text-gray-700">Modelo</label>
             <select
-              value={settings.openrouter_model || OPENROUTER_FREE_MODELS[0]}
-              onChange={(e) => onChange('openrouter_model', e.target.value)}
+              value={settings.mistral_model || MISTRAL_MODELS[0]}
+              onChange={(e) => onChange('mistral_model', e.target.value)}
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              {OPENROUTER_FREE_MODELS.map((modelName) => (
+              {MISTRAL_MODELS.map((modelName) => (
                 <option key={modelName} value={modelName}>{modelName}</option>
               ))}
             </select>
@@ -750,7 +750,7 @@ const IaView = ({ settings, onChange, onSave, loading }) => {
               max="1"
               step="0.1"
               value={Number.isFinite(currentTemperature) ? currentTemperature : 0.7}
-              onChange={(e) => onChange('openrouter_temperature', Number(e.target.value))}
+              onChange={(e) => onChange('mistral_temperature', Number(e.target.value))}
               className="w-full accent-indigo-600"
             />
           </div>
@@ -758,8 +758,8 @@ const IaView = ({ settings, onChange, onSave, loading }) => {
           <div className="space-y-2">
             <label className="text-sm font-semibold text-gray-700">System Prompt Base</label>
             <textarea
-              value={settings.openrouter_system_prompt || ''}
-              onChange={(e) => onChange('openrouter_system_prompt', e.target.value)}
+              value={settings.mistral_system_prompt || ''}
+              onChange={(e) => onChange('mistral_system_prompt', e.target.value)}
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 h-32 text-sm"
               placeholder="Eres un asistente experto en la plataforma KOMET..."
             />
@@ -788,12 +788,12 @@ const IaView = ({ settings, onChange, onSave, loading }) => {
         <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-8 rounded-2xl text-white flex flex-col gap-4 shadow-lg">
           <div>
             <h3 className="text-xl font-bold mb-2">Estado del Motor IA</h3>
-            <p className="text-indigo-100 text-sm opacity-90">Configura OpenRouter para centralizar el uso de IA en plantillas, notificaciones y automatizaciones futuras.</p>
+            <p className="text-indigo-100 text-sm opacity-90">Configura Mistral para centralizar la generación de contenido con IA en Komet.</p>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 text-sm">
-            <p className="font-semibold mb-2">Modelos recomendados gratuitos</p>
+            <p className="font-semibold mb-2">Modelos disponibles</p>
             <ul className="space-y-1 text-indigo-100">
-              {OPENROUTER_FREE_MODELS.slice(0, 3).map((modelName) => (
+              {MISTRAL_MODELS.map((modelName) => (
                 <li key={modelName}>{modelName}</li>
               ))}
             </ul>
