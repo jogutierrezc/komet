@@ -138,7 +138,7 @@ export const buildEvaluationPreviewHtml = ({ studentInfo, sections, currentYear 
   const renderQuestions = (section) => {
     if (section.type === 'info') {
       return `
-        <div class="bg-blue-50/40 border border-blue-100 rounded-[2rem] p-8 md:p-10 mb-8">
+        <div class="bg-blue-50/40 border border-blue-100 rounded-2xl p-8 md:p-10 mb-8">
           <div class="flex items-center gap-6 text-center md:text-left">
             <div class="bg-blue-600 w-14 h-14 rounded-2xl flex items-center justify-center text-white shadow-lg ring-4 ring-white">i</div>
             <div>
@@ -157,7 +157,7 @@ export const buildEvaluationPreviewHtml = ({ studentInfo, sections, currentYear 
     return section.questions.map((q, idx) => {
       if (q.type === 'likert') {
         const options = [1, 2, 3, 4, 5].map((val) => `
-          <div class="relative flex flex-col items-center justify-center py-8 rounded-[2rem] border-2 bg-white border-slate-100 text-slate-400">
+          <div class="relative flex flex-col items-center justify-center py-8 rounded-2xl border-2 bg-white border-slate-100 text-slate-400">
             <span class="text-3xl font-black mb-1">${val}</span>
             <span class="text-[10px] uppercase font-black tracking-tighter text-slate-300 text-center leading-tight px-1">${LIKERT_LABELS[val] ?? ''}</span>
           </div>
@@ -181,7 +181,7 @@ export const buildEvaluationPreviewHtml = ({ studentInfo, sections, currentYear 
               <span class="flex items-center justify-center w-8 h-8 rounded-full bg-slate-100 text-slate-500 text-xs font-black">${idx + 1}</span>
               <label class="block text-slate-800 font-bold text-xl leading-tight">${q.label} ${q.required ? '<span class="text-blue-500 font-black">*</span>' : ''}</label>
             </div>
-            <textarea class="w-full bg-slate-50 border-2 border-slate-100 rounded-[2rem] p-8 h-44 text-slate-700 placeholder-slate-300 font-medium text-lg" placeholder="Escriba aquí sus observaciones..."></textarea>
+            <textarea class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-8 h-44 text-slate-700 placeholder-slate-300 font-medium text-lg" placeholder="Escriba aquí sus observaciones..."></textarea>
           </div>
         `;
       }
@@ -193,12 +193,12 @@ export const buildEvaluationPreviewHtml = ({ studentInfo, sections, currentYear 
               <span class="flex items-center justify-center w-8 h-8 rounded-full bg-slate-100 text-slate-500 text-xs font-black">${idx + 1}</span>
               <label class="block text-slate-800 font-bold text-xl leading-tight">${q.label} ${q.required ? '<span class="text-blue-500 font-black">*</span>' : ''}</label>
             </div>
-            <div class="border-2 border-dashed border-slate-200 rounded-[3rem] p-12 bg-slate-50 text-center">
-              <div class="w-24 h-24 bg-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-md">✍️</div>
+            <div class="border-2 border-dashed border-slate-200 rounded-2xl p-12 bg-slate-50 text-center">
+              <div class="w-24 h-24 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-md">✍️</div>
               <h3 class="text-slate-800 font-extrabold text-xl mb-2">Firma del Estudiante</h3>
               <p class="text-sm font-medium text-slate-400 mb-10">Confirmo que la información suministrada es verídica</p>
               <div class="h-40 mt-4 border-b-2 border-slate-200 w-4/5 mx-auto flex items-end justify-center">
-                <span class="text-[10px] text-slate-300 uppercase font-black tracking-[0.5em] pb-4">Espacio para firma</span>
+                <span class="text-[10px] text-slate-300 uppercase font-black tracking-wider pb-4">Espacio para firma</span>
               </div>
             </div>
           </div>
@@ -343,7 +343,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] font-sans text-slate-900 pb-20">
+    <div className="min-h-screen bg-paper font-sans text-slate-900 pb-20">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 md:px-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between py-4 gap-4">
@@ -355,12 +355,12 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
               <div>
                 <div className="flex items-center gap-2">
                   <Layout className="w-3 h-3 text-blue-500" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">Formato de Calidad</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-600">Formato de Calidad</span>
                 </div>
                 <h1 className="text-sm md:text-base font-extrabold text-slate-800 leading-tight max-w-xs md:max-w-md">
                   {surveyTitle}
                 </h1>
-                <p className="text-slate-400 text-[10px] uppercase font-bold tracking-[0.2em] mt-1">
+                <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mt-1">
                   {surveySubtitle}
                 </p>
               </div>
@@ -462,7 +462,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
         </div>
 
         <div className={`transition-all duration-300 transform ${animate ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/30 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl shadow-slate-200/30 overflow-hidden">
             <div className="bg-slate-900 px-8 py-6 flex items-center gap-4">
               <div className="bg-blue-600 p-2 rounded-xl">
                 <FileText className="w-5 h-5 text-white" />
@@ -475,7 +475,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
 
             <div className="p-8 md:p-14">
               {sections[step].type === 'info' ? (
-                <div className="bg-blue-50/40 border border-blue-100 rounded-[2rem] p-8 md:p-10 relative overflow-hidden">
+                <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-8 md:p-10 relative overflow-hidden">
                   <div className="relative z-10 flex flex-col md:flex-row gap-8 items-center md:items-start text-center md:text-left">
                     <div className="bg-blue-600 w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-blue-200 ring-4 ring-white">
                       <Info className="w-7 h-7 text-white" />
@@ -512,7 +512,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                               key={val}
                               type="button"
                               onClick={() => setFormData({ ...formData, [q.id]: val })}
-                              className={`relative flex flex-col items-center justify-center py-8 rounded-[2rem] border-2 transition-all duration-300 ${formData[q.id] === val ? 'bg-blue-600 border-blue-600 text-white shadow-2xl shadow-blue-300 -translate-y-2' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300 hover:bg-slate-50 active:scale-95'}`}
+                              className={`relative flex flex-col items-center justify-center py-8 rounded-2xl border-2 transition-all duration-300 ${formData[q.id] === val ? 'bg-blue-600 border-blue-600 text-white shadow-2xl shadow-blue-300 -translate-y-2' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300 hover:bg-slate-50 active:scale-95'}`}
                             >
                               <span className="text-3xl font-black mb-1">{val}</span>
                               <span className={`text-[10px] uppercase font-black tracking-tighter ${formData[q.id] === val ? 'text-blue-100' : 'text-slate-300'}`}>
@@ -535,7 +535,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                               key={option}
                               type="button"
                               onClick={() => setFormData({ ...formData, [q.id]: option })}
-                              className={`py-6 rounded-[2rem] border-2 transition-all duration-300 ${formData[q.id] === option ? 'bg-blue-600 border-blue-600 text-white shadow-xl' : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300 hover:bg-slate-50'}`}
+                              className={`py-6 rounded-2xl border-2 transition-all duration-300 ${formData[q.id] === option ? 'bg-blue-600 border-blue-600 text-white shadow-xl' : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300 hover:bg-slate-50'}`}
                             >
                               {option}
                             </button>
@@ -550,7 +550,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                               key={`${q.id}-${index}`}
                               type="button"
                               onClick={() => setFormData({ ...formData, [q.id]: option })}
-                              className={`w-full text-left px-6 py-5 rounded-[2rem] border-2 transition-all duration-300 ${formData[q.id] === option ? 'bg-blue-600 border-blue-600 text-white shadow-xl' : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300 hover:bg-slate-50'}`}
+                              className={`w-full text-left px-6 py-5 rounded-2xl border-2 transition-all duration-300 ${formData[q.id] === option ? 'bg-blue-600 border-blue-600 text-white shadow-xl' : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300 hover:bg-slate-50'}`}
                             >
                               {option}
                             </button>
@@ -561,7 +561,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                       {q.type === 'number' && (
                         <input
                           type="number"
-                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-[2rem] p-5 text-slate-700 placeholder-slate-300 font-medium text-lg"
+                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-5 text-slate-700 placeholder-slate-300 font-medium text-lg"
                           placeholder="Ingrese un número"
                           value={formData[q.id] || ''}
                           onChange={(e) => setFormData({ ...formData, [q.id]: e.target.value })}
@@ -571,7 +571,7 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                       {q.type === 'date' && (
                         <input
                           type="date"
-                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-[2rem] p-5 text-slate-700 font-medium text-lg"
+                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-5 text-slate-700 font-medium text-lg"
                           value={formData[q.id] || ''}
                           onChange={(e) => setFormData({ ...formData, [q.id]: e.target.value })}
                         />
@@ -579,15 +579,15 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
 
                       {q.type === 'text' && (
                         <textarea 
-                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-[2rem] p-8 focus:ring-8 focus:ring-blue-50 focus:border-blue-500 outline-none transition-all h-44 text-slate-700 placeholder-slate-300 font-medium text-lg"
+                          className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-8 focus:ring-8 focus:ring-blue-50 focus:border-blue-500 outline-none transition-all h-44 text-slate-700 placeholder-slate-300 font-medium text-lg"
                           placeholder="Escriba aquí sus observaciones..."
                           onChange={(e) => setFormData({ ...formData, [q.id]: e.target.value })}
                         />
                       )}
 
                       {q.type === 'photo' && (
-                        <div className="border-2 border-dashed border-slate-200 rounded-[3rem] p-12 bg-slate-50 text-center">
-                          <div className="w-24 h-24 bg-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-md">
+                        <div className="border-2 border-dashed border-slate-200 rounded-2xl p-12 bg-slate-50 text-center">
+                          <div className="w-24 h-24 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-md">
                             <span className="text-3xl">📷</span>
                           </div>
                           <p className="text-slate-500 text-sm">Adjunte una fotografía relacionada con la evaluación.</p>
@@ -595,14 +595,14 @@ export default function EvaluacionesFormPreview({ onClose, studentInfo = sampleS
                       )}
 
                       {q.type === 'signature' && (
-                        <div className="border-2 border-dashed border-slate-200 rounded-[3rem] p-12 bg-slate-50 text-center group cursor-pointer hover:border-blue-400 hover:bg-blue-50/20 transition-all duration-500">
-                          <div className="w-24 h-24 bg-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-md group-hover:scale-110 group-hover:rotate-6 transition-all duration-500">
+                        <div className="border-2 border-dashed border-slate-200 rounded-2xl p-12 bg-slate-50 text-center group cursor-pointer hover:border-blue-400 hover:bg-blue-50/20 transition-all duration-500">
+                          <div className="w-24 h-24 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-md group-hover:scale-110 group-hover:rotate-6 transition-all duration-500">
                             <PenTool className="w-10 h-10 text-blue-500" />
                           </div>
                           <h3 className="text-slate-800 font-extrabold text-xl mb-2">Firma del Estudiante</h3>
                           <p className="text-sm font-medium text-slate-400 mb-10">Confirmo que la información suministrada es verídica</p>
                           <div className="h-40 mt-4 border-b-2 border-slate-200 w-4/5 mx-auto flex items-end justify-center group-hover:border-blue-300 transition-colors">
-                            <span className="text-[10px] text-slate-300 uppercase font-black tracking-[0.5em] pb-4">Espacio para firma</span>
+                            <span className="text-[10px] text-slate-300 uppercase font-black tracking-wider pb-4">Espacio para firma</span>
                           </div>
                         </div>
                       )}

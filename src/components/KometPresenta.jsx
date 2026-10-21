@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2, Presentation, Sparkles, Download, BarChart3, FileText, PieChart, FileUp, Building2 } from 'lucide-react';
+import { Loader2, Sparkles, Download, X } from 'lucide-react';
 import {
   getCampuses,
   getConvenios,
@@ -13,10 +13,20 @@ import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine
 // --- Módulos extraídos ---
 import { norm, avg, stdDev, resolveProgram, resolveLevel, normalizeRoleName, getRowCenter, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
 import { parseAiPayload, buildNarrativeFallback } from '../services/aiService';
-import { createPresentationDeck } from '../services/pptService';
+import { useBasket, removeCapture, clearBasket } from '../lib/presentationBasket';
+import { buildSlidePlan, buildSlideNarrativePrompt, parseSlideNarrative, applySlideNarrative, planFingerprint, LIMITS } from '../services/slidePlan';
+import { downloadDeck } from '../lib/pptDeck';
+
+const NARRATIVE_CACHE_KEY = 'komet.presenta.narrative.v1';
 import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
 
-export default function KometPresenta() {
+export default function KometPresenta({ onNavigate }) {
+  const basket = useBasket();
+  const [aiSlideTexts, setAiSlideTexts] = useState({});
+  const [edits, setEdits] = useState({});
+  const [selectedSlideId, setSelectedSlideId] = useState('resumen');
+  const [narrativeSource, setNarrativeSource] = useState('none');
+  const [templateMode, setTemplateMode] = useState('komet');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generatingAi, setGeneratingAi] = useState(false);
@@ -227,9 +237,52 @@ export default function KometPresenta() {
 
   const fallbackNarrative = useMemo(() => buildNarrativeFallback(metrics), [metrics]);
 
+  // Plan sin las diapositivas que dependen de la narrativa: sirve para el prompt y para la huella de caché.
+  const corePlan = useMemo(
+    () => buildSlidePlan({ metrics, filters, captures: basket, narrative: null }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [metrics, selectedCampus, selectedLevel, selectedCenter, selectedProgram, basket]
+  );
+  const fingerprint = useMemo(() => planFingerprint(corePlan, filters, metrics.kpis), [corePlan, filters, metrics.kpis]);
+
+  const activeNarrative = aiNarrative || fallbackNarrative;
+
+  const plan = useMemo(() => {
+    const base = buildSlidePlan({ metrics, filters, captures: basket, narrative: aiNarrative });
+    return applySlideNarrative(base, aiSlideTexts).map((s) => (edits[s.id] ? { ...s, ...edits[s.id] } : s));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metrics, selectedCampus, selectedLevel, selectedCenter, selectedProgram, basket, aiNarrative, aiSlideTexts, edits]);
+
+  const includedCount = plan.filter((s) => s.include).length;
+  const selectedSlide = plan.find((s) => s.id === selectedSlideId) || plan[0];
+
+  function editSlide(id, patch) {
+    setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
+  }
+
+  // Si ya hay una narrativa guardada para estos mismos datos y filtros, se reutiliza sin llamar al modelo.
+  useEffect(() => {
+    if (loading || !metrics.kpis.total) return;
+    try {
+      const cached = JSON.parse(localStorage.getItem(NARRATIVE_CACHE_KEY) || 'null');
+      if (cached && cached.fingerprint === fingerprint) {
+        setAiNarrative(cached.legacy);
+        setAiSlideTexts(cached.slides || {});
+        setAiReady(true);
+        setNarrativeSource('cache');
+      } else {
+        setAiReady(false);
+        setNarrativeSource('none');
+        setAiSlideTexts({});
+      }
+    } catch {
+      setNarrativeSource('none');
+    }
+  }, [fingerprint, loading, metrics.kpis.total]);
+
   /**
-   * Genera la narrativa IA de forma automática al cargar datos o cambiar filtros.
-   * Construye un prompt estructurado y profundo con todas las métricas disponibles.
+   * Una sola llamada al modelo por diapositiva-lote: título-mensaje, viñetas y nota del orador.
+   * Solo se ejecuta al pulsar el botón; el resultado se guarda por huella de datos y filtros.
    */
   async function handleGenerateAiNarrative() {
     setGeneratingAi(true);
@@ -241,130 +294,54 @@ export default function KometPresenta() {
         ? settings.openrouter_model
         : OPENROUTER_FREE_MODELS[0];
 
-      const centerAnalysisText = formatCenterAnalysisForPrompt(
-        metrics.centerAnalysis,
-        selectedCenter,
-        selectedProgram
-      );
-
-      // ── Prompt estructurado y profundo ──
-      const prompt = [
-        'Eres un analista de datos senior especializado en calidad educativa y relación docencia-servicio (RDS).',
-        'Debes generar un análisis ESTRUCTURADO, PROFUNDO y ACCIONABLE basado en las métricas proporcionadas.',
-        '',
-        '=== INSTRUCCIONES ===',
-        '1. Analiza TODOS los datos disponibles: globales, distribución, centros, programas, roles, tendencias.',
-        '2. Identifica correlaciones entre variables (ej: ¿los centros con más evaluaciones tienen mejor puntaje? ¿hay roles que consistentemente puntúan más bajo?).',
-        '3. Proporciona Insights concretos basados en los datos, no generalidades.',
-        '4. Las sugerencias de acción deben ser específicas, priorizadas y accionables.',
-        '5. Responde ÚNICAMENTE con un JSON válido (sin markdown, sin explicaciones adicionales).',
-        '',
-        '=== ESTRUCTURA JSON REQUERIDA ===',
-        '{',
-        '  "resumen": "Resumen ejecutivo de 3-4 líneas con los hallazgos más importantes",',
-        '  "analisis_completo": "Análisis detallado de 8-12 párrafos que cubra: 1) contexto general, 2) distribución de resultados, 3) análisis por rol, 4) análisis por centro, 5) análisis por programa, 6) tendencia temporal, 7) correlaciones identificadas, 8) conclusiones estratégicas",',
-        '  "hallazgos": ["Hallazgo 1 basado en datos", "Hallazgo 2", "Hallazgo 3", "Hallazgo 4", "Hallazgo 5"],',
-        '  "riesgos": ["Riesgo 1 con impacto identificado", "Riesgo 2", "Riesgo 3", "Riesgo 4", "Riesgo 5"],',
-        '  "acciones": ["Acción prioritaria 1 con responsable sugerido", "Acción 2", "Acción 3", "Acción 4", "Acción 5"]',
-        '}',
-        '',
-        '=== DATOS DEL ESTUDIO ===',
-        `Filtros aplicados: ${formatFilters(filters)}`,
-        `Período analizado: ${metrics.dateRange}`,
-        '',
-        '--- 1. MÉTRICAS GLOBALES ---',
-        `Total evaluaciones: ${metrics.kpis.total}`,
-        `Completadas: ${metrics.kpis.completed} (${metrics.kpis.completionPct.toFixed(1)}%)`,
-        `Puntaje global: ${metrics.kpis.globalScore.toFixed(2)} / 5,0`,
-        `Desviación estándar: ${metrics.variability.toFixed(2)}`,
-        `Centros evaluados: ${metrics.kpis.centers}`,
-        `Programas académicos: ${metrics.kpis.programs}`,
-        '',
-        '--- 2. DISTRIBUCIÓN DE RESULTADOS ---',
-        `Rango 0-2 (Crítico): ${metrics.distribution[0].count} evaluaciones`,
-        `Rango 2-3 (Bajo): ${metrics.distribution[1].count} evaluaciones`,
-        `Rango 3-4 (Aceptable): ${metrics.distribution[2].count} evaluaciones`,
-        `Rango 4-5 (Sobresaliente): ${metrics.distribution[3].count} evaluaciones`,
-        '',
-        '--- 3. RANKING DE CENTROS DE PRÁCTICA ---',
-        metrics.byCenter.slice(0, 10).map((c, i) => `${i + 1}. ${c.name}: ${c.score.toFixed(2)} (${c.total} eval., ${c.completionPct.toFixed(1)}% cumplimiento)`).join('\n'),
-        '',
-        '--- 4. ANÁLISIS DETALLADO POR CENTRO (CON DESGLOSE POR ROL) ---',
-        centerAnalysisText,
-        '',
-        '--- 5. RANKING DE PROGRAMAS ACADÉMICOS ---',
-        metrics.byProgram.slice(0, 8).map((p, i) => `${i + 1}. ${p.name}: ${p.score.toFixed(2)} (${p.total} eval.)`).join('\n'),
-        '',
-        '--- 6. PERCEPCIÓN POR ROL DEL EVALUADOR ---',
-        metrics.byRole.map(r => `${r.name}: ${r.score.toFixed(2)} (${r.total} registros, ${r.completionPct.toFixed(1)}% cumplimiento)`).join('\n'),
-        '',
-        '--- 7. TENDENCIA MENSUAL ---',
-        metrics.monthly.length > 0
-          ? metrics.monthly.map(m => `${m.name}: ${m.score.toFixed(2)} (${m.total} eval.)`).join('\n')
-          : 'Sin datos mensuales',
-        `Tendencia general: ${metrics.trendDirection}`,
-        '',
-        '--- 8. DISTRIBUCIÓN POR CAMPUS ---',
-        metrics.byCampus.map(c => `${c.name}: ${c.score.toFixed(2)} (${c.total} eval.)`).join('\n'),
-        '',
-        '=== INDICACIONES ADICIONALES ===',
-        '- Si hay datos suficientes (>10 evaluaciones), haz análisis de correlaciones entre variables.',
-        '- Identifica centros con desempeño consistentemente alto o bajo en todos los roles.',
-        '- Sugiere acciones diferenciadas por tipo de centro/programa según su desempeño.',
-        '- Prioriza las acciones: primero las críticas (urgentes), luego las estratégicas.',
-        '- Los puntajes son sobre 5,0. El umbral mínimo aceptable es 3,5.',
-        '- Incluye en el análisis_completo referencias a los datos específicos (no seas genérico).'
-      ].join('\n');
-
       const raw = await runOpenRouterPrompt({
         apiKey: settings?.openrouter_api_key || '',
         model: selectedModel,
-        systemPrompt: 'Eres un Chief Data Officer y experto en calidad educativa con 20 años de experiencia en ' +
-          'análisis de datos de evaluación institucional. Tu especialidad es la relación docencia-servicio (RDS) ' +
-          'y el modelo de autoevaluación basado en el Acuerdo 00273 de 2021. Generas análisis profundos, ' +
-          'estructurados y accionables, siempre respaldados por datos concretos. Respondes exclusivamente en JSON.',
-        prompt,
-        temperature: 0.4 // más baja para mayor consistencia estructural
+        systemPrompt: 'Eres analista de datos senior en calidad educativa y relación docencia-servicio. ' +
+          'Escribes textos breves para diapositivas ejecutivas, siempre con cifras tomadas de los datos recibidos. ' +
+          'Respondes exclusivamente en JSON válido.',
+        prompt: buildSlideNarrativePrompt(corePlan, { metrics, filters }),
+        temperature: 0.3
       });
 
-      const parsed = parseAiPayload(raw);
-      setAiNarrative(parsed);
+      const { slides, legacy } = parseSlideNarrative(raw, corePlan);
+      if (!Object.keys(slides).length) throw new Error('El modelo no devolvió diapositivas en el formato esperado.');
+
+      const legacyNarrative = {
+        ...fallbackNarrative,
+        ...(legacy?.resumen ? { resumen: legacy.resumen } : {}),
+        ...(legacy?.hallazgos?.length ? { hallazgos: legacy.hallazgos } : {}),
+        ...(legacy?.riesgos?.length ? { riesgos: legacy.riesgos } : {}),
+        ...(legacy?.acciones?.length ? { acciones: legacy.acciones } : {}),
+      };
+      setAiNarrative(legacyNarrative);
+      setAiSlideTexts(slides);
       setAiReady(true);
+      setNarrativeSource('model');
+      try {
+        localStorage.setItem(NARRATIVE_CACHE_KEY, JSON.stringify({ fingerprint, legacy: legacyNarrative, slides }));
+      } catch {
+        // sin almacenamiento: la narrativa vale solo para esta sesión
+      }
     } catch (aiError) {
       setAiNarrative(fallbackNarrative);
-      setAiReady(true);
-      setError(`No se pudo generar análisis profundo IA: ${aiError?.message || 'error no identificado'}`);
+      setError(`No se pudo generar la narrativa con IA: ${aiError?.message || 'error no identificado'}. Se usan los textos automáticos.`);
     } finally {
       setGeneratingAi(false);
     }
   }
 
-  // ── Auto-generación: se dispara cuando cambian los datos ──
-  useEffect(() => {
-    if (loading || !metrics.kpis.total) return;
-    // Pequeño debounce para evitar ciclos con cambios rápidos de filtros
-    const timer = setTimeout(() => {
-      handleGenerateAiNarrative();
-    }, 600);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metrics.kpis.total, metrics.kpis.completed, selectedCampus, selectedLevel, selectedCenter, selectedProgram]);
-
-  async function handleExportPptx() {
+  async function handleDownloadDeck() {
+    if (!metrics.kpis.total) {
+      setError('No hay datos para armar la presentación.');
+      return;
+    }
     setExporting(true);
     setError('');
-
     try {
-      const deck = createPresentationDeck({
-        filters,
-        metrics,
-        narrative: aiNarrative || fallbackNarrative
-      });
-
-      const timeTag = new Date().toISOString().slice(0, 10);
-      await deck.writeFile({ fileName: `Komet-Data-Report-${timeTag}.pptx` });
+      await downloadDeck(plan, { filters });
     } catch (exportError) {
-      setError(`Error al exportar la presentación con gráficos: ${exportError?.message || 'error no identificado'}`);
+      setError(`No se pudo crear el archivo PPTX: ${exportError?.message || 'error no identificado'}`);
     } finally {
       setExporting(false);
     }
@@ -412,176 +389,176 @@ export default function KometPresenta() {
     }
   }
 
-  const activeNarrative = aiNarrative || fallbackNarrative;
+  const noData = loading || !metrics.kpis.total;
+  const steps = [
+    { label: 'Datos', done: !noData },
+    { label: 'Contenido', done: !noData && includedCount > 0 },
+    { label: 'Narrativa', done: aiReady },
+    { label: 'Exportar', done: false },
+  ];
+  const currentStep = steps.findIndex((s) => !s.done);
+  const TYPE_LABEL = { cover: 'Portada', stat: 'Cifra', chart: 'Gráfico nativo', table: 'Tabla', figures: 'Cifras', columns: 'Texto', bullets: 'Texto' };
+  const SOURCE_LABEL = { estadistica: 'Estadística', informe: 'Informe' };
+  const NARRATIVE_LABEL = { model: 'Generada con IA', cache: 'Guardada para estos datos', none: 'Pendiente' };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto p-4 md:p-8 bg-slate-50 min-h-screen font-sans">
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-              <Presentation className="w-7 h-7 text-blue-600" />
-              Komet Data & Analytics
-            </h1>
-            <p className="text-sm text-slate-600 mt-1 max-w-xl">
-              Generador de presentaciones ejecutivas. Incluye gráficos nativos interactivos, tablas formateadas y un modelo de estudio de datos profundo.
-            </p>
-          </div>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1.5">
+          <p className="k-label">Análisis / Komet Presenta</p>
+          <h1 className="font-display text-4xl font-bold leading-tight">Komet Presenta</h1>
+          <p className="text-[15px] text-ink-2">Arma la presentación con lo que capturaste y descárgala en PowerPoint.</p>
+        </div>
+        <button
+          type="button"
+          onClick={templateMode === 'udes' ? handleExportWithTemplate : handleDownloadDeck}
+          disabled={noData || exporting || exportingTemplate}
+          className="k-btn !h-11 !px-5 !text-[15px]"
+        >
+          {exporting || exportingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          Descargar PPTX
+        </button>
+      </header>
 
-          <div className="flex flex-wrap gap-3">
-            {/* Indicador de estado de IA */}
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 text-sm text-slate-600 border border-slate-200">
-              {generatingAi ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                  <span>Analizando datos con IA...</span>
-                </>
-              ) : aiReady ? (
-                <>
-                  <Sparkles className="w-4 h-4 text-emerald-500" />
-                  <span className="text-emerald-700 font-medium">Análisis IA completado</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 text-slate-400" />
-                  <span>Esperando datos...</span>
-                </>
-              )}
+      <ol aria-label="Pasos" className="k-card px-4 py-3.5 flex flex-wrap items-center gap-x-8 gap-y-2">
+        {steps.map((step, i) => (
+          <li key={step.label} aria-current={i === currentStep ? 'step' : undefined} className={`flex items-center gap-2.5 text-sm font-medium ${step.done ? 'text-score-high-fg' : i === currentStep ? 'text-ink font-semibold' : 'text-ink-2'}`}>
+            <span className={`w-[26px] h-[26px] rounded-full border-[1.5px] flex items-center justify-center font-mono text-xs ${step.done ? 'bg-blue-600 border-blue-600 text-white' : i === currentStep ? 'bg-ink border-ink text-white' : 'border-line-strong'}`}>{i + 1}</span>
+            {step.label}
+          </li>
+        ))}
+        <li className="font-mono text-xs text-ink-2 sm:ml-auto">{includedCount} DIAPOSITIVAS · NARRATIVA {NARRATIVE_LABEL[narrativeSource].toUpperCase()}</li>
+      </ol>
+
+      {error ? <div role="alert" className="rounded-lg bg-score-mid-bg text-score-mid-fg px-4 py-3 text-sm font-medium">{error}</div> : null}
+
+      <div className="flex flex-col xl:flex-row gap-6 items-start">
+        {/* Datos y capturas */}
+        <div className="w-full xl:w-[300px] xl:shrink-0 space-y-6">
+          <section className="k-card p-5 space-y-4">
+            <h2 className="font-display text-lg font-bold">Datos</h2>
+            <PresentaSelect id="pr-campus" label="Campus" value={selectedCampus} onChange={(v) => { setSelectedCampus(v); setSelectedCenter('Todos'); }} options={campusOptions} />
+            <PresentaSelect id="pr-level" label="Nivel" value={selectedLevel} onChange={setSelectedLevel} options={[['Todos', 'Todos'], ['pregrado', 'Pregrado'], ['posgrado', 'Posgrado']]} />
+            <PresentaSelect id="pr-center" label="Centro" value={selectedCenter} onChange={setSelectedCenter} options={centerOptions} />
+            <PresentaSelect id="pr-program" label="Programa" value={selectedProgram} onChange={setSelectedProgram} options={programOptions} />
+            <label htmlFor="pr-combine" className="flex items-center gap-2.5 min-h-[36px] text-sm cursor-pointer">
+              <input id="pr-combine" type="checkbox" checked={combineSimilarCenters} onChange={(e) => setCombineSimilarCenters(e.target.checked)} className="w-[18px] h-[18px] accent-blue-600" />
+              Combinar centros similares
+            </label>
+            <div className="border-t border-line pt-3 space-y-1.5">
+              <div className="flex justify-between items-baseline"><span className="k-label">Muestra</span><span className="font-display text-2xl font-bold">{loading ? '–' : metrics.kpis.total.toLocaleString('es-CO')}</span></div>
+              <div className="flex justify-between text-sm"><span>Completas</span><span className="font-mono">{loading ? '–' : `${metrics.kpis.completionPct.toFixed(1).replace('.', ',')} %`}</span></div>
+              {!loading && metrics.kpis.total > 0 ? (
+                <span className={`k-pill ${metrics.kpis.scored >= 30 ? 'k-pill-high' : 'k-pill-mid'}`}>{metrics.kpis.scored >= 30 ? 'Muestra suficiente' : 'Muestra pequeña'}</span>
+              ) : null}
             </div>
-            <button
-              type="button"
-              onClick={handleGenerateAiNarrative}
-              disabled={loading || generatingAi || !metrics.kpis.total}
-              className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50 inline-flex items-center gap-2 transition-all"
-            >
-              {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-yellow-400" />}
-              Regenerar Análisis
-            </button>
-            <button
-              type="button"
-              onClick={handleExportPptx}
-              disabled={loading || exporting || !metrics.kpis.total}
-              className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-2 transition-all shadow-sm shadow-blue-200"
-            >
-              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Generar PPTX con Gráficas
-            </button>
-            <button
-              type="button"
-              onClick={handleExportWithTemplate}
-              disabled={loading || exportingTemplate || !metrics.kpis.total}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50 inline-flex items-center gap-2 transition-all shadow-sm shadow-emerald-200"
-            >
-              {exportingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />}
-              Exportar con Plantilla
-            </button>
-          </div>
-        </div>
-        {error && <div className="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100">{error}</div>}
-      </div>
+          </section>
 
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Segmentación de la Muestra</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCampus} onChange={(e) => {
-            setSelectedCampus(e.target.value);
-            setSelectedCenter('Todos');
-          }}>
-            {campusOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
-          </select>
-          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)}>
-            <option value="Todos">Todos los niveles</option>
-            <option value="pregrado">Pregrado</option>
-            <option value="posgrado">Posgrado</option>
-          </select>
-          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedCenter} onChange={(e) => setSelectedCenter(e.target.value)}>
-            {centerOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
-          </select>
-          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm">
-            <input
-              type="checkbox"
-              checked={combineSimilarCenters}
-              onChange={(e) => setCombineSimilarCenters(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            Combinar centros similares
-          </label>
-          <select className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={selectedProgram} onChange={(e) => setSelectedProgram(e.target.value)}>
-            {programOptions.map((option) => (<option key={option} value={option}>{option}</option>))}
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Evaluaciones</p>
-          <p className="text-3xl font-black text-slate-900 mt-1">{loading ? '-' : metrics.kpis.total}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Completadas</p>
-          <p className="text-3xl font-black text-slate-900 mt-1">{loading ? '-' : metrics.kpis.completed}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Cumplimiento</p>
-          <p className="text-3xl font-black text-blue-600 mt-1">{loading ? '-' : `${metrics.kpis.completionPct}%`}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Promedio Global</p>
-          <p className="text-3xl font-black text-blue-600 mt-1">{loading ? '-' : metrics.kpis.globalScore.toFixed(2)}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
-            <PieChart className="w-5 h-5 text-indigo-500" />
-            Resumen Ejecutivo
-          </h3>
-          <p className="text-sm text-slate-600 leading-relaxed bg-indigo-50 p-4 rounded-xl border border-indigo-100">
-            {activeNarrative.resumen}
-          </p>
-        </div>
-
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[16rem]">
-          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-3">
-            <BarChart3 className="w-5 h-5 text-emerald-500" />
-            Estudio Profundo de Datos
-          </h3>
-          {generatingAi ? (
-            <div className="flex flex-col items-center justify-center h-56 text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin mb-3 text-blue-500" />
-              <p className="text-sm font-medium">Generando análisis profundo con IA...</p>
-              <p className="text-xs text-slate-400 mt-1">Procesando métricas, distribuciones, centros, programas y tendencias</p>
-            </div>
-          ) : !aiReady ? (
-            <div className="flex flex-col items-center justify-center h-40 text-slate-400">
-              <p className="text-sm">Cargando datos para el análisis...</p>
-            </div>
-          ) : (
-            <div className="text-sm text-slate-600 leading-relaxed text-justify max-h-96 overflow-y-auto pr-2">
-              {activeNarrative.analisis_completo.split('\n').map((line, i) => (
-                line.trim() ? <p key={i} className="mb-1">{line}</p> : <br key={i} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
-            <FileText className="w-5 h-5 text-orange-500" />
-            Sugerencias y Plan de Acción
-          </h3>
-          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {activeNarrative.acciones.slice(0, 6).map((accion, idx) => (
-              <li key={idx} className="text-sm text-slate-700 bg-orange-50/50 p-4 rounded-xl border border-orange-100 flex items-start gap-2">
-                <span className="text-orange-600 font-black mt-0.5">•</span>
-                <span>{accion}</span>
-              </li>
-            ))}
-            {activeNarrative.acciones.length === 0 && (
-              <p className="text-sm text-slate-400">No hay sugerencias generadas aún.</p>
+          <section className="k-card p-5 space-y-3">
+            <div className="flex items-baseline justify-between"><h2 className="font-display text-lg font-bold">Capturas</h2><span className="font-mono text-xs text-ink-2">{basket.length}</span></div>
+            <p className="text-[13px] leading-relaxed text-ink-2">Guardan los datos y los filtros, no una imagen. Se agregan desde Estadística e Informe.</p>
+            {basket.length ? (
+              <ul>
+                {basket.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-2 border-t border-line py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">{c.title}</p>
+                      <p className="font-mono text-[11px] text-ink-2 uppercase">{SOURCE_LABEL[c.source] || c.source} · {c.kind === 'bar' ? 'barras' : c.kind === 'line' ? 'línea' : c.kind === 'table' ? 'tabla' : 'texto'}</p>
+                    </div>
+                    <button type="button" aria-label={`Quitar ${c.title}`} onClick={() => removeCapture(c.id)} className="w-10 h-10 shrink-0 flex items-center justify-center text-ink-2 hover:text-ink"><X size={16} /></button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-ink-2 border-t border-line pt-3">Aún no hay capturas. La presentación incluye por defecto el resumen, la distribución, la tendencia, los centros y los programas.</p>
             )}
-          </ul>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => onNavigate?.('estadistica')} className="k-btn-secondary flex-1 !h-9 !text-[13px]">Estadística</button>
+              <button type="button" onClick={() => onNavigate?.('reportes')} className="k-btn-secondary flex-1 !h-9 !text-[13px]">Informe</button>
+            </div>
+            {basket.length ? <button type="button" onClick={clearBasket} className="text-[13px] font-semibold text-ink-2 hover:text-ink">Vaciar capturas</button> : null}
+          </section>
+        </div>
+
+        {/* Diapositivas */}
+        <section className="k-card p-5 w-full xl:flex-1 min-w-0 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-xl font-bold">Diapositivas</h2>
+            <button type="button" onClick={handleGenerateAiNarrative} disabled={noData || generatingAi} className="k-btn-secondary !h-9 !text-[13px]">
+              {generatingAi ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {narrativeSource === 'none' ? 'Generar narrativa' : 'Regenerar narrativa'}
+            </button>
+          </div>
+
+          {noData ? (
+            <p className="text-sm text-ink-2 py-10 text-center">{loading ? 'Cargando datos…' : 'No hay evaluaciones con estos filtros.'}</p>
+          ) : (
+            <ul className="space-y-1">
+              {plan.map((s, idx) => {
+                const open = selectedSlide?.id === s.id;
+                return (
+                  <li key={s.id}>
+                    <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${open ? 'bg-blue-50 border-blue-600' : 'border-transparent hover:bg-paper'} ${s.include ? '' : 'opacity-50'}`}>
+                      <input type="checkbox" aria-label={`Incluir diapositiva ${idx + 1}`} checked={s.include} onChange={(e) => editSlide(s.id, { include: e.target.checked })} className="w-[18px] h-[18px] accent-blue-600 shrink-0" />
+                      <button type="button" onClick={() => setSelectedSlideId(s.id)} aria-expanded={open} className="flex-1 min-w-0 flex items-center gap-3 text-left">
+                        <span className="font-mono text-xs text-ink-2 w-5 shrink-0">{idx + 1}</span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold leading-snug">{s.title}</span>
+                          <span className="k-pill bg-paper text-ink mt-1">{TYPE_LABEL[s.type] || 'Texto'}</span>
+                        </span>
+                      </button>
+                    </div>
+                    {open && s.type !== 'cover' ? (
+                      <div className="ml-8 my-2 p-4 border border-line rounded-lg bg-white space-y-3">
+                        <div className="space-y-1.5">
+                          <label htmlFor={`t-${s.id}`} className="k-label block">Mensaje del título</label>
+                          <input id={`t-${s.id}`} type="text" value={s.title} maxLength={LIMITS.title} onChange={(e) => editSlide(s.id, { title: e.target.value })} className="k-input !h-11 !text-[15px]" />
+                          <span className="font-mono text-[11px] text-ink-2">{s.title.length} / {LIMITS.title} CARACTERES</span>
+                        </div>
+                        {s.type !== 'columns' && s.type !== 'table' && s.type !== 'figures' ? (
+                          <div className="space-y-1.5">
+                            <label htmlFor={`b-${s.id}`} className="k-label block">Viñetas · una por línea, máximo {LIMITS.bullets}</label>
+                            <textarea id={`b-${s.id}`} rows={3} value={(s.bullets || []).join('\n')} onChange={(e) => editSlide(s.id, { bullets: e.target.value.split('\n').slice(0, LIMITS.bullets) })} className="k-input !h-auto !py-2.5 !text-sm !font-normal leading-relaxed resize-none" />
+                          </div>
+                        ) : null}
+                        <div className="space-y-1.5">
+                          <label htmlFor={`n-${s.id}`} className="k-label block">Nota del orador</label>
+                          <textarea id={`n-${s.id}`} rows={3} value={s.notes || ''} maxLength={LIMITS.notes} onChange={(e) => editSlide(s.id, { notes: e.target.value })} className="k-input !h-auto !py-2.5 !text-sm !font-normal leading-relaxed resize-none" />
+                        </div>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {/* Vista previa y opciones */}
+        <div className="w-full xl:w-[340px] xl:shrink-0 space-y-6">
+          <section className="k-card p-5 space-y-3">
+            <h2 className="font-display text-lg font-bold">Vista previa</h2>
+            {selectedSlide ? <SlidePreview slide={selectedSlide} /> : null}
+            <p className="font-mono text-[11px] text-ink-2">{selectedSlide?.type === 'chart' ? 'GRÁFICO NATIVO, EDITABLE EN POWERPOINT' : 'TEXTO EDITABLE EN POWERPOINT'}</p>
+          </section>
+
+          <section className="k-card p-5 space-y-2">
+            <h2 className="font-display text-lg font-bold">Plantilla</h2>
+            <label htmlFor="pl-komet" className="flex items-start gap-2.5 text-sm min-h-[44px] cursor-pointer">
+              <input id="pl-komet" type="radio" name="plantilla" checked={templateMode === 'komet'} onChange={() => setTemplateMode('komet')} className="mt-1 accent-blue-600" />
+              <span><b className="font-semibold">Estándar Komet</b><br /><span className="text-ink-2">Diseño propio con gráficos nativos.</span></span>
+            </label>
+            <label htmlFor="pl-udes" className="flex items-start gap-2.5 text-sm min-h-[44px] cursor-pointer">
+              <input id="pl-udes" type="radio" name="plantilla" checked={templateMode === 'udes'} onChange={() => setTemplateMode('udes')} className="mt-1 accent-blue-600" />
+              <span><b className="font-semibold">Plantilla institucional UDES</b><br /><span className="text-ink-2">Informe de autoevaluación de prácticas. No usa el plan de diapositivas.</span></span>
+            </label>
+          </section>
+
+          <section className="k-card p-5 space-y-2 text-sm">
+            <h2 className="font-display text-lg font-bold">Narrativa</h2>
+            <div className="flex justify-between"><span>Estado</span><span className="font-semibold">{NARRATIVE_LABEL[narrativeSource]}</span></div>
+            <p className="text-[13px] text-ink-2 leading-relaxed">Se genera al pulsar el botón y se guarda mientras los datos y filtros no cambien.</p>
+          </section>
         </div>
       </div>
 
@@ -592,85 +569,52 @@ export default function KometPresenta() {
           loading={loading}
         />
       )}
+    </div>
+  );
+}
 
-      {/* ── Análisis por Centro de Práctica ── */}
-      {!loading && metrics.centerAnalysis.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="font-bold text-slate-900 flex items-center gap-2 mb-4">
-            <Building2 className="w-5 h-5 text-violet-500" />
-            {selectedCenter !== 'Todos'
-              ? `Análisis Comparativo: ${selectedCenter} vs Otros Centros`
-              : `Ranking de Centros de Práctica (${metrics.centerAnalysis.length})`}
-          </h3>
+function PresentaSelect({ id, label, value, onChange, options }) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="k-label block">{label}</label>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="k-input !h-10 !text-sm">
+        {options.map((opt) => {
+          const [val, text] = Array.isArray(opt) ? opt : [opt, opt === 'Todos' ? 'Todos' : opt];
+          return <option key={val} value={val}>{text}</option>;
+        })}
+      </select>
+    </div>
+  );
+}
 
-          {/* Tabla: Centro × Rol */}
-          <div className="overflow-x-auto mb-4">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="bg-violet-50">
-                  <th className="text-left p-2 font-semibold text-violet-800 border border-violet-200">Centro</th>
-                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Total</th>
-                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Promedio</th>
-                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Estud.</th>
-                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Docentes</th>
-                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Coord.</th>
-                  <th className="text-center p-2 font-semibold text-violet-800 border border-violet-200">Vs Prom.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.centerAnalysis.map((center, idx) => {
-                  const isSelected = selectedCenter !== 'Todos' && center.name === selectedCenter;
-                  const avgScore = avg(metrics.centerAnalysis.map(c => c.score));
-                  const diff = center.score - avgScore;
-                  return (
-                    <tr key={center.name}
-                      className={`${isSelected ? 'bg-violet-100 font-semibold' : idx % 2 === 0 ? 'bg-slate-50' : ''} hover:bg-violet-50 transition-colors`}
-                    >
-                      <td className="p-2 border border-slate-200">
-                        {isSelected && <span className="inline-block w-2 h-2 bg-violet-500 rounded-full mr-2"></span>}
-                        {center.name}
-                        {isSelected && <span className="text-xs text-violet-600 ml-1">(seleccionado)</span>}
-                      </td>
-                      <td className="text-center p-2 border border-slate-200">{center.total}</td>
-                      <td className="text-center p-2 border border-slate-200 font-medium">{center.score.toFixed(2)}</td>
-                      <td className="text-center p-2 border border-slate-200">
-                        {center.byRole['Estudiantes']?.score?.toFixed(1) || '—'}
-                      </td>
-                      <td className="text-center p-2 border border-slate-200">
-                        {center.byRole['Docentes']?.score?.toFixed(1) || '—'}
-                      </td>
-                      <td className="text-center p-2 border border-slate-200">
-                        {center.byRole['Coordinadores']?.score?.toFixed(1) || '—'}
-                      </td>
-                      <td className={`text-center p-2 border border-slate-200 font-mono ${diff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                        {diff >= 0 ? '+' : ''}{diff.toFixed(2)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Insight rápido */}
-          {metrics.centerAnalysis.length >= 2 && (
-            <div className="flex flex-wrap gap-3 text-xs text-slate-600">
-              <span className="bg-violet-50 px-3 py-1.5 rounded-lg">
-                🏆 Mejor: <strong>{metrics.centerAnalysis[0].name}</strong> ({metrics.centerAnalysis[0].score.toFixed(2)})
-              </span>
-              <span className="bg-red-50 px-3 py-1.5 rounded-lg">
-                ⚠️ Menor: <strong>{metrics.centerAnalysis[metrics.centerAnalysis.length - 1].name}</strong> ({metrics.centerAnalysis[metrics.centerAnalysis.length - 1].score.toFixed(2)})
-              </span>
-              <span className="bg-blue-50 px-3 py-1.5 rounded-lg">
-                📊 Brecha: {(metrics.centerAnalysis[0].score - metrics.centerAnalysis[metrics.centerAnalysis.length - 1].score).toFixed(2)} pts
-              </span>
-              <span className="bg-slate-50 px-3 py-1.5 rounded-lg">
-                📈 Desv. Estándar: {stdDev(metrics.centerAnalysis.map(c => c.score)).toFixed(2)}
-              </span>
+// Vista previa 16:9 simplificada de la diapositiva elegida (el PPTX real usa gráficos nativos).
+function SlidePreview({ slide }) {
+  const dark = slide.type === 'cover';
+  const chart = slide.chart;
+  const max = chart ? (chart.scoreScale ? 5 : Math.max(...chart.series[0].values, 1)) : 1;
+  return (
+    <div className={`w-full aspect-video border p-3 overflow-hidden flex flex-col gap-2 ${dark ? 'bg-night border-night text-white' : 'bg-white border-line-strong'}`} style={{ fontFamily: 'Calibri, Carlito, sans-serif' }}>
+      <p className={`font-bold leading-tight text-[13px] ${dark ? 'text-white' : 'text-night'}`} style={{ fontFamily: 'Cambria, Georgia, serif' }}>{slide.title}</p>
+      {dark ? <p className="text-[10px] text-[#A9BCC6]">{slide.subtitle}</p> : null}
+      {chart ? (
+        <div className="flex-1 flex flex-col justify-center gap-1 min-h-0">
+          {chart.categories.slice(0, 5).map((cat, i) => (
+            <div key={cat} className="flex items-center gap-1.5 text-[8px]">
+              <span className="w-14 truncate text-ink-2">{cat}</span>
+              <div className="flex-1 h-1.5 bg-paper"><div className="h-1.5 bg-blue-600" style={{ width: `${Math.min(100, (chart.series[0].values[i] / max) * 100)}%` }} /></div>
             </div>
-          )}
+          ))}
         </div>
-      )}
+      ) : slide.stat ? (
+        <p className="text-4xl font-bold text-blue-600 leading-none" style={{ fontFamily: 'Cambria, Georgia, serif' }}>{slide.stat.value}</p>
+      ) : slide.table ? (
+        <div className="flex-1 flex flex-col gap-0.5 text-[7px] text-ink-2 min-h-0">
+          {slide.table.rows.slice(0, 4).map((r, i) => <div key={i} className="flex justify-between border-b border-line pb-0.5"><span className="truncate">{r[0]}</span><span>{r[2] ?? r[1]}</span></div>)}
+        </div>
+      ) : null}
+      {!dark && slide.bullets?.length ? (
+        <ul className="text-[8px] leading-snug space-y-0.5">{slide.bullets.slice(0, 3).map((b, i) => <li key={i} className="truncate">• {b}</li>)}</ul>
+      ) : null}
     </div>
   );
 }

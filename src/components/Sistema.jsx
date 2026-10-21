@@ -290,10 +290,10 @@ export default function Sistema() {
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-6xl mx-auto space-y-6">
-        <header className="rounded-[2rem] bg-white border border-slate-200 px-8 py-8 shadow-sm">
+        <header className="rounded-2xl bg-white border border-slate-200 px-8 py-8 shadow-sm">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-2xl">
-              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-blue-600">Sistema</p>
+              <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">Sistema</p>
               <h1 className="mt-3 text-3xl font-bold text-slate-900">Panel de configuración</h1>
               <p className="mt-3 text-sm leading-6 text-slate-500">Gestiona usuarios, plantillas, envíos por Resend, integraciones API e inteligencia artificial desde un único lugar.</p>
               <p className={`mt-3 text-sm ${dbStatus === 'connected' ? 'text-emerald-700' : dbStatus === 'error' ? 'text-rose-700' : 'text-slate-500'}`}>{dbStatusMessage}</p>
@@ -315,7 +315,7 @@ export default function Sistema() {
         {errorMessage && <Alert type="error" message={errorMessage} />}
         {statusMessage && <Alert type="success" message={statusMessage} />}
 
-        <main className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+        <main className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           {renderContent()}
         </main>
       </div>
@@ -539,7 +539,7 @@ function PlantillasView({ emailTemplates, onChange, onSave, loading }) {
       </div>
 
       <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700 mb-2">Variables disponibles para personalizar</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-2">Variables disponibles para personalizar</p>
         <div className="flex flex-wrap gap-2">
           {availableVariables.map((variable) => (
             <span key={variable} className="rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-mono text-blue-700">
@@ -581,7 +581,7 @@ function PlantillasView({ emailTemplates, onChange, onSave, loading }) {
                   placeholder="Escribe el contenido HTML aquí"
                 />
                 <div className="rounded-3xl border border-slate-200 bg-white p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 mb-3">Vista previa</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Vista previa</p>
                   <div className="prose max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: getPreviewHtml(emailTemplates[row.key] || '') }} />
                 </div>
               </div>

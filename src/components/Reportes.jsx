@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Download, Printer, Eye, Code2, Sparkles, MapPin, Users, GraduationCap, Building2 } from 'lucide-react';
+import { FileText, Download, Printer, Eye, Code2, Sparkles } from 'lucide-react';
+import { useBasket, addCapture } from '../lib/presentationBasket';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, getProgramsByCampus, OPENROUTER_FREE_MODELS } from '../lib/data';
 import { getRowCenter, normalizeCenterName } from '../utils/dataHelpers';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
@@ -1035,6 +1036,7 @@ export default function Reportes() {
   const [aiError, setAiError] = useState('');
   const [showCode, setShowCode] = useState(false);
   const previewFrameRef = useRef(null);
+  const basket = useBasket();
 
   useEffect(() => {
     let cancelled = false;
@@ -1422,160 +1424,183 @@ ${JSON.stringify(compactDataset)}
     );
   }
 
+  const filterSummary = { campus: selectedCampus, rol: selectedRole, nivel: selectedLevel, programa: selectedProgram, centro: selectedCenter, combinarCentros: combineSimilarCenters };
+  const sentToPresenta = basket.filter((c) => c.source === 'informe').length;
+
+  // Guarda datos del informe (no el HTML) para que Presenta cree tablas y gráficos nativos.
+  function sendToPresenta() {
+    if (!filteredRows.length) {
+      setAiError('No hay datos para enviar con el filtro actual.');
+      return;
+    }
+    setAiError('');
+    const centers = buildCenterSummary(filteredRows, combineSimilarCenters).slice(0, 10);
+    const programs = buildProgramSummary(filteredRows, combineSimilarCenters).slice(0, 10);
+    const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+    const base = { source: 'informe', filters: filterSummary, threshold: 3.7 };
+    addCapture({
+      ...base,
+      id: 'informe-resumen',
+      kind: 'text',
+      title: 'Resumen ejecutivo',
+      categories: ['Puntaje global', 'Cumplimiento (%)', 'Registros'],
+      series: [{ name: 'Valor', values: [r2(globalScore), completionRate, filteredRows.length] }],
+    });
+    addCapture({
+      ...base,
+      id: 'informe-centros',
+      kind: 'table',
+      title: 'Análisis por centro',
+      categories: centers.map((c) => c.center),
+      series: [
+        { name: 'Puntaje', values: centers.map((c) => r2(c.avgScore)) },
+        { name: 'Respuestas', values: centers.map((c) => c.total) },
+      ],
+    });
+    addCapture({
+      ...base,
+      id: 'informe-programas',
+      kind: 'table',
+      title: 'Análisis por programa',
+      categories: programs.map((p) => p.program),
+      series: [
+        { name: 'Puntaje', values: programs.map((p) => r2(p.avgScore)) },
+        { name: 'Respuestas', values: programs.map((p) => p.total) },
+      ],
+    });
+  }
+
+  const roleChips = ['Todos', ...roleOptions];
+  const levelChips = [['Todos', 'Todos'], ['pregrado', 'Pregrado'], ['posgrado', 'Posgrado']];
+  const chip = (on) => `h-8 px-3 rounded-full border text-[13px] font-medium transition-colors ${on ? 'bg-ink border-ink text-white' : 'bg-white border-line-strong text-ink hover:bg-paper'}`;
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <header className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.3em] text-blue-600">Modulo Informe</p>
-            <h1 className="mt-2 text-4xl font-black text-slate-900">Analitica Avanzada de Sitios de Practica por Campus</h1>
-            <p className="mt-2 text-slate-500">Genera informe HTML local con tablas, graficos y narrativa para previsualizar e imprimir en tamano carta.</p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => generateHtmlReport()}
-              disabled={isGenerating}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              <Sparkles size={15} /> {isGenerating ? 'Generando...' : 'Generar Informe'}
-            </button>
-            <button
-              type="button"
-              onClick={() => generateHtmlReport({ autoPrint: true })}
-              disabled={isGenerating}
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              <Printer size={15} /> {isGenerating ? 'Generando...' : 'Generar e imprimir'}
-            </button>
-            <button type="button" onClick={downloadHtml} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Download size={15} /> Guardar HTML
-            </button>
-            <button type="button" onClick={printReport} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Printer size={15} /> Imprimir reporte HTML
-            </button>
-          </div>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1.5">
+          <p className="k-label">Análisis / Informe</p>
+          <h1 className="font-display text-4xl font-bold leading-tight">Informe</h1>
+          <p className="text-[15px] text-ink-2">Documento de analítica docencia-servicio, listo para imprimir en tamaño carta.</p>
         </div>
-
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <MapPin size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedCampus} onChange={(event) => { setSelectedCampus(event.target.value); setSelectedLevel('Todos'); setSelectedProgram('Todos'); }}>
-              <option value="Todos">Todos los campus</option>
-              {campusOptions.map((campus) => (
-                <option key={campus} value={campus}>{campus}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <Users size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedRole} onChange={(event) => setSelectedRole(event.target.value)}>
-              <option value="Todos">Todos los roles</option>
-              {roleOptions.map((role) => (
-                <option key={role} value={role}>{role}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <GraduationCap size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedLevel} onChange={(event) => { setSelectedLevel(event.target.value); setSelectedProgram('Todos'); }}>
-              <option value="Todos">Todos los niveles</option>
-              <option value="pregrado">Pregrado</option>
-              <option value="posgrado">Posgrado</option>
-            </select>
-          </label>
-
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <GraduationCap size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedProgram} onChange={(event) => setSelectedProgram(event.target.value)}>
-              <option value="Todos">
-                {selectedLevel === 'Todos' ? 'Todos los programas' : `Todos (${selectedLevel === 'pregrado' ? 'Pregrado' : 'Posgrado'})`}
-              </option>
-              {programOptions.map((program) => (
-                <option key={program} value={program}>{program}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <Building2 size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedCenter} onChange={(event) => setSelectedCenter(event.target.value)}>
-              <option value="Todos">Todos los centros</option>
-              {centerOptions.map((center) => (
-                <option key={center} value={center}>{center}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={combineSimilarCenters}
-              onChange={(event) => setCombineSimilarCenters(event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            Combinar centros similares
-          </label>
-
-          <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 flex items-center gap-2">
-            <FileText size={16} className="text-slate-400" />
-            <select className="w-full bg-transparent outline-none" value={selectedComplexity} onChange={(event) => setSelectedComplexity(event.target.value)}>
-              <option value={NIVELES_COMPLEJIDAD.ALTA}>Complejidad alta</option>
-              <option value={NIVELES_COMPLEJIDAD.MEDIA}>Complejidad media</option>
-              <option value={NIVELES_COMPLEJIDAD.BAJA}>Complejidad baja</option>
-              <option value={NIVELES_COMPLEJIDAD.NO_CLINICO}>No clinico</option>
-            </select>
-          </label>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={downloadHtml} disabled={!reportHtml} className="k-btn-secondary disabled:opacity-50">
+            <Download size={16} /> Guardar HTML
+          </button>
+          <button type="button" onClick={printReport} disabled={!reportHtml} className="k-btn-secondary disabled:opacity-50">
+            <Printer size={16} /> Imprimir
+          </button>
+          <button type="button" onClick={sendToPresenta} className="k-btn-secondary">
+            Enviar a Presenta
+            {sentToPresenta ? <span className="font-mono text-xs bg-blue-50 text-score-high-fg rounded-full px-2 py-0.5">{sentToPresenta}</span> : null}
+          </button>
+          <button type="button" onClick={() => generateHtmlReport()} disabled={isGenerating} className="k-btn">
+            <Sparkles size={16} /> {isGenerating ? 'Generando…' : 'Generar informe'}
+          </button>
         </div>
       </header>
 
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.15em] font-black text-slate-500">Puntaje Global</p>
-          <p className="mt-2 text-4xl font-black text-slate-900">{globalScore.toFixed(2)}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.15em] font-black text-slate-500">Cumplimiento</p>
-          <p className="mt-2 text-4xl font-black text-slate-900">{completionRate.toFixed(1)}%</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.15em] font-black text-slate-500">Registros</p>
-          <p className="mt-2 text-4xl font-black text-slate-900">{filteredRows.length}</p>
-        </div>
-      </section>
+      <div className="k-card px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-1">
+        <span className="k-label">{reportHtml ? 'Informe guardado en este equipo' : 'Aún no generado'}</span>
+        <span className="font-mono text-xs text-ink-2 sm:ml-auto">
+          {filteredRows.length.toLocaleString('es-CO')} REGISTROS · PUNTAJE {globalScore.toFixed(2).replace('.', ',')} · CUMPLIMIENTO {completionRate.toFixed(1).replace('.', ',')} %
+        </span>
+      </div>
 
       {aiError ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{aiError}</div>
+        <div role="alert" className="rounded-lg bg-score-mid-bg text-score-mid-fg px-4 py-3 text-sm font-medium">{aiError}</div>
       ) : null}
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-black text-slate-900 inline-flex items-center gap-2"><Eye size={15} /> Previsualizador HTML</p>
-          <button type="button" onClick={() => setShowCode((prev) => !prev)} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            <Code2 size={14} /> {showCode ? 'Ocultar codigo' : 'Ver codigo'}
-          </button>
-        </div>
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        <aside aria-label="Filtros del informe" className="k-card p-5 space-y-5 w-full lg:w-[272px] lg:shrink-0 lg:sticky lg:top-20">
+          <h2 className="font-display text-lg font-bold">Qué incluir</h2>
 
-        {reportHtml ? (
-          <iframe ref={previewFrameRef} title="Informe HTML" srcDoc={reportHtml} className="w-full min-h-[900px] rounded-2xl border border-slate-200 bg-white" />
-        ) : (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-slate-500 text-center">
-            Genera el informe para guardar la plantilla HTML local y visualizarla aqui.
+          <div className="space-y-2">
+            <label htmlFor="inf-campus" className="k-label block">Campus</label>
+            <select id="inf-campus" className="k-input !h-10 !text-sm" value={selectedCampus} onChange={(event) => { setSelectedCampus(event.target.value); setSelectedLevel('Todos'); setSelectedProgram('Todos'); }}>
+              <option value="Todos">Todos los campus</option>
+              {campusOptions.map((campus) => <option key={campus} value={campus}>{campus}</option>)}
+            </select>
           </div>
-        )}
 
-        {showCode && reportHtml ? (
-          <pre className="mt-4 max-h-[360px] overflow-auto rounded-2xl bg-slate-900 p-4 text-xs text-slate-100 whitespace-pre-wrap">{reportHtml}</pre>
-        ) : null}
-      </section>
+          <div className="space-y-2">
+            <span className="k-label block">Rol evaluador</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Rol evaluador">
+              {roleChips.map((role) => (
+                <button key={role} type="button" aria-pressed={selectedRole === role} onClick={() => setSelectedRole(role)} className={chip(selectedRole === role)}>{role}</button>
+              ))}
+            </div>
+          </div>
 
-      <footer className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-500 inline-flex items-center gap-2">
-        <FileText size={14} />
-        Plantilla guardada en almacenamiento local con clave {LOCAL_REPORT_KEY}.
-      </footer>
+          <div className="space-y-2">
+            <span className="k-label block">Nivel</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Nivel">
+              {levelChips.map(([value, label]) => (
+                <button key={value} type="button" aria-pressed={selectedLevel === value} onClick={() => { setSelectedLevel(value); setSelectedProgram('Todos'); }} className={chip(selectedLevel === value)}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="inf-program" className="k-label block">Programa</label>
+            <select id="inf-program" className="k-input !h-10 !text-sm" value={selectedProgram} onChange={(event) => setSelectedProgram(event.target.value)}>
+              <option value="Todos">{selectedLevel === 'Todos' ? 'Todos los programas' : `Todos (${selectedLevel === 'pregrado' ? 'Pregrado' : 'Posgrado'})`}</option>
+              {programOptions.map((program) => <option key={program} value={program}>{program}</option>)}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="inf-center" className="k-label block">Centro de práctica</label>
+            <select id="inf-center" className="k-input !h-10 !text-sm" value={selectedCenter} onChange={(event) => setSelectedCenter(event.target.value)}>
+              <option value="Todos">Todos los centros</option>
+              {centerOptions.map((center) => <option key={center} value={center}>{center}</option>)}
+            </select>
+          </div>
+
+          <label htmlFor="inf-combine" className="flex items-center gap-2.5 min-h-[36px] text-sm cursor-pointer">
+            <input id="inf-combine" type="checkbox" checked={combineSimilarCenters} onChange={(event) => setCombineSimilarCenters(event.target.checked)} className="w-[18px] h-[18px] accent-blue-600" />
+            Combinar centros similares
+          </label>
+
+          <div className="space-y-2 border-t border-line pt-4">
+            <label htmlFor="inf-complexity" className="k-label block">Complejidad · MEN 00273</label>
+            <select id="inf-complexity" className="k-input !h-10 !text-sm" value={selectedComplexity} onChange={(event) => setSelectedComplexity(event.target.value)}>
+              <option value={NIVELES_COMPLEJIDAD.ALTA}>Alta</option>
+              <option value={NIVELES_COMPLEJIDAD.MEDIA}>Media</option>
+              <option value={NIVELES_COMPLEJIDAD.BAJA}>Baja</option>
+              <option value={NIVELES_COMPLEJIDAD.NO_CLINICO}>No clínico</option>
+            </select>
+          </div>
+        </aside>
+
+        <section aria-label="Vista previa" className="flex-1 min-w-0 w-full space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="k-label inline-flex items-center gap-2"><Eye size={14} /> Vista previa</p>
+            <button type="button" onClick={() => setShowCode((prev) => !prev)} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-line-strong bg-white text-xs font-semibold hover:bg-paper">
+              <Code2 size={14} /> {showCode ? 'Ocultar código' : 'Ver código'}
+            </button>
+          </div>
+
+          {reportHtml ? (
+            <iframe ref={previewFrameRef} title="Informe HTML" srcDoc={reportHtml} className="w-full min-h-[900px] rounded border border-line bg-white" />
+          ) : (
+            <div className="rounded-xl border border-dashed border-line-strong bg-white p-12 text-center space-y-4">
+              <p className="font-display text-xl font-bold">Todavía no hay informe</p>
+              <p className="text-sm text-ink-2 max-w-md mx-auto">Elige qué incluir a la izquierda y pulsa “Generar informe”. Aparecerá aquí como hoja carta.</p>
+              <button type="button" onClick={() => generateHtmlReport()} disabled={isGenerating} className="k-btn mx-auto">
+                <Sparkles size={16} /> {isGenerating ? 'Generando…' : 'Generar informe'}
+              </button>
+            </div>
+          )}
+
+          {showCode && reportHtml ? (
+            <pre className="max-h-[360px] overflow-auto rounded-xl bg-night p-4 text-xs text-[#D5E2E8] font-mono whitespace-pre-wrap">{reportHtml}</pre>
+          ) : null}
+        </section>
+      </div>
+
+      <p className="font-mono text-[11px] text-ink-2 inline-flex items-center gap-2">
+        <FileText size={13} /> Plantilla guardada en almacenamiento local con la clave {LOCAL_REPORT_KEY}.
+      </p>
     </div>
   );
 }
