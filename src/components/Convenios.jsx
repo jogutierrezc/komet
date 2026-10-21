@@ -1,19 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { 
-  Plus, 
-  Upload,
-  Download,
-  Eye, 
-  Pencil, 
-  Trash2, 
-  Ban,
-  MapPin,
-  Building2,
-  Image as ImageIcon,
-  ChevronRight,
-  Rocket,
-  ClipboardCheck
-} from 'lucide-react';
+import { Plus, Upload, Download, Pencil, Trash2, Ban, Search, X, ChevronRight, ClipboardCheck, Building2, MapPin, Image as ImageIcon } from 'lucide-react';
 import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio } from '../lib/data';
 import { parseFile } from '../lib/importHelpers';
 
@@ -31,6 +17,7 @@ export default function Convenios() {
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [campusFilter, setCampusFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [importing, setImporting] = useState(false);
   const importInputRef = useRef(null);
   const [formData, setFormData] = useState({
@@ -162,7 +149,12 @@ export default function Convenios() {
     }
   };
 
-  const filteredSites = campusFilter ? sites.filter((site) => site.campus_id === campusFilter) : sites;
+  const filteredSites = sites.filter((site) => {
+    if (campusFilter && site.campus_id !== campusFilter) return false;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return `${site.name || ''} ${site.address || ''}`.toLowerCase().includes(q);
+  });
 
   const buildCampusResolver = () => {
     const map = new Map();
@@ -298,7 +290,6 @@ export default function Convenios() {
 
   const openConvenioDetail = async (convenio) => {
     setSelectedConvenio(convenio);
-    setView('detail');
     setDetailLoading(true);
     try {
       const [students, professors] = await Promise.all([
@@ -313,73 +304,6 @@ export default function Convenios() {
       setDetailLoading(false);
     }
   };
-
-  if (view === 'detail' && selectedConvenio) {
-    return (
-      <div className="space-y-6 animate-in fade-in duration-700">
-        <button 
-          onClick={() => setView('list')}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-blue-600 transition-colors"
-        >
-          <ChevronRight size={16} className="rotate-180" />
-          Volver a convenios
-        </button>
-
-        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8">
-          <div className="flex flex-col lg:flex-row gap-6 justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-widest text-gray-400">Convenio</p>
-              <h1 className="text-3xl font-bold text-gray-800">{selectedConvenio.name}</h1>
-              <p className="text-sm text-gray-500 mt-2">{selectedConvenio.type} · {selectedConvenio.campus?.name || 'Sin campus'}</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <SummaryCard label="Estado" value={selectedConvenio.status || 'activo'} />
-              <SummaryCard label="Estudiantes asociados" value={convenioStudents.length} />
-              <SummaryCard label="Profesores asociados" value={convenioProfessors.length} />
-            </div>
-          </div>
-          <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            <div className="rounded-3xl border border-gray-100 bg-gray-50 p-6">
-              <h2 className="text-lg font-bold text-gray-800 mb-4">Estudiantes asociados</h2>
-              {detailLoading ? (
-                <p className="text-sm text-gray-500">Cargando estudiantes...</p>
-              ) : convenioStudents.length ? (
-                <ul className="space-y-3">
-                  {convenioStudents.map((student) => (
-                    <li key={student.id} className="rounded-2xl bg-white p-4 shadow-sm">
-                      <p className="font-semibold text-gray-800">{student.full_name}</p>
-                      <p className="text-sm text-gray-500">{student.program} · {student.campus?.name || 'Sin campus'}</p>
-                      <span className={`mt-2 inline-flex px-3 py-1 rounded-full text-xs font-semibold ${student.status === 'Activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{student.status}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-gray-500">No hay estudiantes asociados a este convenio.</p>
-              )}
-            </div>
-            <div className="rounded-3xl border border-gray-100 bg-gray-50 p-6">
-              <h2 className="text-lg font-bold text-gray-800 mb-4">Profesores asociados</h2>
-              {detailLoading ? (
-                <p className="text-sm text-gray-500">Cargando profesores...</p>
-              ) : convenioProfessors.length ? (
-                <ul className="space-y-3">
-                  {convenioProfessors.map((profesor) => (
-                    <li key={profesor.id} className="rounded-2xl bg-white p-4 shadow-sm">
-                      <p className="font-semibold text-gray-800">{profesor.full_name}</p>
-                      <p className="text-sm text-gray-500">{profesor.specialty} · {profesor.campus?.name || 'Sin campus'}</p>
-                      <span className={`mt-2 inline-flex px-3 py-1 rounded-full text-xs font-semibold ${profesor.status === 'Activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{profesor.status}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-gray-500">No hay profesores asociados a este convenio.</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (view === 'create') {
     return (
@@ -510,207 +434,213 @@ export default function Convenios() {
     );
   }
 
+  const siteCountByCampus = (campusId) => sites.filter((site) => site.campus_id === campusId).length;
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
+    <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-end">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Sitios de Práctica</h1>
-          <p className="text-gray-500 text-sm mt-1">Gestiona los convenios y lugares donde tus estudiantes realizan sus prácticas.</p>
+        <div className="space-y-1.5">
+          <p className="k-label">Gestión / Sitios de práctica</p>
+          <h1 className="font-display text-4xl font-bold leading-tight">Sitios de práctica</h1>
+          <p className="text-[15px] text-ink-2">Convenios y lugares donde tus estudiantes hacen sus prácticas.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleDownloadConveniosTemplate}
-            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2.5 rounded-2xl font-medium text-sm inline-flex items-center gap-2"
-          >
+          <button type="button" onClick={handleDownloadConveniosTemplate} className="k-btn-secondary">
             <Download size={16} /> Plantilla CSV
           </button>
-          <button
-            type="button"
-            onClick={triggerConveniosImport}
-            disabled={importing}
-            className="border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-4 py-2.5 rounded-2xl font-medium text-sm inline-flex items-center gap-2 disabled:opacity-70"
-          >
-            <Upload size={16} /> {importing ? 'Importando...' : 'Importar convenios'}
+          <button type="button" onClick={triggerConveniosImport} disabled={importing} className="k-btn-secondary disabled:opacity-60">
+            <Upload size={16} /> {importing ? 'Importando…' : 'Importar convenios'}
           </button>
-          <button 
-            onClick={() => setView('create')}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-500/20 transition-all active:scale-95"
-          >
-            <Plus size={18} />
-            Nuevo Sitio
+          <button type="button" onClick={() => setView('create')} className="k-btn">
+            <Plus size={18} /> Nuevo sitio
           </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={handleConveniosFileImport}
-          />
+          <input ref={importInputRef} type="file" accept=".csv" className="hidden" onChange={handleConveniosFileImport} />
         </div>
       </div>
 
       {statusMessage ? (
-        <div className="rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-700 px-4 py-3 text-sm">
-          {statusMessage}
-        </div>
+        <div role="status" className="rounded-lg bg-score-high-bg text-score-high-fg px-4 py-3 text-sm font-medium">{statusMessage}</div>
       ) : null}
-
       {errorMessage ? (
-        <div className="rounded-2xl bg-red-50 border border-red-100 text-red-700 px-4 py-3 text-sm">
-          {errorMessage}
-        </div>
+        <div role="alert" className="rounded-lg bg-score-low-bg text-score-low-fg px-4 py-3 text-sm font-medium">{errorMessage}</div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <StatCard label="Total Sitios" value={filteredSites.length} color="blue" />
-          <StatCard label="Convenios Activos" value={filteredSites.filter((site) => site.status === 'activo').length} color="indigo" />
-          <StatCard label="Campus con convenio" value={new Set(sites.map((site) => site.campus?.name || '')).size} color="emerald" />
-        </div>
-        <div>
-          <label className="text-xs font-bold uppercase text-gray-500 ml-1">Filtrar por campus</label>
-          <select
-            value={campusFilter}
-            onChange={(e) => setCampusFilter(e.target.value)}
-            className="w-full mt-2 bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-          >
-            <option value="">Todos los campus</option>
-            {campuses.map((campus) => (
-              <option key={campus.id} value={campus.id}>{campus.name}</option>
-            ))}
-          </select>
-        </div>
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por campus">
+        <button type="button" aria-pressed={!campusFilter} onClick={() => setCampusFilter('')} className={`h-9 px-3.5 rounded-full border text-sm font-medium transition-colors ${!campusFilter ? 'bg-ink border-ink text-white' : 'bg-white border-line-strong text-ink hover:bg-paper'}`}>
+          Todos <span className="font-mono text-xs opacity-75 ml-1">{sites.length}</span>
+        </button>
+        {campuses.map((campus) => (
+          <button key={campus.id} type="button" aria-pressed={campusFilter === campus.id} onClick={() => setCampusFilter(campus.id)} className={`h-9 px-3.5 rounded-full border text-sm font-medium transition-colors ${campusFilter === campus.id ? 'bg-ink border-ink text-white' : 'bg-white border-line-strong text-ink hover:bg-paper'}`}>
+            {campus.name} <span className="font-mono text-xs opacity-75 ml-1">{siteCountByCampus(campus.id)}</span>
+          </button>
+        ))}
       </div>
 
-      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500">Convenio</th>
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500">Tipo</th>
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500">Campus</th>
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500">Evaluaciones</th>
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500">Estado</th>
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500">Dirección</th>
-              <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-gray-500 text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {filteredSites.map((site) => (
-              <tr key={site.id} className={`hover:bg-gray-50/50 transition-colors ${site.status === 'inactivo' ? 'opacity-60' : ''}`}>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-4">
-                    <img 
-                      src={site.photo_url || 'https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=150'} 
-                      alt={site.name}
-                      className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm"
-                    />
-                    <div>
-                      <p className="font-bold text-gray-800 text-sm leading-tight">{site.name}</p>
-                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${site.status === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'}`}>
-                        {site.status}
-                      </span>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Building2 size={14} className="text-gray-400" />
-                    {site.type || '-'}
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-600">{site.campus?.name || '-'}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {evaluationSummaries[site.id]
-                    ? `${evaluationSummaries[site.id].student}/${evaluationSummaries[site.id].professor}/${evaluationSummaries[site.id].coordinator}`
-                    : '-'}
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-600">{site.status || 'activo'}</td>
-                <td className="px-6 py-4 text-sm text-gray-500 italic">{site.address || '-'}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center justify-end gap-1">
-                    <ActionButton icon={<Eye size={16} />} tooltip="Ver" color="blue" onClick={() => openConvenioDetail(site)} />
-                    <ActionButton icon={<Pencil size={16} />} tooltip="Editar" color="slate" onClick={() => handleEditSite(site)} />
-                    <ActionButton
-                      icon={site.status === 'activo' ? <Ban size={16} /> : <ClipboardCheck size={16} />}
-                      tooltip={site.status === 'activo' ? 'Deshabilitar' : 'Habilitar'}
-                      color="orange"
-                      onClick={() => toggleStatus(site.id)}
-                    />
-                    <ActionButton
-                      icon={<Trash2 size={16} />}
-                      tooltip="Eliminar"
-                      color="red"
-                      onClick={() => handleDeleteSite(site.id)}
-                    />
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filteredSites.length === 0 && (
-          <div className="py-20 flex flex-col items-center text-gray-400">
-            <Rocket size={48} className="mb-4 opacity-20" />
-            <p className="text-lg font-medium">No hay sitios de práctica registrados</p>
-            <button onClick={() => setView('create')} className="text-blue-600 text-sm font-semibold mt-2 hover:underline">
-              Comienza agregando uno nuevo
-            </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <label className="flex items-center gap-2 h-10 w-full sm:w-80 px-3 rounded-lg border border-line-strong bg-white text-sm text-ink-2 focus-within:border-blue-600">
+          <Search size={16} aria-hidden="true" />
+          <input type="search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar por nombre o dirección" aria-label="Buscar sitio" className="flex-1 min-w-0 bg-transparent outline-none text-ink placeholder:text-ink-2" />
+        </label>
+        <span className="k-label">{filteredSites.length} {filteredSites.length === 1 ? 'resultado' : 'resultados'}</span>
+      </div>
+
+      <div className="flex flex-col xl:flex-row gap-6 items-start">
+        <div className="k-card overflow-hidden w-full xl:flex-1 min-w-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[560px]">
+              <thead>
+                <tr className="bg-paper/60">
+                  <th className="k-label px-4 py-3">Sitio</th>
+                  <th className="k-label px-4 py-3 hidden md:table-cell">Tipo</th>
+                  <th className="k-label px-4 py-3 hidden lg:table-cell">Campus</th>
+                  <th className="k-label px-4 py-3" title="Estudiantes / Docentes / Coordinadores">Eval. E/D/C</th>
+                  <th className="k-label px-4 py-3">Estado</th>
+                  <th className="px-4 py-3"><span className="sr-only">Acciones</span></th>
+                </tr>
+              </thead>
+              <tbody className="text-sm">
+                {filteredSites.map((site) => {
+                  const selected = selectedConvenio?.id === site.id;
+                  const summary = evaluationSummaries[site.id];
+                  return (
+                    <tr
+                      key={site.id}
+                      onClick={() => openConvenioDetail(site)}
+                      className={`border-t border-line cursor-pointer transition-colors ${selected ? 'bg-blue-50' : 'hover:bg-paper/60'} ${site.status === 'inactivo' ? 'opacity-60' : ''}`}
+                    >
+                      <td className="px-4 py-3.5">
+                        <button type="button" onClick={(e) => { e.stopPropagation(); openConvenioDetail(site); }} className="text-left">
+                          <span className="block font-semibold leading-tight">{site.name}</span>
+                          {site.address ? <span className="block text-xs text-ink-2 mt-0.5">{site.address}</span> : null}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3.5 text-ink-2 hidden md:table-cell">{site.type || '-'}</td>
+                      <td className="px-4 py-3.5 text-ink-2 hidden lg:table-cell">{site.campus?.name || '-'}</td>
+                      <td className="px-4 py-3.5 font-mono text-[13px]">
+                        {summary ? `${summary.student} / ${summary.professor} / ${summary.coordinator}` : '-'}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={`k-pill ${site.status === 'activo' ? 'k-pill-high' : 'bg-paper text-ink-2'}`}>{site.status || 'activo'}</span>
+                      </td>
+                      <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end">
+                          <IconButton label="Editar" onClick={() => handleEditSite(site)}><Pencil size={16} /></IconButton>
+                          <IconButton label={site.status === 'activo' ? 'Deshabilitar' : 'Habilitar'} onClick={() => toggleStatus(site.id)}>
+                            {site.status === 'activo' ? <Ban size={16} /> : <ClipboardCheck size={16} />}
+                          </IconButton>
+                          <IconButton label="Eliminar" danger onClick={() => handleDeleteSite(site.id)}><Trash2 size={16} /></IconButton>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
+          {filteredSites.length === 0 && (
+            <div className="py-16 px-6 flex flex-col items-center text-center text-ink-2">
+              <p className="text-lg font-semibold text-ink">{sites.length ? 'Ningún sitio coincide con la búsqueda' : 'Todavía no hay sitios de práctica'}</p>
+              {!sites.length ? (
+                <button type="button" onClick={() => setView('create')} className="text-blue-600 text-sm font-semibold mt-2 hover:underline">
+                  Agrega el primero
+                </button>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        {selectedConvenio ? (
+          <aside
+            aria-label="Detalle del sitio"
+            className="k-slide-in fixed inset-x-0 bottom-0 top-16 z-40 overflow-y-auto bg-white p-6 space-y-6 xl:static xl:z-auto xl:w-[400px] xl:shrink-0 xl:rounded-xl xl:border xl:border-line"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1.5 min-w-0">
+                <p className="k-label">{selectedConvenio.type || 'Convenio'} · {selectedConvenio.campus?.name || 'Sin campus'}</p>
+                <h2 className="font-display text-2xl font-bold leading-tight">{selectedConvenio.name}</h2>
+                {selectedConvenio.address ? <p className="text-sm text-ink-2">{selectedConvenio.address}</p> : null}
+              </div>
+              <button type="button" aria-label="Cerrar detalle" onClick={() => { setSelectedConvenio(null); setConvenioStudents([]); setConvenioProfessors([]); }} className="w-11 h-11 -mr-2 -mt-2 flex items-center justify-center text-ink-2 hover:text-ink shrink-0">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex border border-line rounded-lg divide-x divide-line">
+              <div className="flex-1 p-3.5 space-y-1">
+                <p className="k-label">Estado</p>
+                <span className={`k-pill ${selectedConvenio.status === 'inactivo' ? 'bg-paper text-ink-2' : 'k-pill-high'}`}>{selectedConvenio.status || 'activo'}</span>
+              </div>
+              <div className="flex-1 p-3.5 space-y-1"><p className="k-label">Estudiantes</p><p className="font-display text-2xl font-bold">{convenioStudents.length}</p></div>
+              <div className="flex-1 p-3.5 space-y-1"><p className="k-label">Profesores</p><p className="font-display text-2xl font-bold">{convenioProfessors.length}</p></div>
+            </div>
+
+            {evaluationSummaries[selectedConvenio.id] ? (
+              <div className="space-y-2.5">
+                <p className="k-label">Evaluaciones recibidas</p>
+                {[
+                  ['Estudiantes', evaluationSummaries[selectedConvenio.id].student],
+                  ['Docentes', evaluationSummaries[selectedConvenio.id].professor],
+                  ['Coordinadores', evaluationSummaries[selectedConvenio.id].coordinator],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between text-sm border-t border-line pt-2.5"><span>{label}</span><span className="font-mono">{value}</span></div>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="space-y-2.5">
+              <p className="k-label">Estudiantes asociados</p>
+              {detailLoading ? (
+                <p className="text-sm text-ink-2">Cargando…</p>
+              ) : convenioStudents.length ? (
+                <ul>
+                  {convenioStudents.map((student) => (
+                    <li key={student.id} className="flex items-start justify-between gap-3 border-t border-line py-2.5">
+                      <div className="min-w-0"><p className="text-sm font-semibold">{student.full_name}</p><p className="text-xs text-ink-2">{student.program}</p></div>
+                      <span className={`k-pill shrink-0 ${student.status === 'Activo' ? 'k-pill-high' : 'bg-paper text-ink-2'}`}>{student.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-ink-2">No hay estudiantes asociados.</p>
+              )}
+            </div>
+
+            <div className="space-y-2.5">
+              <p className="k-label">Profesores asociados</p>
+              {detailLoading ? (
+                <p className="text-sm text-ink-2">Cargando…</p>
+              ) : convenioProfessors.length ? (
+                <ul>
+                  {convenioProfessors.map((profesor) => (
+                    <li key={profesor.id} className="flex items-start justify-between gap-3 border-t border-line py-2.5">
+                      <div className="min-w-0"><p className="text-sm font-semibold">{profesor.full_name}</p><p className="text-xs text-ink-2">{profesor.specialty}</p></div>
+                      <span className={`k-pill shrink-0 ${profesor.status === 'Activo' ? 'k-pill-high' : 'bg-paper text-ink-2'}`}>{profesor.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-ink-2">No hay profesores asociados.</p>
+              )}
+            </div>
+
+            <button type="button" onClick={() => handleEditSite(selectedConvenio)} className="k-btn-secondary w-full">
+              <Pencil size={16} /> Editar sitio
+            </button>
+          </aside>
+        ) : null}
       </div>
     </div>
   );
 }
 
-// UI Components
-const StatCard = ({ label, value, color }) => {
-  const colors = {
-    blue: "bg-blue-50 border-blue-100",
-    indigo: "bg-indigo-50 border-indigo-100",
-    emerald: "bg-emerald-50 border-emerald-100"
-  };
-  
-  return (
-    <div className={`p-6 rounded-2xl border shadow-sm flex items-center justify-between ${colors[color] || colors.blue}`}>
-      <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{label}</p>
-        <p className="text-3xl font-black text-gray-800">{value}</p>
-      </div>
-      <div className="p-3 rounded-2xl bg-white border border-gray-200">
-        <Building2 size={24} className="text-gray-300" />
-      </div>
-    </div>
-  );
-};
-
-const ActionButton = ({ icon, tooltip, color, onClick }) => {
-  const colors = {
-    blue: "hover:bg-blue-50 hover:text-blue-600",
-    red: "hover:bg-red-50 hover:text-red-600",
-    slate: "hover:bg-gray-100 hover:text-gray-800",
-    orange: "hover:bg-orange-50 hover:text-orange-600"
-  };
-
-  return (
-    <div className="relative group">
-      <button 
-        onClick={onClick}
-        className={`p-2 rounded-lg transition-colors text-gray-400 ${colors[color]}`}
-      >
-        {icon}
-      </button>
-      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
-        {tooltip}
-      </span>
-    </div>
-  );
-};
-
-const SummaryCard = ({ label, value }) => (
-  <div className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
-    <p className="text-xs uppercase tracking-widest text-gray-400">{label}</p>
-    <p className="mt-3 text-3xl font-black text-gray-800">{value}</p>
-  </div>
+const IconButton = ({ label, danger, onClick, children }) => (
+  <button
+    type="button"
+    title={label}
+    aria-label={label}
+    onClick={onClick}
+    className={`w-10 h-10 flex items-center justify-center rounded-lg text-ink-2 transition-colors ${danger ? 'hover:bg-score-low-bg hover:text-score-low-fg' : 'hover:bg-paper hover:text-ink'}`}
+  >
+    {children}
+  </button>
 );

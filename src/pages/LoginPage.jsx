@@ -1,11 +1,37 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRightCircle, Globe, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
+import { gsap } from 'gsap';
 import { login } from '../auth/auth';
+import KometMark from '../components/shared/KometMark';
+import OrbitScale from '../components/shared/OrbitScale';
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ username: '', password: '' });
+  const root = useRef(null);
+
+  // Entrada: el cometa dibuja su trayectoria, el titular entra por líneas y el formulario escalonado.
+  useLayoutEffect(() => {
+    const mm = gsap.matchMedia();
+    const ctx = gsap.context(() => {
+      mm.add('(prefers-reduced-motion: no-preference)', () => {
+        const tail = root.current.querySelector('.orbit-tail');
+        const length = tail.getTotalLength();
+        gsap.set(tail, { strokeDasharray: length, strokeDashoffset: length });
+        gsap.set('.orbit-head', { opacity: 0 });
+
+        const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+        tl.from('.lg-line', { y: 16, opacity: 0, duration: 0.5, stagger: 0.07 })
+          .from('.lg-form > *', { y: 12, opacity: 0, duration: 0.4, stagger: 0.04 }, 0.15)
+          .to(tail, { strokeDashoffset: 0, duration: 0.9, ease: 'power2.out' }, 0.1)
+          .to('.orbit-head', { opacity: 1, duration: 0.2 }, 0.85);
+      });
+    }, root);
+    return () => {
+      ctx.revert();
+      mm.revert();
+    };
+  }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -14,106 +40,100 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center p-6 overflow-hidden">
-      <div className="absolute inset-0 z-0">
-        <img
-          src="https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&q=80&w=2000"
-          alt="Modern Hospital Background"
-          className="w-full h-full object-cover scale-105"
-        />
-        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-[2px]"></div>
+    <div ref={root} className="min-h-screen flex flex-col lg:flex-row bg-paper">
+      <div className="relative overflow-hidden bg-night text-white px-6 py-8 sm:px-10 lg:px-16 lg:py-14 lg:flex-1 flex flex-col justify-between gap-10 lg:gap-24">
+        <OrbitScale className="pointer-events-none absolute max-w-none w-[360px] -right-32 -top-16 lg:w-[560px] lg:-right-24 lg:top-auto lg:-bottom-16" strokeScale={1} />
+
+        <div className="relative flex items-center gap-3 lg-line">
+          <KometMark size={30} />
+          <span className="font-display text-2xl font-bold tracking-tight">Komet</span>
+        </div>
+
+        <div className="relative max-w-md space-y-4 lg:space-y-5">
+          <h1 className="font-display text-[32px] leading-[1.05] lg:text-[54px] lg:leading-[1.02] font-bold tracking-tight text-balance">
+            <span className="block lg-line">Cada sitio de práctica,</span>
+            <span className="block lg-line">evaluado con el mismo criterio.</span>
+          </h1>
+          <p className="hidden lg:block text-[17px] leading-relaxed text-[#A9BCC6] lg-line">
+            Convenios, encuestas y análisis de docencia-servicio de la Universidad de Santander, en un solo lugar.
+          </p>
+        </div>
+
+        <p className="hidden lg:block relative font-mono text-xs tracking-[0.08em] text-[#8FA8B3]">
+          ESCALA 1,0 – 5,0 · UMBRAL 3,5
+        </p>
       </div>
 
-      <div className="max-w-md w-full relative z-10 animate-in fade-in zoom-in-95 duration-700">
-        <div className="absolute -top-12 -left-12 w-24 h-24 bg-blue-500/20 rounded-full blur-2xl animate-pulse"></div>
-        <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/20 rounded-full blur-3xl animate-pulse delay-700"></div>
+      <div className="flex flex-col px-6 py-8 sm:px-10 lg:flex-1 lg:px-16 lg:py-10">
+        <p className="hidden lg:block text-right text-sm text-ink-2">
+          ¿Vas a evaluar un sitio de práctica?{' '}
+          <button type="button" onClick={() => navigate('/evaluacion-publica')} className="font-semibold text-blue-600 hover:text-blue-700">
+            Entra con tu código
+          </button>
+        </p>
 
-        <div className="bg-white/80 backdrop-blur-xl rounded-[48px] shadow-2xl overflow-hidden border border-white/40">
-          <div className="p-12">
-            <div className="flex flex-col items-center mb-12">
-              <div className="bg-blue-600 p-5 rounded-[24px] shadow-2xl shadow-blue-500/40 mb-6 group cursor-pointer hover:scale-110 hover:rotate-6 transition-all duration-500">
-                <Rocket className="text-white w-12 h-12" />
-              </div>
-              <h1 className="text-5xl font-black text-slate-800 tracking-tighter">KOMET</h1>
-              <div className="h-1.5 w-12 bg-blue-600 rounded-full mt-4"></div>
-              <p className="text-slate-500 text-sm font-bold uppercase tracking-[0.2em] mt-6">Gestión Educativa</p>
+        <div className="flex-1 flex items-center justify-center py-8">
+          <form onSubmit={handleSubmit} className="lg-form w-full max-w-[400px] space-y-7">
+            <div className="space-y-2">
+              <h2 className="font-display text-[26px] lg:text-4xl font-bold leading-tight">Iniciar sesión</h2>
+              <p className="text-base text-ink-2">Usa tu correo institucional.</p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-5">
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-6">Acceso Usuario</label>
-                <div className="relative group">
-                  <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={20} />
-                  <input
-                    required
-                    type="text"
-                    value={form.username}
-                    onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-                    placeholder="usuario@komet.com"
-                    className="w-full bg-slate-100/50 border border-transparent rounded-[24px] py-4 pl-14 pr-6 outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all font-bold text-slate-700"
-                  />
-                </div>
+                <label htmlFor="login-user" className="text-sm font-semibold">Correo institucional</label>
+                <input
+                  id="login-user"
+                  required
+                  type="text"
+                  inputMode="email"
+                  autoComplete="username"
+                  value={form.username}
+                  onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="nombre@udes.edu.co"
+                  className="k-input"
+                />
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-6">Contraseña</label>
-                <div className="relative group">
-                  <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={20} />
-                  <input
-                    required
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-                    placeholder="••••••••"
-                    className="w-full bg-slate-100/50 border border-transparent rounded-[24px] py-4 pl-14 pr-6 outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white transition-all font-bold text-slate-700"
-                  />
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="login-pass" className="text-sm font-semibold">Contraseña</label>
+                  <button type="button" className="text-sm font-medium text-blue-600 hover:text-blue-700">¿La olvidaste?</button>
                 </div>
+                <input
+                  id="login-pass"
+                  required
+                  type="password"
+                  autoComplete="current-password"
+                  value={form.password}
+                  onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+                  className="k-input"
+                />
               </div>
 
-              <div className="flex items-center justify-between px-4 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer group">
-                  <input type="checkbox" className="w-4 h-4 rounded-lg border-slate-300 text-blue-600 focus:ring-blue-500 transition-all" />
-                  <span className="text-xs font-bold text-slate-500 group-hover:text-slate-800 transition-colors tracking-tight">Recordarme</span>
-                </label>
-                <button type="button" className="text-xs font-black text-blue-600 hover:text-blue-800 uppercase tracking-widest">Recuperar clave</button>
-              </div>
+              <label htmlFor="login-remember" className="flex items-center gap-2.5 min-h-[44px] text-sm cursor-pointer">
+                <input id="login-remember" type="checkbox" className="w-5 h-5 accent-blue-600" />
+                Mantener la sesión en este equipo
+              </label>
+            </div>
 
-              <button
-                type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-5 rounded-[24px] shadow-2xl shadow-blue-600/30 transition-all active:scale-95 flex items-center justify-center gap-3 mt-10 text-base uppercase tracking-widest"
-              >
-                Ingresar
-                <ArrowRightCircle size={22} />
-              </button>
-            </form>
-            <div className="mt-6 text-center">
-              <button
-                type="button"
-                onClick={() => navigate('/evaluacion-publica')}
-                className="text-xs font-black text-blue-600 hover:text-blue-800 uppercase tracking-widest"
-              >
-                ¿Eres estudiante o docente? Accede al portal de evaluación pública
-              </button>
-            </div>
-          </div>
+            <button type="submit" className="k-btn w-full !h-[52px] !rounded-[10px] !text-base">
+              Ingresar
+            </button>
 
-          <div className="bg-slate-50/50 backdrop-blur-sm border-t border-slate-100/50 p-8 flex items-center justify-center gap-8">
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Seguridad</span>
-              <ShieldCheck className="text-emerald-500 mt-1" size={18} />
-            </div>
-            <div className="w-px h-8 bg-slate-200"></div>
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Versión</span>
-              <span className="text-slate-600 font-bold text-xs mt-1">2.5.0</span>
-            </div>
-            <div className="w-px h-8 bg-slate-200"></div>
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Soporte</span>
-              <Globe className="text-blue-400 mt-1" size={18} />
-            </div>
-          </div>
+            <p className="lg:hidden pt-4 border-t border-line text-center text-sm text-ink-2">
+              ¿Vas a evaluar un sitio?{' '}
+              <button type="button" onClick={() => navigate('/evaluacion-publica')} className="font-semibold text-blue-600">
+                Entra con tu código
+              </button>
+            </p>
+          </form>
         </div>
+
+        <p className="hidden lg:flex justify-between font-mono text-xs text-ink-2">
+          <span>Universidad de Santander</span>
+          <span>v2.5</span>
+        </p>
       </div>
     </div>
   );

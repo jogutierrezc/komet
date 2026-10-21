@@ -6,6 +6,7 @@ import {
   LineChart, Line, FunnelChart, Funnel,
   LabelList
 } from 'recharts';
+import { useBasket, toggleCapture } from '../lib/presentationBasket';
 import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download, Table2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runOpenRouterPrompt, OPENROUTER_FREE_MODELS } from '../lib/data';
 import { calculateCenterAnalysis, calculateCrossMatrix } from '../utils/dataHelpers';
@@ -159,21 +160,21 @@ function getSvgDimensions(svg) {
 
 function alertColor(score) {
   if (typeof score !== 'number') return '#94a3b8';
-  if (score >= 4.0) return '#22c55e';
-  if (score >= 3.5) return '#eab308';
-  if (score >= 2.5) return '#f97316';
-  return '#ef4444';
+  if (score >= 4.0) return '#2B827C';
+  if (score >= 3.5) return '#D9961A';
+  if (score >= 2.5) return '#14222B';
+  return '#B3402E';
 }
 
 function heatColor(score) {
   if (typeof score !== 'number' || Number.isNaN(score) || score <= 0) return '#e2e8f0';
-  if (score <= 3.0) return '#ef4444';
-  if (score < 4.5) return '#f97316';
-  return '#22c55e';
+  if (score <= 3.0) return '#B3402E';
+  if (score < 4.5) return '#14222B';
+  return '#2B827C';
 }
 
 // Paleta de colores para roles / programas
-const PALETTE = ['#2563eb', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6', '#10b981', '#f97316', '#06b6d4'];
+const PALETTE = ['#0F6B68', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6', '#10b981', '#14222B', '#06b6d4'];
 
 // ─── tooltip personalizado ───────────────────────────────────────────────────
 function ScoreTooltip({ active, payload }) {
@@ -249,20 +250,48 @@ function parseAnaliticKometResponse(rawText = '') {
 }
 
 // ─── sección card wrapper ────────────────────────────────────────────────────
-function ChartCard({ title, subtitle, children, span = 1 }) {
+function ChartCard({ title, subtitle, children, span = 1, capture }) {
+  const basket = useBasket();
+  const included = capture ? basket.some((c) => c.id === capture.id) : false;
   return (
-    <div data-chart-title={title} className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-6 ${span === 2 ? 'col-span-1 xl:col-span-2' : ''}`}>
-      <div className="mb-4">
-        <h3 className="font-bold text-slate-800 text-base">{title}</h3>
-        {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+    <div data-chart-title={title} className={`k-card p-5 ${span === 2 ? 'col-span-1 xl:col-span-2' : ''}`}>
+      <div className="mb-4 flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <h3 className="font-display text-lg font-bold leading-tight">{title}</h3>
+          {subtitle && <p className="text-[13px] text-ink-2 mt-1">{subtitle}</p>}
+        </div>
+        {capture ? (
+          <button
+            type="button"
+            aria-pressed={included}
+            onClick={() => toggleCapture({ ...capture, title })}
+            className={`shrink-0 h-8 px-2.5 rounded-md border text-xs font-semibold transition-colors ${
+              included ? 'bg-blue-50 border-blue-600 text-score-high-fg' : 'bg-white border-line-strong text-ink hover:bg-paper'
+            }`}
+          >
+            {included ? 'En la presentación' : '+ Presentación'}
+          </button>
+        ) : null}
       </div>
       {children}
     </div>
   );
 }
 
+function FilterSelect({ label, value, onChange, children }) {
+  return (
+    <label className="flex items-center gap-2.5 h-9 pl-3 pr-2 rounded-lg border border-line-strong bg-white text-sm">
+      <span className="font-mono text-[11px] tracking-[0.06em] uppercase text-ink-2">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="bg-transparent font-medium outline-none max-w-[180px] truncate">
+        {children}
+      </select>
+    </label>
+  );
+}
+
 // ─── componente principal ────────────────────────────────────────────────────
-export default function Estadistica() {
+export default function Estadistica({ onNavigate }) {
+  const basket = useBasket();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
@@ -1093,9 +1122,9 @@ export default function Estadistica() {
     const started = filtered.filter((r) => r.status !== 'Pendiente').length;
     const completed = filtered.filter((r) => r.status === 'Completada').length;
     return [
-      { name: 'Asignadas', value: total, fill: '#2563eb' },
+      { name: 'Asignadas', value: total, fill: '#0F6B68' },
       { name: 'Iniciadas', value: started, fill: '#14b8a6' },
-      { name: 'Completadas', value: completed, fill: '#22c55e' },
+      { name: 'Completadas', value: completed, fill: '#2B827C' },
     ];
   }, [filtered]);
 
@@ -1343,6 +1372,10 @@ export default function Estadistica() {
     setIsExportingCharts(false);
   }
 
+  const filterSummary = { campus: selectedCampus, nivel: selectedLevel, centro: selectedCenter, programa: selectedProgram, combinarCentros: combineSimilarCenters };
+  const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+  const cap = (id, kind, categories, series, threshold = 3.7) => ({ id, source: 'estadistica', kind, filters: filterSummary, categories, series, threshold });
+
   // ── tab nav ───────────────────────────────────────────────────────────────
   const TABS = [
     { key: 'general', label: 'General', icon: Activity },
@@ -1363,113 +1396,87 @@ export default function Estadistica() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
-            <TrendingUp size={24} className="text-blue-600" />
-            Estadística
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">Visualización analítica de evaluaciones por programa, centro y rol</p>
+    <div className="space-y-6">
+      {/* Encabezado */}
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+        <div className="space-y-1.5">
+          <p className="k-label">Análisis / Estadística</p>
+          <h1 className="font-display text-4xl font-bold leading-tight">Estadística</h1>
+          <p className="text-[15px] text-ink-2">Evaluaciones por programa, centro y rol.</p>
         </div>
-
-        {/* Filtros globales */}
-        <div className="flex flex-wrap gap-3">
-          <select
-            value={selectedCampus}
-            onChange={(e) => setSelectedCampus(e.target.value)}
-            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {campusOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select
-            value={selectedLevel}
-            onChange={(e) => setSelectedLevel(e.target.value)}
-            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="Todos">Todos los niveles</option>
-            <option value="pregrado">Pregrado</option>
-            <option value="posgrado">Posgrado</option>
-          </select>
-          <select
-            value={selectedCenter}
-            onChange={(e) => setSelectedCenter(e.target.value)}
-            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {centerOptions.map((c) => <option key={c} value={c}>{c === 'Todos' ? 'Todos los centros' : c}</option>)}
-          </select>
-          <select
-            value={selectedProgram}
-            onChange={(e) => setSelectedProgram(e.target.value)}
-            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {programOptions.map((p) => <option key={p} value={p}>{p === 'Todos' ? 'Todos los programas' : p}</option>)}
-          </select>
-          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
-            <input
-              type="checkbox"
-              checked={combineSimilarCenters}
-              onChange={(e) => setCombineSimilarCenters(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            Combinar centros similares
-          </label>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={downloadFilteredExcel}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <Download size={16} /> Exportar datos Excel
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={downloadFilteredExcel} className="k-btn-secondary">
+            <Download size={16} /> Datos Excel
           </button>
-          <button
-            type="button"
-            onClick={downloadFilteredCharts}
-            disabled={isExportingCharts}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Download size={16} /> {isExportingCharts ? 'Exportando gráficos...' : 'Exportar gráficos PNG'}
+          <button type="button" onClick={downloadFilteredCharts} disabled={isExportingCharts} className="k-btn-secondary disabled:opacity-60">
+            <Download size={16} /> {isExportingCharts ? 'Exportando…' : 'Gráficos PNG'}
+          </button>
+          <button type="button" onClick={() => onNavigate?.('presenta')} className="k-btn">
+            Ir a Presenta
+            <span className="font-mono text-xs bg-white/20 rounded-full px-2 py-0.5">{basket.length}</span>
           </button>
         </div>
-
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4">
+      {/* Filtros */}
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterSelect label="Campus" value={selectedCampus} onChange={setSelectedCampus}>
+          {campusOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+        </FilterSelect>
+        <FilterSelect label="Nivel" value={selectedLevel} onChange={setSelectedLevel}>
+          <option value="Todos">Todos</option>
+          <option value="pregrado">Pregrado</option>
+          <option value="posgrado">Posgrado</option>
+        </FilterSelect>
+        <FilterSelect label="Centro" value={selectedCenter} onChange={setSelectedCenter}>
+          {centerOptions.map((c) => <option key={c} value={c}>{c === 'Todos' ? 'Todos' : c}</option>)}
+        </FilterSelect>
+        <FilterSelect label="Programa" value={selectedProgram} onChange={setSelectedProgram}>
+          {programOptions.map((p) => <option key={p} value={p}>{p === 'Todos' ? 'Todos' : p}</option>)}
+        </FilterSelect>
+        <label className="flex items-center gap-2 min-h-[40px] px-1.5 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={combineSimilarCenters}
+            onChange={(e) => setCombineSimilarCenters(e.target.checked)}
+            className="w-[18px] h-[18px] accent-blue-600"
+          />
+          Combinar centros similares
+        </label>
+      </div>
+
+      {/* Resumen */}
+      <section aria-label="Resumen" className="k-card grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 divide-x divide-y xl:divide-y-0 divide-line [&>div]:border-line">
         {[
-          { label: 'Total evaluaciones', value: kpis.total, color: 'bg-blue-50 text-blue-700 border-blue-200' },
-          { label: 'Puntaje global', value: kpis.globalScore.toFixed(2), color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-          { label: '% Completadas', value: `${kpis.completionPct}%`, color: 'bg-violet-50 text-violet-700 border-violet-200' },
-          { label: 'Centros activos', value: kpis.centers, color: 'bg-amber-50 text-amber-700 border-amber-200' },
-          { label: 'Programas', value: kpis.programs, color: 'bg-pink-50 text-pink-700 border-pink-200' },
+          { label: 'Evaluaciones', value: kpis.total },
+          { label: 'Puntaje global', value: kpis.globalScore.toFixed(2) },
+          { label: 'Completadas', value: `${kpis.completionPct}%` },
+          { label: 'Centros', value: kpis.centers },
+          { label: 'Programas', value: kpis.programs },
         ].map((k) => (
-          <div key={k.label} className={`rounded-2xl border p-4 ${k.color}`}>
-            <p className="text-xs font-semibold uppercase tracking-wide opacity-70">{k.label}</p>
-            <p className="text-3xl font-black mt-1">{k.value}</p>
+          <div key={k.label} className="px-5 py-4 space-y-1">
+            <p className="k-label">{k.label}</p>
+            <p className="font-display text-3xl font-bold">{k.value}</p>
           </div>
         ))}
-      </div>
+      </section>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl w-fit flex-wrap">
-        {TABS.map(({ key, label, icon: Icon }) => (
+      {/* Vistas */}
+      <nav aria-label="Vistas" className="flex gap-7 border-b border-line overflow-x-auto">
+        {TABS.map(({ key, label }) => (
           <button
             key={key}
+            type="button"
             onClick={() => setActiveTab(key)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-              activeTab === key
-                ? 'bg-white text-blue-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-800'
+            aria-current={activeTab === key ? 'page' : undefined}
+            className={`py-3 text-sm whitespace-nowrap -mb-px border-b-2 transition-colors ${
+              activeTab === key ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-ink-2 font-medium hover:text-ink'
             }`}
           >
-            <Icon size={15} />
             {label}
           </button>
         ))}
-      </div>
+      </nav>
 
       <div ref={chartAreaRef}>
         {/* ── TAB: GENERAL ── */}
@@ -1479,6 +1486,7 @@ export default function Estadistica() {
             {/* Histograma distribución de puntajes */}
             <ChartCard
               title="Distribución de calificaciones"
+              capture={cap('dist-calificaciones', 'bar', histogram.map((h) => String(h.score)), [{ name: 'Respuestas', values: histogram.map((h) => h.count) }], null)}
               subtitle="Frecuencia de respuestas por valor (1 a 5) en todas las secciones"
             >
               <ResponsiveContainer width="100%" height={260}>
@@ -1498,7 +1506,7 @@ export default function Estadistica() {
                   />
                   <Bar dataKey="count" name="Respuestas" radius={[6, 6, 0, 0]}>
                     {histogram.map((entry, i) => (
-                      <Cell key={i} fill={['#ef4444', '#f97316', '#eab308', '#22c55e', '#2563eb'][i]} />
+                      <Cell key={i} fill={['#B3402E', '#14222B', '#D9961A', '#2B827C', '#0F6B68'][i]} />
                     ))}
                     <LabelList dataKey="count" position="top" style={{ fontSize: 12, fontWeight: 700 }} />
                   </Bar>
@@ -1531,7 +1539,7 @@ export default function Estadistica() {
                       <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
                       <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12 }} />
                       <Tooltip content={<ScoreTooltip />} />
-                      <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: '3.7', position: 'top', fontSize: 11, fill: '#f97316' }} />
+                      <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" label={{ value: '3.7', position: 'top', fontSize: 11, fill: '#14222B' }} />
                       <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
                         {campusData.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
                       </Bar>
@@ -1555,7 +1563,7 @@ export default function Estadistica() {
                     <ResponsiveContainer width="50%" height={220}>
                       <PieChart>
                         <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={3}>
-                          {data.map((_, i) => <Cell key={i} fill={['#22c55e', '#e2e8f0'][i]} />)}
+                          {data.map((_, i) => <Cell key={i} fill={['#2B827C', '#e2e8f0'][i]} />)}
                         </Pie>
                         <Tooltip content={<PieTooltip />} />
                       </PieChart>
@@ -1563,7 +1571,7 @@ export default function Estadistica() {
                     <div className="space-y-3 text-sm">
                       {data.map((d, i) => (
                         <div key={i} className="flex items-center gap-2">
-                          <span className="w-3 h-3 rounded-full shrink-0" style={{ background: ['#22c55e', '#e2e8f0'][i] }} />
+                          <span className="w-3 h-3 rounded-full shrink-0" style={{ background: ['#2B827C', '#e2e8f0'][i] }} />
                           <span className="text-slate-600">{d.name}</span>
                           <span className="font-bold text-slate-800">{d.value} ({d.pct}%)</span>
                         </div>
@@ -1605,7 +1613,7 @@ export default function Estadistica() {
                     <PolarGrid stroke="#e2e8f0" />
                     <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
                     <Radar name="Promedio institucional" dataKey="institucional" stroke="#0ea5e9" fill="#0ea5e9" fillOpacity={0.16} />
-                    <Radar name={radarCampusVsInstitution.campusName} dataKey="campus" stroke="#f97316" fill="#f97316" fillOpacity={0.16} />
+                    <Radar name={radarCampusVsInstitution.campusName} dataKey="campus" stroke="#14222B" fill="#14222B" fillOpacity={0.16} />
                     <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
                     <Tooltip formatter={(v) => Number(v).toFixed(2)} />
                   </RadarChart>
@@ -1615,6 +1623,7 @@ export default function Estadistica() {
 
             <ChartCard
               title="Tendencia mensual de desempeño"
+              capture={cap('tendencia-mensual', 'line', monthlyTrend.map((d) => d.month), [{ name: 'Promedio', values: monthlyTrend.map((d) => round2(d.score)) }])}
               subtitle="Evolución del puntaje promedio y porcentaje de completitud por mes"
               span={2}
             >
@@ -1639,8 +1648,8 @@ export default function Estadistica() {
                         ) : null
                       }
                     />
-                    <ReferenceLine yAxisId="score" y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                    <Line yAxisId="score" type="monotone" dataKey="score" name="Promedio" stroke="#2563eb" strokeWidth={3} dot={{ r: 3 }} />
+                    <ReferenceLine yAxisId="score" y={3.7} stroke="#14222B" strokeDasharray="4 3" />
+                    <Line yAxisId="score" type="monotone" dataKey="score" name="Promedio" stroke="#0F6B68" strokeWidth={3} dot={{ r: 3 }} />
                     <Line yAxisId="pct" type="monotone" dataKey="completionPct" name="Completitud %" stroke="#14b8a6" strokeWidth={2} dot={{ r: 2 }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1686,8 +1695,8 @@ export default function Estadistica() {
                     <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
                     <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
                     <Tooltip />
-                    <Bar yAxisId="left" dataKey="impact" name="Impacto" fill="#f97316" radius={[6, 6, 0, 0]} />
-                    <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="Acumulado %" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
+                    <Bar yAxisId="left" dataKey="impact" name="Impacto" fill="#14222B" radius={[6, 6, 0, 0]} />
+                    <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="Acumulado %" stroke="#0F6B68" strokeWidth={2} dot={{ r: 2 }} />
                     <ReferenceLine yAxisId="right" y={80} stroke="#dc2626" strokeDasharray="4 3" />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1699,14 +1708,15 @@ export default function Estadistica() {
         {/* ── TAB: PROGRAMAS ── */}
         {activeTab === 'programas' && (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <ChartCard title="Promedio por programa" subtitle="Ordenado de mayor a menor — línea naranja = umbral 3.7" span={2}>
+            <ChartCard title="Promedio por programa"
+              capture={cap('promedio-programa', 'bar', byProgram.map((d) => d.name), [{ name: 'Promedio', values: byProgram.map((d) => round2(d.score)) }])} subtitle="Ordenado de mayor a menor — línea naranja = umbral 3.7" span={2}>
               <ResponsiveContainer width="100%" height={Math.max(280, byProgram.length * 38)}>
                 <BarChart data={byProgram} layout="vertical" barSize={20}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                   <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
                   <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 12 }} />
                   <Tooltip content={<ScoreTooltip />} />
-                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'insideTopRight', fontSize: 11, fill: '#f97316' }} />
+                  <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'insideTopRight', fontSize: 11, fill: '#14222B' }} />
                   <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
                     {byProgram.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
                     <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 12, fontWeight: 600 }} />
@@ -1728,7 +1738,7 @@ export default function Estadistica() {
                       <p>Evaluaciones: <strong>{payload[0].value}</strong></p>
                     </div>
                   ) : null} />
-                  <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[6, 6, 0, 0]}>
+                  <Bar dataKey="total" name="Evaluaciones" fill="#0F6B68" radius={[6, 6, 0, 0]}>
                     <LabelList dataKey="total" position="top" style={{ fontSize: 11, fontWeight: 600 }} />
                   </Bar>
                 </BarChart>
@@ -1777,10 +1787,10 @@ export default function Estadistica() {
                       ) : null
                     }
                   />
-                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <ReferenceLine y={3.7} stroke="#14222B" strokeDasharray="4 3" />
                   <Scatter
                     data={byProgramExtended.map((p) => ({ name: p.name, x: p.total, y: p.score, z: p.centerCount, centers: p.centerCount }))}
-                    fill="#2563eb"
+                    fill="#0F6B68"
                     fillOpacity={0.75}
                   />
                 </ScatterChart>
@@ -1807,14 +1817,15 @@ export default function Estadistica() {
         {activeTab === 'centros' && (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {/* Promedio por centro — barras horizontales con semáforo */}
-            <ChartCard title="Promedio por centro de convenio" subtitle="Línea naranja = umbral 3.7 (MEN 00273)" span={2}>
+            <ChartCard title="Promedio por centro de convenio"
+              capture={cap('promedio-centro', 'bar', byCenter.map((d) => d.name), [{ name: 'Promedio', values: byCenter.map((d) => round2(d.score)) }])} subtitle="Línea naranja = umbral 3.7 (MEN 00273)" span={2}>
               <ResponsiveContainer width="100%" height={Math.max(300, byCenter.length * 42)}>
                 <BarChart data={byCenter} layout="vertical" barSize={18}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                   <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
                   <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
                   <Tooltip content={<ScoreTooltip />} />
-                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral', position: 'top', fontSize: 10, fill: '#f97316' }} />
+                  <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" label={{ value: 'Umbral', position: 'top', fontSize: 10, fill: '#14222B' }} />
                   <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
                     {byCenter.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
                     <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 11, fontWeight: 600 }} />
@@ -1844,8 +1855,8 @@ export default function Estadistica() {
                       ) : null
                     }
                   />
-                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                  <Scatter data={impactVsSatisfaction} fill="#2563eb" fillOpacity={0.7} />
+                  <ReferenceLine y={3.7} stroke="#14222B" strokeDasharray="4 3" />
+                  <Scatter data={impactVsSatisfaction} fill="#0F6B68" fillOpacity={0.7} />
                 </ScatterChart>
               </ResponsiveContainer>
             </ChartCard>
@@ -1876,7 +1887,7 @@ export default function Estadistica() {
                       <XAxis type="number" tick={{ fontSize: 11 }} />
                       <YAxis type="category" dataKey="name" width={220} tick={{ fontSize: 11 }} />
                       <Tooltip content={<ScoreTooltip />} />
-                      <Bar dataKey="total" name="Evaluaciones" fill="#2563eb" radius={[0, 6, 6, 0]}>
+                      <Bar dataKey="total" name="Evaluaciones" fill="#0F6B68" radius={[0, 6, 6, 0]}>
                         <LabelList dataKey="total" position="right" style={{ fontSize: 11, fontWeight: 600 }} />
                       </Bar>
                     </BarChart>
@@ -2049,7 +2060,7 @@ export default function Estadistica() {
                     </tbody>
                   </table>
                   <div className="flex gap-4 mt-4 text-xs text-slate-500">
-                    {[['1.0 - 3.0', '#ef4444', 'Rojo: crítico'], ['3.0 - 4.5', '#f97316', 'Naranja: riesgo medio'], ['4.5 - 5.0', '#22c55e', 'Verde: óptimo']].map(([range, color, label]) => (
+                    {[['1.0 - 3.0', '#B3402E', 'Rojo: crítico'], ['3.0 - 4.5', '#14222B', 'Naranja: riesgo medio'], ['4.5 - 5.0', '#2B827C', 'Verde: óptimo']].map(([range, color, label]) => (
                       <div key={label} className="flex items-center gap-1.5">
                         <span className="w-3 h-3 rounded" style={{ background: color }} />
                         <span>{range} — {label}</span>
@@ -2101,7 +2112,7 @@ export default function Estadistica() {
                   <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                   <YAxis domain={[0, 5]} tick={{ fontSize: 12 }} />
                   <Tooltip content={<ScoreTooltip />} />
-                  <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <ReferenceLine y={3.7} stroke="#14222B" strokeDasharray="4 3" />
                   <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
                     {byRole.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                     <LabelList dataKey="score" position="top" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 12, fontWeight: 700 }} />
@@ -2122,7 +2133,7 @@ export default function Estadistica() {
                     <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v) => Number(v).toFixed(2)} />
                     <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-                    <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    <ReferenceLine y={3.7} stroke="#14222B" strokeDasharray="4 3" />
                     {sectionByRole.roles.map((role, i) => (
                       <Bar key={role} dataKey={role} name={role} fill={PALETTE[i % PALETTE.length]} radius={[4, 4, 0, 0]} barSize={16} />
                     ))}
@@ -2166,7 +2177,7 @@ export default function Estadistica() {
                   <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 12 }} />
                   <YAxis type="category" dataKey="name" width={170} tick={{ fontSize: 11 }} />
                   <Tooltip content={<ScoreTooltip />} />
-                  <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                  <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" />
                   <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
                     {bySectionRaw.map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
                     <LabelList dataKey="score" position="right" formatter={(v) => Number(v).toFixed(2)} style={{ fontSize: 11, fontWeight: 600 }} />
@@ -2199,11 +2210,11 @@ export default function Estadistica() {
                       <YAxis tick={{ fontSize: 11 }} />
                       <Tooltip />
                       <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="r1" name="1" stackId="a" fill="#ef4444" />
-                      <Bar dataKey="r2" name="2" stackId="a" fill="#f97316" />
-                      <Bar dataKey="r3" name="3" stackId="a" fill="#eab308" />
-                      <Bar dataKey="r4" name="4" stackId="a" fill="#22c55e" />
-                      <Bar dataKey="r5" name="5" stackId="a" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="r1" name="1" stackId="a" fill="#B3402E" />
+                      <Bar dataKey="r2" name="2" stackId="a" fill="#14222B" />
+                      <Bar dataKey="r3" name="3" stackId="a" fill="#D9961A" />
+                      <Bar dataKey="r4" name="4" stackId="a" fill="#2B827C" />
+                      <Bar dataKey="r5" name="5" stackId="a" fill="#0F6B68" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 );
@@ -2235,10 +2246,10 @@ export default function Estadistica() {
                     <ReferenceLine x={0} stroke="#475569" strokeDasharray="2 2" />
                     <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
                     <Bar dataKey="r1Neg" name="Muy en contra (1)" stackId="likert" fill="#b91c1c" />
-                    <Bar dataKey="r2Neg" name="En contra (2)" stackId="likert" fill="#f97316" />
+                    <Bar dataKey="r2Neg" name="En contra (2)" stackId="likert" fill="#14222B" />
                     <Bar dataKey="r3Neg" name="Neutral -" stackId="likert" fill="#94a3b8" />
                     <Bar dataKey="r3Pos" name="Neutral +" stackId="likert" fill="#94a3b8" />
-                    <Bar dataKey="r4Pos" name="A favor (4)" stackId="likert" fill="#22c55e" />
+                    <Bar dataKey="r4Pos" name="A favor (4)" stackId="likert" fill="#2B827C" />
                     <Bar dataKey="r5Pos" name="Muy a favor (5)" stackId="likert" fill="#1d4ed8" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -2416,7 +2427,7 @@ export default function Estadistica() {
                     </tfoot>
                   </table>
                   <div className="flex gap-4 mt-4 text-xs text-slate-500">
-                    {[['1.0 - 3.0', '#ef4444', 'Crítico'], ['3.0 - 4.5', '#f97316', 'Riesgo medio'], ['4.5 - 5.0', '#22c55e', 'Óptimo']].map(([range, color, label]) => (
+                    {[['1.0 - 3.0', '#B3402E', 'Crítico'], ['3.0 - 4.5', '#14222B', 'Riesgo medio'], ['4.5 - 5.0', '#2B827C', 'Óptimo']].map(([range, color, label]) => (
                       <div key={label} className="flex items-center gap-1.5">
                         <span className="w-3 h-3 rounded" style={{ background: color }} />
                         <span>{range} — {label}</span>
@@ -2449,7 +2460,7 @@ export default function Estadistica() {
                     <YAxis type="category" dataKey="name" width={160} tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v) => Number(v).toFixed(2)} />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                    <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'top', fontSize: 10, fill: '#f97316' }} />
+                    <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" label={{ value: 'Umbral 3.7', position: 'top', fontSize: 10, fill: '#14222B' }} />
                     {activeCrossMatrix.allPrograms.map((p, i) => (
                       <Bar key={p} dataKey={p} name={p.length > 14 ? p.slice(0, 14) + '…' : p} fill={PALETTE[i % PALETTE.length]} radius={[0, 4, 4, 0]} />
                     ))}
@@ -2504,9 +2515,9 @@ export default function Estadistica() {
                           </div>
                         ) : null
                       } />
-                      <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                      <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
-                      <Scatter data={scatterData} fill="#2563eb" fillOpacity={0.7} />
+                      <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" />
+                      <ReferenceLine y={3.7} stroke="#14222B" strokeDasharray="4 3" />
+                      <Scatter data={scatterData} fill="#0F6B68" fillOpacity={0.7} />
                     </ScatterChart>
                   </ResponsiveContainer>
                 ) : (
@@ -2599,7 +2610,7 @@ export default function Estadistica() {
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={65} />
                     <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
                     <Tooltip content={<ScoreTooltip />} />
-                    <ReferenceLine y={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    <ReferenceLine y={3.7} stroke="#14222B" strokeDasharray="4 3" />
                     <Bar dataKey="score" name="Promedio" radius={[6, 6, 0, 0]}>
                       {programComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
                     </Bar>
@@ -2617,7 +2628,7 @@ export default function Estadistica() {
                     <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 10 }} />
                     <Tooltip content={<ScoreTooltip />} />
-                    <ReferenceLine x={3.7} stroke="#f97316" strokeDasharray="4 3" />
+                    <ReferenceLine x={3.7} stroke="#14222B" strokeDasharray="4 3" />
                     <Bar dataKey="score" name="Promedio" radius={[0, 6, 6, 0]}>
                       {centerComparison.slice(0, 10).map((d, i) => <Cell key={i} fill={alertColor(d.score)} />)}
                     </Bar>

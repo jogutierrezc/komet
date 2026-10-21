@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { gsap } from 'gsap';
 import { useSearchParams } from 'react-router-dom';
-import { ShieldCheck, ArrowRight, UserCheck, User, GraduationCap, Building2, Calendar, AlertCircle, Layout, Fingerprint } from 'lucide-react';
+import { ArrowLeft, ArrowRight, User, GraduationCap, Building2, Calendar, AlertCircle, Fingerprint } from 'lucide-react';
+import KometMark from '../components/shared/KometMark';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
 import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail } from '../lib/data';
 
@@ -28,6 +30,20 @@ export default function PublicEvaluationPortal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [programOptions, setProgramOptions] = useState([]);
   const [allProgramOptions, setAllProgramOptions] = useState([]);
+
+  const stepRef = useRef(null);
+  const prevStep = useRef(1);
+  // El paso saliente se va y el nuevo entra desde el lado de la dirección del avance.
+  useLayoutEffect(() => {
+    if (view !== 'public-entry' || !stepRef.current) return;
+    const dir = publicStep >= prevStep.current ? 1 : -1;
+    prevStep.current = publicStep;
+    const mm = gsap.matchMedia();
+    mm.add('(prefers-reduced-motion: no-preference)', () => {
+      gsap.fromTo(stepRef.current, { x: 24 * dir, opacity: 0 }, { x: 0, opacity: 1, duration: 0.22, ease: 'power3.out', clearProps: 'transform' });
+    });
+    return () => mm.revert();
+  }, [publicStep, view]);
 
   const selectedCampusId = sharedSurveyId ? sharedSurvey?.campus_id || null : userData?.campus_id || null;
 
@@ -261,26 +277,6 @@ export default function PublicEvaluationPortal() {
     }
   }
 
-  const portalStyles = `
-    @keyframes moveLava {
-      0% { transform: translate(0, 0) scale(1); }
-      50% { transform: translate(5%, -5%) scale(1.1); }
-      100% { transform: translate(0, 0) scale(1); }
-    }
-    .lava-panel {
-      position: relative;
-      overflow: hidden;
-      background: #0f172a;
-    }
-    .lava-blob {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(60px);
-      animation: moveLava 15s infinite alternate ease-in-out;
-      opacity: 0.6;
-    }
-  `;
-
   if (view === 'form') {
     return selectedSurvey ? (
       <div className="min-h-screen bg-slate-50">
@@ -406,30 +402,43 @@ export default function PublicEvaluationPortal() {
         />
       </div>
     ) : (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
-        <div className="max-w-xl w-full text-center rounded-[2rem] bg-white shadow-2xl p-10">
-          <h2 className="text-2xl font-black text-slate-900 mb-4">No hay formulario disponible</h2>
-          <p className="text-slate-500 mb-6">No se encontró ningún formulario activo para el usuario. Regresa e intenta nuevamente.</p>
-          <button
-            type="button"
-            onClick={() => setView('ready')}
-            className="bg-blue-600 text-white px-8 py-4 rounded-[2rem] font-bold uppercase tracking-[0.15em] shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all"
-          >
-            Volver
-          </button>
+      <PortalShell>
+        <div className="flex-1 flex flex-col justify-center gap-4 py-16">
+          <h1 className="font-display text-3xl font-bold">No hay formulario disponible</h1>
+          <p className="text-ink-2">No se encontró ningún formulario activo para el usuario. Regresa e intenta nuevamente.</p>
+          <button type="button" onClick={() => setView('ready')} className="k-btn self-start !h-12">Volver</button>
         </div>
-      </div>
+      </PortalShell>
     );
   }
 
   if (view === 'public-success') {
+    const centerName = centers.find((center) => center.id === selectedCenterId)?.name;
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
-        <div className="max-w-2xl w-full rounded-[2rem] border border-emerald-100 bg-white p-10 shadow-xl text-center">
-          <h2 className="text-3xl font-black text-emerald-700 mb-3">Evaluación enviada</h2>
-          <p className="text-slate-600 mb-8">
-            Gracias, tu evaluación fue registrada correctamente para el sitio de práctica seleccionado.
-          </p>
+      <PortalShell>
+        <div className="flex-1 flex flex-col gap-7 pt-10 lg:pt-16">
+          <div className="space-y-5">
+            <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#E7F1EF" stroke="#0F6B68" strokeWidth="2" /><path d="M20 33l8 8 16-17" fill="none" stroke="#0F6B68" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <h1 className="font-display text-4xl font-bold leading-tight">Evaluación enviada</h1>
+            <p className="text-base leading-relaxed text-ink-2">Gracias por tu tiempo. Tus respuestas ayudan a mejorar las prácticas de quienes vienen después.</p>
+          </div>
+          <dl className="border-t border-line">
+            {[
+              ['Sitio', centerName],
+              ['Rol', selectedPublicRole ? roleLabel(selectedPublicRole) : ''],
+              ['Periodo', getCurrentAcademicPeriod()],
+            ].filter(([, v]) => v).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-4 py-3.5 border-b border-line">
+                <dt className="k-label self-center">{k}</dt>
+                <dd className="text-[15px] font-semibold text-right">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          {publicRespondent.email ? (
+            <p className="text-sm text-ink-2">Enviamos una confirmación a <span className="font-semibold text-ink">{publicRespondent.email}</span>.</p>
+          ) : null}
+        </div>
+        <div className="sticky bottom-0 -mx-5 px-5 pt-4 pb-7 bg-paper">
           <button
             type="button"
             onClick={() => {
@@ -444,87 +453,122 @@ export default function PublicEvaluationPortal() {
               setCenterSearchQuery('');
               setPublicStep(1);
             }}
-            className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-bold uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
+            className="k-btn-secondary w-full !h-14 !rounded-xl !text-base"
           >
-            Nueva respuesta
+            Evaluar otro sitio
           </button>
         </div>
-      </div>
+      </PortalShell>
     );
   }
 
   if (view === 'public-entry') {
+    const selectedCenter = centers.find((center) => center.id === selectedCenterId);
+    const showCenterList = !selectedCenter || centerSearchQuery !== selectedCenter.name;
+    const goNext = () => {
+      if (publicStep === 1) {
+        if (!selectedPublicRole) {
+          setError('Selecciona un rol para continuar.');
+          return;
+        }
+        setError('');
+        setPublicStep(2);
+        return;
+      }
+
+      const hasValidEmail = /.+@.+\..+/.test(String(publicRespondent.email || '').trim());
+
+      if (!publicRespondent.email || !publicRespondent.program || !hasValidEmail) {
+        setError('Debes completar correo, nivel de formación y programa para continuar.');
+        return;
+      }
+      if (!selectedCenterId) {
+        setError('Selecciona el sitio de práctica a evaluar.');
+        return;
+      }
+
+      setError('');
+      setView('form');
+    };
+
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
-        <div className="w-full max-w-3xl rounded-[2rem] bg-white border border-slate-200 p-8 shadow-xl space-y-8">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-600">Enlace público</p>
-            <h1 className="text-3xl font-black text-slate-900 mt-2">Registro para evaluar sitio de práctica</h1>
-            <p className="text-slate-500 mt-2">Completa tus datos académicos y selecciona el sitio de práctica conforme al campus de la evaluación.</p>
-          </div>
-
-          {sharedSurvey ? (
-            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
-              <p className="text-xs uppercase tracking-[0.2em] font-black text-slate-400 mb-1">Evaluación</p>
-              <p className="text-lg font-black text-slate-800">{sharedSurvey.title || 'Evaluación pública'}</p>
-              <p className="text-sm text-slate-500 mt-1">{sharedSurvey.description || 'Formulario de evaluación institucional.'}</p>
-            </div>
-          ) : null}
-
+      <PortalShell step={publicStep} total={3}>
+        <div ref={stepRef} className="flex-1 pt-7 space-y-6">
           {publicStep === 1 ? (
-            <div className="space-y-5 animate-in fade-in slide-in-from-right-3 duration-300">
-              <p className="text-[11px] uppercase tracking-[0.2em] font-black text-slate-500">1. Selecciona el rol con el que evalúas</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {roleOptions.map((roleOption) => (
-                  <button
-                    key={roleOption.id}
-                    type="button"
-                    onClick={() => setSelectedPublicRole(roleOption.id)}
-                    className={`rounded-2xl border p-4 text-left transition-all ${selectedPublicRole === roleOption.id ? 'border-blue-600 bg-blue-50 shadow-md shadow-blue-100' : 'border-slate-200 hover:border-blue-200 hover:bg-slate-50'}`}
-                  >
-                    <roleOption.icon className={`w-6 h-6 mb-3 ${roleOption.color}`} />
-                    <p className="text-sm font-black text-slate-900">{roleOption.label}</p>
-                  </button>
-                ))}
+            <>
+              <div className="space-y-2.5">
+                {sharedSurvey ? <p className="k-label">{sharedSurvey.title || 'Evaluación pública'}</p> : null}
+                <h1 className="font-display text-[32px] leading-[1.05] font-bold text-balance">¿Con qué rol vas a evaluar?</h1>
+                <p className="text-base leading-relaxed text-ink-2">Elige el rol que mejor te describe.</p>
               </div>
-            </div>
+              <div className="space-y-3" role="radiogroup" aria-label="Rol">
+                {roleOptions.map((roleOption) => {
+                  const on = selectedPublicRole === roleOption.id;
+                  return (
+                    <button
+                      key={roleOption.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => { setSelectedPublicRole(roleOption.id); setError(''); }}
+                      className={`w-full min-h-[72px] flex items-center gap-3.5 rounded-xl text-left bg-white px-4 py-3.5 transition-transform duration-150 ease-out active:scale-[0.98] ${on ? 'border-2 border-blue-600 bg-blue-50 px-[15px] py-[13px]' : 'border border-line-strong'}`}
+                    >
+                      <span className={`shrink-0 w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center ${on ? 'border-blue-600' : 'border-line-strong'}`}>
+                        {on ? <span className="w-2.5 h-2.5 rounded-full bg-blue-600" /> : null}
+                      </span>
+                      <span>
+                        <span className="block text-[17px] font-semibold">{roleOption.label}</span>
+                        {ROLE_HINTS[roleOption.id] ? <span className="block text-sm text-ink-2">{ROLE_HINTS[roleOption.id]}</span> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-left-3 duration-300">
-              <div className="md:col-span-2 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700">
-                <p><span className="font-bold">Rol seleccionado:</span> {roleLabel(selectedPublicRole)}</p>
-                <p><span className="font-bold">Periodo:</span> {getCurrentAcademicPeriod()}</p>
-                <p><span className="font-bold">Escenario:</span> {centers.find((center) => center.id === selectedCenterId)?.name || 'Selecciona un sitio de práctica'}</p>
-              </div>
+            <>
+              <h1 className="font-display text-[30px] leading-[1.05] font-bold">Cuéntanos de dónde evalúas</h1>
 
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Correo electrónico</label>
+              <div className="space-y-2">
+                <label htmlFor="pub-email" className="text-sm font-semibold">Correo electrónico</label>
                 <input
+                  id="pub-email"
                   type="email"
+                  autoComplete="email"
                   value={publicRespondent.email}
                   onChange={(e) => setPublicRespondent((prev) => ({ ...prev, email: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
+                  className="k-input !h-[52px] !rounded-[10px]"
                   placeholder="correo@dominio.com"
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Nivel de Formación</label>
-                <select
-                  value={publicRespondent.program_level}
-                  onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program_level: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-blue-500"
-                >
-                  <option value="Pregrado">Pregrado</option>
-                  <option value="Posgrado">Posgrado</option>
-                </select>
+              <div className="space-y-2">
+                <span id="pub-level" className="text-sm font-semibold">Nivel de formación</span>
+                <div className="flex" role="group" aria-labelledby="pub-level">
+                  {['Pregrado', 'Posgrado'].map((level, idx) => {
+                    const on = publicRespondent.program_level === level;
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setPublicRespondent((prev) => ({ ...prev, program_level: level }))}
+                        className={`flex-1 h-12 border text-[15px] font-medium transition-colors ${idx === 0 ? 'rounded-l-[10px]' : 'rounded-r-[10px] border-l-0'} ${on ? 'bg-ink border-ink text-white' : 'bg-white border-line-strong text-ink'}`}
+                      >
+                        {level}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Programa Académico</label>
+              <div className="space-y-2">
+                <label htmlFor="pub-program" className="text-sm font-semibold">Programa académico</label>
                 <select
+                  id="pub-program"
                   value={publicRespondent.program}
                   onChange={(e) => setPublicRespondent((prev) => ({ ...prev, program: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-blue-500"
+                  className="k-input !h-[52px] !rounded-[10px]"
                 >
                   <option value="">Selecciona un programa</option>
                   {filteredProgramOptions.map((program) => (
@@ -536,331 +580,245 @@ export default function PublicEvaluationPortal() {
                 </select>
               </div>
 
-              <div className="md:col-span-2">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Sitio de práctica a evaluar</label>
-                <div className="space-y-3">
-                  <input
-                    type="text"
-                    value={centerSearchQuery}
-                    onChange={(e) => setCenterSearchQuery(e.target.value)}
-                    placeholder="Buscar sitio de práctica..."
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-500"
-                  />
-                  <select
-                    value={selectedCenterId}
-                    onChange={(e) => {
-                      const centerId = e.target.value;
-                      setSelectedCenterId(centerId);
-                      const selected = centers.find((c) => c.id === centerId);
-                      setCenterSearchQuery(selected?.name || centerSearchQuery);
-                    }}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-blue-500"
-                  >
-                    <option value="">Selecciona un sitio de práctica</option>
-                    {filteredCenters.map((center) => (
-                      <option key={center.id} value={center.id}>
-                        {center.name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-slate-500">
-                    Mostrando {filteredCenters.length} de {centers.length} centros disponibles.
-                  </p>
-                </div>
+              <div className="space-y-2">
+                <label htmlFor="pub-center" className="text-sm font-semibold">Sitio de práctica a evaluar</label>
+                <input
+                  id="pub-center"
+                  type="text"
+                  autoComplete="off"
+                  value={centerSearchQuery}
+                  onChange={(e) => { setCenterSearchQuery(e.target.value); setSelectedCenterId(''); }}
+                  placeholder="Escribe para buscar"
+                  className="k-input !h-[52px] !rounded-[10px]"
+                />
+                {showCenterList ? (
+                  <ul className="bg-white border border-line-strong rounded-[10px] overflow-hidden max-h-60 overflow-y-auto">
+                    {filteredCenters.length ? filteredCenters.slice(0, 30).map((center, idx) => (
+                      <li key={center.id} className={idx ? 'border-t border-line' : ''}>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedCenterId(center.id); setCenterSearchQuery(center.name); setError(''); }}
+                          className="w-full min-h-[48px] px-3.5 py-2.5 text-left text-[15px] font-semibold hover:bg-blue-50 transition-colors"
+                        >
+                          {center.name}
+                        </button>
+                      </li>
+                    )) : (
+                      <li className="px-3.5 py-3 text-sm text-ink-2">No se encontraron sitios con ese nombre.</li>
+                    )}
+                  </ul>
+                ) : (
+                  <p className="text-sm font-medium text-score-high-fg">Sitio seleccionado</p>
+                )}
+                <p className="k-label">{filteredCenters.length} de {centers.length} sitios · Periodo {getCurrentAcademicPeriod()}</p>
               </div>
-            </div>
+            </>
           )}
 
           {error ? (
-            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>
+            <div role="alert" className="rounded-lg border border-score-low/30 bg-score-low-bg p-3.5 text-sm font-medium text-score-low-fg">{error}</div>
           ) : null}
+        </div>
 
-          <div className="flex justify-between items-center gap-3">
-            {publicStep > 1 ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setPublicStep(1);
-                  setCenterSearchQuery('');
-                }}
-                className="rounded-[2rem] bg-slate-100 px-6 py-3 text-slate-700 font-bold uppercase tracking-[0.12em] hover:bg-slate-200 transition-all"
-              >
-                Volver
-              </button>
-            ) : <span />}
-
+        <div className="sticky bottom-0 -mx-5 px-5 pt-4 pb-7 bg-paper border-t border-line mt-6 flex gap-3">
+          {publicStep > 1 ? (
             <button
               type="button"
-              onClick={() => {
-                if (publicStep === 1) {
-                  if (!selectedPublicRole) {
-                    setError('Selecciona un rol para continuar.');
-                    return;
-                  }
-                  setError('');
-                  setPublicStep(2);
-                  return;
-                }
-
-                const hasValidEmail = /.+@.+\..+/.test(String(publicRespondent.email || '').trim());
-
-                if (!publicRespondent.email || !publicRespondent.program || !hasValidEmail) {
-                  setError('Debes completar correo, nivel de formación y programa para continuar.');
-                  return;
-                }
-                if (!selectedCenterId) {
-                  setError('Selecciona el sitio de práctica a evaluar.');
-                  return;
-                }
-
-                setError('');
-                setView('form');
-              }}
-              className="rounded-[2rem] bg-blue-600 px-8 py-4 text-white font-black uppercase tracking-[0.15em] hover:bg-blue-700 transition-all"
+              aria-label="Volver"
+              onClick={() => { setPublicStep(1); setCenterSearchQuery(''); setError(''); }}
+              className="shrink-0 w-14 h-14 rounded-xl border border-line-strong bg-white flex items-center justify-center active:scale-95 transition-transform"
             >
-              {publicStep === 1 ? 'Siguiente' : 'Continuar al formulario'}
+              <ArrowLeft size={20} />
             </button>
-          </div>
+          ) : null}
+          <button type="button" onClick={goNext} className="k-btn flex-1 !h-14 !rounded-xl !text-base">
+            {publicStep === 1 ? 'Continuar' : 'Empezar la evaluación'}
+          </button>
         </div>
-      </div>
+      </PortalShell>
     );
   }
 
   return (
-    <div className="min-h-screen flex font-sans bg-white">
-      <style>{portalStyles}</style>
-
-      <div className="hidden lg:flex lg:w-5/12 lava-panel flex-col justify-center items-center p-12 relative">
-        <div className="lava-blob bg-blue-600 w-[120%] h-[80%] -top-1/4 -left-1/4" />
-        <div className="lava-blob bg-orange-500 w-[100%] h-[70%] -bottom-1/4 -right-1/4" style={{ animationDelay: '-5s' }} />
-        <div className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px]" />
-        <div className="relative z-10 text-center space-y-8">
-          <div className="bg-white/10 backdrop-blur-xl border border-white/20 p-10 rounded-[4rem] shadow-2xl inline-block group transition-transform hover:scale-105 duration-500">
-            <ShieldCheck className="w-32 h-32 text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]" />
-          </div>
-          <div className="space-y-4">
-            <h2 className="text-white text-5xl font-black tracking-tighter leading-none">
-              SISTEMA DE <br />
-              <span className="text-blue-400">CALIDAD</span>
-            </h2>
-            <p className="text-slate-300 text-lg font-medium max-w-xs mx-auto opacity-80">
-              Evaluación de prácticas formativas y relación docencia-servicio.
-            </p>
-          </div>
-        </div>
-        <div className="absolute bottom-12 left-12 right-12 flex justify-between items-center text-white/30 text-[10px] font-black tracking-[0.3em] uppercase">
-          <span>Gestión 2026</span>
-          <div className="h-[1px] flex-grow mx-4 bg-white/10"></div>
-          <span>v2.0</span>
-        </div>
-      </div>
-
-      <div className="w-full lg:w-7/12 flex items-center justify-center p-6 md:p-12 lg:p-24 bg-white relative">
-        <div className="w-full max-w-lg">
-          {view === 'login' && (
-            <div className="animate-in fade-in slide-in-from-right-8 duration-700">
-              <div className="mb-12">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-10 h-[2px] bg-blue-600"></div>
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-600">Acceso Institucional</span>
-                </div>
-                <h1 className="text-4xl font-black text-slate-900 mb-4">Bienvenido al Portal</h1>
-                <p className="text-slate-500 text-lg leading-relaxed">
-                  Por favor ingrese su identificación para acceder al formulario de evaluación correspondiente.
-                </p>
-              </div>
-
-              <form onSubmit={handleLogin} className="space-y-8">
-                <div className="space-y-4">
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Código de Usuario</label>
-                  <div className="relative group">
-                    <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none text-slate-300 group-focus-within:text-blue-600 transition-colors">
-                      <Fingerprint className="w-6 h-6" />
-                    </div>
-                    <input
-                      type="text"
-                      value={userId}
-                      onChange={(e) => setUserId(e.target.value)}
-                      className="block w-full pl-16 pr-6 py-6 bg-slate-50 border-2 border-slate-100 rounded-[2rem] outline-none focus:border-blue-600 focus:bg-white transition-all text-xl font-bold text-slate-800 placeholder:text-slate-300"
-                      placeholder="Ej: 12345"
-                      required
-                    />
-                  </div>
-                  {error && (
-                    <div className="flex items-center gap-3 text-red-500 text-sm font-bold p-4 bg-red-50 rounded-2xl animate-in slide-in-from-top-2">
-                      <AlertCircle className="w-5 h-5 shrink-0" />
-                      {error}
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className={`w-full py-6 rounded-[2rem] font-black text-lg transition-all flex items-center justify-center gap-4 uppercase tracking-[0.2em] ${isLoading ? 'bg-slate-100 text-slate-400 cursor-wait' : 'bg-slate-900 text-white hover:bg-blue-600 shadow-xl shadow-blue-100 hover:shadow-blue-200 active:scale-95'}`}
-                >
-                  {isLoading ? 'Verificando...' : 'Entrar al Sistema'}
-                  {!isLoading && <ArrowRight className="w-6 h-6" />}
-                </button>
-              </form>
-
-              <div className="mt-16 grid grid-cols-3 gap-8 border-t border-slate-100 pt-8">
-                <div>
-                  <p className="text-[10px] font-black text-slate-300 uppercase mb-1">Protección</p>
-                  <p className="text-xs font-bold text-slate-500 italic leading-tight">Datos Encriptados</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-300 uppercase mb-1">Soporte</p>
-                  <p className="text-xs font-bold text-slate-500 italic leading-tight">Ayuda Directa</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-300 uppercase mb-1">Entorno</p>
-                  <p className="text-xs font-bold text-slate-500 italic leading-tight">Seguro / HTTPS</p>
-                </div>
-              </div>
+    <PortalShell>
+      <div className="flex-1 pt-10 lg:pt-16">
+        {view === 'login' && (
+          <form onSubmit={handleLogin} className="space-y-7">
+            <div className="space-y-2.5">
+              <p className="k-label">Acceso institucional</p>
+              <h1 className="font-display text-4xl font-bold leading-tight">Bienvenido al portal de evaluación</h1>
+              <p className="text-base leading-relaxed text-ink-2">Ingresa tu código para abrir el formulario que te corresponde.</p>
             </div>
-          )}
 
-          {view === 'verification' && userData && (
-            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
-              <div className="mb-10 flex items-center gap-6">
-                <div className="w-20 h-20 bg-blue-50 rounded-[2rem] flex items-center justify-center shadow-inner">
-                  <UserCheck className="w-10 h-10 text-blue-600" />
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black text-slate-900 tracking-tight">¿Eres tú?</h2>
-                  <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Verificación de perfil</p>
-                </div>
+            <div className="space-y-2">
+              <label htmlFor="portal-code" className="text-sm font-semibold">Código de usuario</label>
+              <div className="relative">
+                <Fingerprint className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-2" size={20} aria-hidden="true" />
+                <input
+                  id="portal-code"
+                  type="text"
+                  inputMode="numeric"
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                  className="k-input !h-14 !pl-11 !text-lg"
+                  placeholder="Ej: 12345"
+                  required
+                />
               </div>
+              {error ? (
+                <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-score-low/30 bg-score-low-bg p-3.5 text-sm font-medium text-score-low-fg">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  {error}
+                </div>
+              ) : null}
+            </div>
 
-              <div className="space-y-4">
-                {[
-                  { icon: User, label: 'Nombre', val: userData.full_name },
-                  { icon: GraduationCap, label: 'Programa', val: userData.program },
-                  { icon: Building2, label: 'Escenario de Práctica', val: centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name },
-                  { icon: Calendar, label: 'Periodo', val: userData.started || userData.status || 'N/A' }
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-6 p-6 rounded-[2rem] border-2 border-slate-50 bg-slate-50/50 hover:bg-white hover:border-blue-100 hover:shadow-lg hover:shadow-slate-100 transition-all group">
-                    <div className="p-4 rounded-2xl bg-white shadow-sm group-hover:scale-110 transition-transform">
-                      <item.icon className="w-6 h-6 text-slate-400 group-hover:text-blue-500 transition-colors" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{item.label}</p>
-                      <p className="text-lg font-extrabold text-slate-800 leading-tight">{item.val}</p>
-                    </div>
+            <button type="submit" disabled={isLoading} className="k-btn w-full !h-14 !rounded-xl !text-base">
+              {isLoading ? 'Verificando…' : 'Entrar'}
+              {!isLoading && <ArrowRight size={20} />}
+            </button>
+          </form>
+        )}
+
+        {view === 'verification' && userData && (
+          <div className="space-y-7">
+            <div className="space-y-2.5">
+              <p className="k-label">Verificación de perfil</p>
+              <h1 className="font-display text-4xl font-bold leading-tight">¿Eres tú?</h1>
+            </div>
+
+            <dl className="border-t border-line">
+              {[
+                { icon: User, label: 'Nombre', val: userData.full_name },
+                { icon: GraduationCap, label: 'Programa', val: userData.program },
+                { icon: Building2, label: 'Escenario de práctica', val: centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name },
+                { icon: Calendar, label: 'Periodo', val: userData.started || userData.status || 'N/A' }
+              ].map((item) => (
+                <div key={item.label} className="flex items-start gap-3.5 py-3.5 border-b border-line">
+                  <item.icon className="w-5 h-5 mt-0.5 text-ink-2 shrink-0" aria-hidden="true" />
+                  <div className="min-w-0">
+                    <dt className="k-label">{item.label}</dt>
+                    <dd className="text-base font-semibold leading-snug">{item.val}</dd>
                   </div>
-                ))}
-              <div className="col-span-full">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Centro de práctica a evaluar</label>
-                <div className="relative">
-                  <select
-                    value={selectedCenterId}
-                    onChange={(e) => setSelectedCenterId(e.target.value)}
-                    className="w-full border border-slate-200 rounded-[2rem] bg-white px-5 py-4 text-sm font-bold text-slate-700 outline-none focus:border-blue-500"
-                  >
-                    {centers.length ? (
-                      centers.map((center) => (
-                        <option key={center.id} value={center.id}>
-                          {center.name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">No hay centros disponibles</option>
-                    )}
-                  </select>
                 </div>
-              </div>
-              </div>
+              ))}
+            </dl>
 
-              <div className="mt-6 p-6 rounded-[2rem] border border-slate-100 bg-slate-50/70 text-left">
-                <p className="text-sm font-bold text-slate-500 uppercase tracking-[0.2em] mb-2">Encuesta activa</p>
-                {surveys.length > 0 ? (
-                  <p className="text-slate-700">Se cargó la evaluación activa disponible para tu perfil. Continúa para revisarla.</p>
+            <div className="space-y-2">
+              <label htmlFor="verify-center" className="text-sm font-semibold">Centro de práctica a evaluar</label>
+              <select
+                id="verify-center"
+                value={selectedCenterId}
+                onChange={(e) => setSelectedCenterId(e.target.value)}
+                className="k-input !h-[52px] !rounded-[10px]"
+              >
+                {centers.length ? (
+                  centers.map((center) => (
+                    <option key={center.id} value={center.id}>{center.name}</option>
+                  ))
                 ) : (
-                  <p className="text-slate-500">No se detectó un formulario activo todavía. Si deberías tener uno, consulta con el administrador.</p>
+                  <option value="">No hay centros disponibles</option>
                 )}
-              </div>
-
-              <div className="flex flex-col md:flex-row gap-4 mt-10">
-                <button
-                  type="button"
-                  onClick={() => { setView('login'); setUserData(null); setUserId(''); }}
-                  className="flex-1 py-6 rounded-[2rem] font-bold text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all text-xs uppercase tracking-widest"
-                >
-                  No soy yo, volver
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setView('ready')}
-                  className="flex-[2] bg-blue-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-xl shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-4 uppercase tracking-widest"
-                >
-                  Sí, soy yo
-                  <ArrowRight className="w-6 h-6" />
-                </button>
-              </div>
+              </select>
             </div>
-          )}
 
-          {view === 'ready' && (
-            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
-              <div className="mb-8 text-center">
-                <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tight">Formulario listo</h2>
-                <p className="text-slate-500 mt-3">Selecciona la evaluación que deseas completar y continúa.</p>
-              </div>
+            <p className="text-sm text-ink-2">
+              {surveys.length > 0
+                ? 'Encontramos una evaluación activa para tu perfil. Continúa para revisarla.'
+                : 'No se detectó un formulario activo todavía. Si deberías tener uno, consulta con el administrador.'}
+            </p>
 
-              {surveys.length > 0 ? (
-                <div className="space-y-6">
-                  <div className="grid gap-4">
-                    {surveys.map((survey) => (
+            <div className="flex flex-col-reverse sm:flex-row gap-3">
+              <button type="button" onClick={() => { setView('login'); setUserData(null); setUserId(''); }} className="k-btn-secondary sm:flex-1 !h-14 !rounded-xl !text-base">
+                No soy yo
+              </button>
+              <button type="button" onClick={() => setView('ready')} className="k-btn sm:flex-[2] !h-14 !rounded-xl !text-base">
+                Sí, soy yo
+                <ArrowRight size={20} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === 'ready' && (
+          <div className="space-y-7">
+            <div className="space-y-2.5">
+              <p className="k-label">Formulario listo</p>
+              <h1 className="font-display text-4xl font-bold leading-tight">Elige la evaluación</h1>
+              <p className="text-base leading-relaxed text-ink-2">Selecciona la que quieres completar.</p>
+            </div>
+
+            {surveys.length > 0 ? (
+              <>
+                <div className="space-y-3" role="radiogroup" aria-label="Evaluaciones disponibles">
+                  {surveys.map((survey) => {
+                    const on = selectedSurvey?.id === survey.id;
+                    return (
                       <button
                         key={survey.id}
                         type="button"
+                        role="radio"
+                        aria-checked={on}
                         onClick={() => setSelectedSurvey(survey)}
-                        className={`w-full text-left p-6 rounded-[2rem] border transition-all ${selectedSurvey?.id === survey.id ? 'border-blue-600 bg-blue-50 shadow-lg shadow-blue-100' : 'border-slate-100 bg-slate-50 hover:border-blue-100 hover:bg-white'}`}
+                        className={`w-full text-left rounded-xl bg-white p-4 transition-transform duration-150 ease-out active:scale-[0.98] ${on ? 'border-2 border-blue-600 bg-blue-50 p-[15px]' : 'border border-line-strong'}`}
                       >
-                        <p className="text-sm uppercase tracking-[0.2em] font-bold text-slate-400 mb-2">{survey.title || 'Evaluación disponible'}</p>
-                        <p className="text-lg font-black text-slate-900">{formatSurveyDescription(survey.description, centers.find((center) => center.id === selectedCenterId)?.name || userData.practice_center_name || userData.campus_name) || 'Completa esta evaluación institucional'}</p>
+                        <span className="block k-label mb-1.5">{survey.title || 'Evaluación disponible'}</span>
+                        <span className="block text-base font-semibold leading-snug">{formatSurveyDescription(survey.description, centers.find((center) => center.id === selectedCenterId)?.name || userData?.practice_center_name || userData?.campus_name)}</span>
                       </button>
-                    ))}
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row gap-4 justify-center mt-6">
-                    <button
-                      type="button"
-                      onClick={() => setView('form')}
-                      disabled={!selectedSurvey}
-                      className={`flex-1 py-5 rounded-[2rem] font-black uppercase tracking-[0.2em] text-white shadow-lg transition-all ${selectedSurvey ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                    >
-                      Acceder al formulario
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setView('verification')}
-                      className="flex-1 py-5 rounded-[2rem] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 uppercase tracking-[0.2em]"
-                    >
-                      Volver
-                    </button>
-                  </div>
+                    );
+                  })}
                 </div>
-              ) : (
-                <div className="rounded-[2rem] border border-slate-100 bg-slate-50 p-10 text-center">
-                  <p className="text-slate-600">No hay evaluaciones activas para tu perfil en este momento.</p>
-                  <button
-                    type="button"
-                    onClick={() => setView('login')}
-                    className="mt-8 bg-blue-600 text-white py-4 px-8 rounded-[2rem] font-bold uppercase tracking-[0.15em] shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all"
-                  >
-                    Volver al inicio
+
+                <div className="flex flex-col-reverse sm:flex-row gap-3">
+                  <button type="button" onClick={() => setView('verification')} className="k-btn-secondary sm:flex-1 !h-14 !rounded-xl !text-base">
+                    Volver
+                  </button>
+                  <button type="button" onClick={() => setView('form')} disabled={!selectedSurvey} className="k-btn sm:flex-[2] !h-14 !rounded-xl !text-base">
+                    Acceder al formulario
                   </button>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="absolute bottom-8 right-12 text-slate-300 font-bold text-[9px] uppercase tracking-widest">
-          S.C.I &copy; 2026
-        </div>
+              </>
+            ) : (
+              <div className="k-card p-8 space-y-5">
+                <p className="text-ink-2">No hay evaluaciones activas para tu perfil en este momento.</p>
+                <button type="button" onClick={() => setView('login')} className="k-btn !h-12">Volver al inicio</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+    </PortalShell>
+  );
+}
+
+const ROLE_HINTS = {
+  student: 'Estás o estuviste en práctica en el sitio',
+  professor: 'Acompañas estudiantes en el sitio',
+  coordinator: 'Gestionas el convenio o la práctica',
+};
+
+// Marco común del portal: marca arriba, progreso opcional y una sola columna pensada para celular.
+function PortalShell({ step, total, children }) {
+  return (
+    <div className="min-h-screen flex flex-col bg-paper">
+      <header className="w-full max-w-lg mx-auto px-5 pt-4 space-y-3.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <KometMark size={22} />
+            <span className="font-display text-lg font-bold">Komet</span>
+          </div>
+          {step ? <span className="font-mono text-xs text-ink-2">PASO {step} DE {total}</span> : null}
+        </div>
+        {step ? (
+          <div className="flex gap-1.5" role="progressbar" aria-valuemin={1} aria-valuemax={total} aria-valuenow={step}>
+            {Array.from({ length: total }).map((_, i) => (
+              <div key={i} className={`flex-1 h-1 rounded-full origin-left transition-colors duration-200 ${i < step ? 'bg-blue-600' : 'bg-line'}`} />
+            ))}
+          </div>
+        ) : null}
+      </header>
+      <main className="flex-1 w-full max-w-lg mx-auto px-5 flex flex-col">{children}</main>
+      <footer className="w-full max-w-lg mx-auto px-5 py-4 font-mono text-[11px] text-ink-2">Universidad de Santander · Evaluación de sitios de práctica</footer>
     </div>
   );
 }

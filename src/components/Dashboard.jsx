@@ -1,12 +1,24 @@
-import { useEffect, useState } from 'react';
-import { Clock, MoreVertical, TrendingUp, AlertCircle, School, GraduationCap, Rocket, FileText } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { gsap } from 'gsap';
+import { ArrowRight, ClipboardCheck, LineChart, BarChart3, Presentation } from 'lucide-react';
 import StatusBadge from './shared/StatusBadge';
 import { getRecentEvaluations, getActiveConveniosCount, getStudentsInPracticeCount, getEvaluationsCount } from '../lib/data';
 
-export default function Dashboard() {
+const SHORTCUTS = [
+  { id: 'evaluaciones', label: 'Formularios de evaluación', hint: 'Crear y compartir enlaces públicos', icon: ClipboardCheck },
+  { id: 'estadistica', label: 'Estadística', hint: 'Puntajes por programa, centro y rol', icon: LineChart },
+  { id: 'reportes', label: 'Informe', hint: 'Documento listo para imprimir', icon: BarChart3 },
+  { id: 'presenta', label: 'Komet Presenta', hint: 'Presentación en PowerPoint', icon: Presentation },
+];
+
+const fmt = (n) => Number(n || 0).toLocaleString('es-CO');
+
+export default function Dashboard({ onNavigate }) {
   const [recentEvals, setRecentEvals] = useState([]);
   const [stats, setStats] = useState({ conveniosActive: 0, studentsInPractice: 0, totalEvaluations: 0 });
   const [loading, setLoading] = useState(false);
+  const figuresRef = useRef(null);
+  const counted = useRef(false);
 
   useEffect(() => {
     loadDashboard();
@@ -45,146 +57,103 @@ export default function Dashboard() {
     }
   }
 
+  // Las cifras cuentan hasta su valor solo en la primera carga.
+  useLayoutEffect(() => {
+    if (loading || counted.current || !figuresRef.current) return;
+    if (!stats.totalEvaluations && !stats.conveniosActive && !stats.studentsInPractice) return;
+    counted.current = true;
+    const mm = gsap.matchMedia();
+    mm.add('(prefers-reduced-motion: no-preference)', () => {
+      figuresRef.current.querySelectorAll('[data-count]').forEach((el) => {
+        const end = Number(el.dataset.count) || 0;
+        const state = { v: 0 };
+        gsap.to(state, {
+          v: end,
+          duration: 0.7,
+          ease: 'power3.out',
+          onUpdate: () => { el.textContent = fmt(Math.round(state.v)); },
+          onComplete: () => { el.textContent = fmt(end); },
+        });
+      });
+    });
+    return () => mm.revert();
+  }, [loading, stats]);
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
-      {/* Responsive Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 lg:gap-6">
-        {/* Metric 1: Convenios Activos */}
-        <div className="lg:col-span-3 bg-gradient-to-br from-blue-700 to-blue-500 rounded-3xl p-6 text-white shadow-lg shadow-blue-100 flex flex-col justify-between h-40">
-          <div className="flex justify-between items-start">
-            <School size={20} className="opacity-60" />
-            <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full uppercase">Komet Insight</span>
+    <div className="space-y-8">
+      <header className="space-y-1.5">
+        <p className="k-label">Hoy</p>
+        <h1 className="font-display text-4xl font-bold leading-tight">Panel</h1>
+        <p className="text-[15px] text-ink-2">Cómo van las evaluaciones de sitios de práctica.</p>
+      </header>
+
+      <section ref={figuresRef} aria-label="Resumen" className="k-card flex flex-col md:flex-row">
+        <div className="flex-[2] p-6 md:p-8 space-y-2">
+          <p className="k-label">Evaluaciones registradas</p>
+          <p className="font-display text-6xl md:text-7xl font-bold tracking-tight leading-none" data-count={stats.totalEvaluations}>{loading ? '–' : fmt(stats.totalEvaluations)}</p>
+        </div>
+        <div className="flex-1 flex flex-row md:flex-col border-t md:border-t-0 md:border-l border-line">
+          <div className="flex-1 p-5 flex items-baseline justify-between gap-3">
+            <span className="k-label">Sitios activos</span>
+            <span className="font-display text-3xl font-bold" data-count={stats.conveniosActive}>{loading ? '–' : fmt(stats.conveniosActive)}</span>
           </div>
-          <div>
-            <h3 className="text-3xl font-black">{stats.conveniosActive}</h3>
-            <p className="text-xs font-medium opacity-80 uppercase tracking-widest mt-1">Convenios Activos</p>
+          <div className="flex-1 p-5 flex items-baseline justify-between gap-3 border-l md:border-l-0 md:border-t border-line">
+            <span className="k-label">En práctica</span>
+            <span className="font-display text-3xl font-bold" data-count={stats.studentsInPractice}>{loading ? '–' : fmt(stats.studentsInPractice)}</span>
           </div>
         </div>
+      </section>
 
-        {/* Metric 2: Estudiantes en Práctica */}
-        <div className="lg:col-span-3 bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col justify-between h-40">
-          <div className="flex justify-between items-start">
-            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl"><GraduationCap size={20}/></div>
-            <TrendingUp size={16} className="text-emerald-500" />
-          </div>
-          <div>
-            <h3 className="text-3xl font-black text-gray-800">{stats.studentsInPractice}</h3>
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Estudiantes en Práctica</p>
-          </div>
-        </div>
-
-        {/* Metric 3: Evaluaciones Registradas */}
-        <div className="lg:col-span-6 bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex items-center space-x-8 overflow-hidden">
-          <div className="flex-1">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Evaluaciones registradas</p>
-            <h3 className="text-4xl font-black text-blue-600">{stats.totalEvaluations}</h3>
-            <p className="text-sm text-gray-500 mt-3">Datos actualizados desde Supabase y reflejados en tiempo real.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Table & Alerts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Recent Activity Table */}
-        <div className="lg:col-span-8 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-6 py-5 border-b border-gray-50 flex justify-between items-center bg-gray-50/20">
-            <h3 className="font-bold text-gray-800 flex items-center space-x-2 text-sm uppercase tracking-tight">
-              <Clock size={16} className="text-blue-500" />
-              <span>Flujo de Evaluaciones</span>
-            </h3>
-            <button className="text-blue-600 text-[10px] font-black uppercase tracking-widest hover:underline">Ver Reporte Full</button>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <section className="lg:col-span-8 k-card overflow-hidden">
+          <div className="px-5 py-4 flex items-center justify-between">
+            <h2 className="font-display text-xl font-bold">Evaluaciones recientes</h2>
+            <button type="button" onClick={() => onNavigate?.('reportes')} className="text-sm font-semibold text-blue-600 hover:text-blue-700">Ver informe</button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
-                <tr>
-                  <th className="px-6 py-4">Estudiante</th>
-                  <th className="px-6 py-4 hidden md:table-cell">Campus</th>
-                  <th className="px-6 py-4">Puntaje</th>
-                  <th className="px-6 py-4">Estado</th>
-                  <th className="px-6 py-4 text-center">...</th>
+            <table className="w-full text-left min-w-[480px]">
+              <thead>
+                <tr className="bg-paper/60">
+                  <th className="k-label px-5 py-2.5">Evaluado</th>
+                  <th className="k-label px-5 py-2.5 hidden md:table-cell">Sitio</th>
+                  <th className="k-label px-5 py-2.5">Estado</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="text-sm">
                 {loading ? (
-                  <tr>
-                    <td colSpan="5" className="px-6 py-8 text-center text-gray-500">Cargando evaluaciones...</td>
-                  </tr>
+                  <tr><td colSpan="3" className="px-5 py-8 text-center text-ink-2">Cargando evaluaciones…</td></tr>
                 ) : recentEvals.length ? (
                   recentEvals.map((item) => (
-                    <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                            {item.name.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-gray-800">{item.name}</p>
-                            <p className="text-[10px] text-gray-400">{item.program}</p>
-                          </div>
-                        </div>
+                    <tr key={item.id} className="border-t border-line hover:bg-paper/60 transition-colors">
+                      <td className="px-5 py-3.5">
+                        <p className="font-semibold">{item.name}</p>
+                        <p className="text-xs text-ink-2">{item.program}</p>
                       </td>
-                      <td className="px-6 py-4 text-[11px] text-gray-500 font-medium hidden md:table-cell">{item.center}</td>
-                      <td className="px-6 py-4 text-xs font-bold text-gray-700">{item.score}</td>
-                      <td className="px-6 py-4">
-                        <StatusBadge status={item.status} />
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <button className="text-gray-300 hover:text-blue-600"><MoreVertical size={16} /></button>
-                      </td>
+                      <td className="px-5 py-3.5 text-ink-2 hidden md:table-cell">{item.center}</td>
+                      <td className="px-5 py-3.5"><StatusBadge status={item.status} /></td>
                     </tr>
                   ))
                 ) : (
-                  <tr>
-                    <td colSpan="5" className="px-6 py-8 text-center text-gray-500">No hay evaluaciones recientes disponibles.</td>
-                  </tr>
+                  <tr><td colSpan="3" className="px-5 py-8 text-center text-ink-2">Todavía no hay evaluaciones recientes.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
 
-        {/* Sidebar Alertas / Info */}
-        <div className="lg:col-span-4 space-y-6">
-          <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex flex-col space-y-4">
-            <h3 className="font-bold text-gray-800 flex items-center space-x-2">
-              <AlertCircle size={18} className="text-amber-500" />
-              <span>Alertas de Komet</span>
-            </h3>
-            <div className="space-y-3">
-              {[
-                { title: 'Convenios activos', detail: `${stats.conveniosActive}`, type: 'info' },
-                { title: 'Estudiantes en práctica', detail: `${stats.studentsInPractice}`, type: 'warning' },
-                { title: 'Evaluaciones registradas', detail: `${stats.totalEvaluations}`, type: 'success' }
-              ].map((item, i) => (
-                <div key={i} className={`p-3 rounded-2xl border flex items-start space-x-3 ${
-                  item.type === 'danger' ? 'bg-red-50 border-red-100' : 
-                  item.type === 'warning' ? 'bg-amber-50 border-amber-100' : item.type === 'success' ? 'bg-emerald-50 border-emerald-100' : 'bg-blue-50 border-blue-100'
-                }`}>
-                  <div className={`mt-1 w-1.5 h-1.5 rounded-full ${
-                    item.type === 'danger' ? 'bg-red-500' : item.type === 'warning' ? 'bg-amber-500' : item.type === 'success' ? 'bg-emerald-500' : 'bg-blue-500'
-                  }`}></div>
-                  <div>
-                    <p className="text-[11px] font-bold text-gray-800">{item.title}</p>
-                    <p className="text-[10px] text-gray-500 uppercase">{item.detail}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-[#1a1c23] rounded-3xl p-6 text-white shadow-xl shadow-blue-900/10">
-            <div className="flex items-center space-x-2 mb-2">
-              <Rocket size={16} className="text-blue-500" />
-              <h4 className="font-bold text-sm tracking-tight">Centro de Ayuda Komet</h4>
-            </div>
-            <p className="text-[10px] text-gray-400 leading-relaxed mb-4">Optimiza tu gestión académica con nuestra documentación oficial.</p>
-            <button className="w-full bg-blue-600 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center space-x-2">
-              <FileText size={14} />
-              <span>Guía de Usuario</span>
+        <section className="lg:col-span-4 k-card p-5 space-y-1">
+          <h2 className="font-display text-xl font-bold mb-2">Ir a</h2>
+          {SHORTCUTS.map(({ id, label, hint, icon: Icon }) => (
+            <button key={id} type="button" onClick={() => onNavigate?.(id)} className="group w-full min-h-[56px] flex items-center gap-3 px-2 -mx-2 rounded-lg text-left hover:bg-paper transition-colors">
+              <span className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><Icon size={18} strokeWidth={1.8} /></span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold">{label}</span>
+                <span className="block text-xs text-ink-2 truncate">{hint}</span>
+              </span>
+              <ArrowRight size={16} className="text-ink-2 transition-transform duration-200 ease-out group-hover:translate-x-0.5" />
             </button>
-          </div>
-        </div>
+          ))}
+        </section>
       </div>
     </div>
   );

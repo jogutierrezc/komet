@@ -2,8 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  @apply antialiased;
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@layer base {
+  html {
+    font-family: 'Public Sans', system-ui, sans-serif;
+  }
+  body {
+    @apply bg-paper text-ink antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  h1, h2 {
+    font-family: 'Bricolage Grotesque', 'Public Sans', system-ui, sans-serif;
+    letter-spacing: -0.015em;
+  }
+  :focus-visible {
+    outline: 2px solid #0F6B68;
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Etiqueta pequeña en mono para metadatos */
+  .k-label {
+    @apply font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-ink-2;
+  }
+  .k-btn {
+    @apply inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-blue-600 text-white text-sm font-semibold;
+    transition: transform 160ms var(--ease-out), background-color 160ms;
+  }
+  .k-btn:active { transform: scale(0.97); }
+  .k-btn:disabled { @apply opacity-50 pointer-events-none; }
+  .k-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 h-10 px-3.5 rounded-lg border border-line-strong bg-white text-ink text-sm font-semibold;
+    transition: transform 160ms var(--ease-out), background-color 160ms;
+  }
+  .k-btn-secondary:active { transform: scale(0.97); }
+  .k-input {
+    @apply w-full h-12 px-3.5 rounded-lg border border-line-strong bg-white text-base font-medium text-ink;
+  }
+  .k-input:focus { outline: 2px solid #0F6B68; outline-offset: 1px; border-color: #0F6B68; }
+  .k-card {
+    @apply bg-white border border-line rounded-xl;
+  }
+  .k-pill {
+    @apply inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-xs font-semibold;
+  }
+  .k-pill-high { @apply bg-score-high-bg text-score-high-fg; }
+  .k-pill-mid { @apply bg-score-mid-bg text-score-mid-fg; }
+  .k-pill-low { @apply bg-score-low-bg text-score-low-fg; }
 }
 
 /* Custom Scrollbar */
@@ -22,4 +71,26 @@
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* Entrada de cada módulo al cambiar de sección */
+@keyframes k-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.k-enter { animation: k-enter 220ms var(--ease-out); }
+
+/* Panel lateral de detalle: entra 24 px desde la derecha */
+@keyframes k-slide-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+.k-slide-in { animation: k-slide-in 220ms var(--ease-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

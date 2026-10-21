@@ -21,7 +21,7 @@ export default function App({ onLogout }) {
   const renderContent = () => {
     switch(activeTab) {
       case 'dashboard':
-        return <Dashboard />;
+        return <Dashboard onNavigate={setActiveTab} />;
       case 'convenios':
         return <Convenios />;
       case 'estudiantes':
@@ -33,19 +33,19 @@ export default function App({ onLogout }) {
       case 'reportes':
         return <Reportes />;
       case 'estadistica':
-        return <Estadistica />;
+        return <Estadistica onNavigate={setActiveTab} />;
       case 'presenta':
-        return <KometPresenta />;
+        return <KometPresenta onNavigate={setActiveTab} />;
       case 'sistema':
         return <Sistema />;
       default:
-        return <Dashboard />;
+        return <Dashboard onNavigate={setActiveTab} />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] flex font-sans text-gray-800 relative overflow-x-hidden">
-      
+    <div className="min-h-screen bg-paper flex font-sans text-ink relative overflow-x-hidden">
+
       {/* SIDEBAR */}
       <Sidebar 
         activeTab={activeTab} 
@@ -59,18 +59,15 @@ export default function App({ onLogout }) {
 
       {/* MAIN CONTENT AREA */}
       <main className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
-        isCollapsed ? 'lg:ml-20' : 'lg:ml-64'
+        isCollapsed ? 'lg:ml-20' : 'lg:ml-[248px]'
       }`}>
         
         {/* TOPBAR */}
-        <Topbar 
-          activeTab={activeTab}
-          toggleMobileMenu={toggleMobileMenu}
-        />
+        <Topbar activeTab={activeTab} />
 
         {/* PAGE CONTENT */}
-        <section className="p-4 lg:p-8">
-          <div className="max-w-7xl mx-auto">
+        <section className="p-4 pb-24 lg:p-10 lg:pb-10">
+          <div key={activeTab} className="max-w-7xl mx-auto k-enter">
             {renderContent()}
           </div>
         </section>
