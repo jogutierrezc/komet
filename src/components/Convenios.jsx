@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Upload, Download, Pencil, Trash2, Ban, Search, X, ChevronRight, ClipboardCheck, Building2, MapPin, Image as ImageIcon, RotateCw } from 'lucide-react';
-import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio, getRotationsByConvenio, createRotation, deleteRotation } from '../lib/data';
+import { Plus, Upload, Download, Pencil, Trash2, Ban, Search, X, ChevronRight, ClipboardCheck, Building2, MapPin, Image as ImageIcon, RotateCw, Sparkles } from 'lucide-react';
+import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio, getRotationsByConvenio, createRotation, deleteRotation, getSystemSettings, runMistralPrompt } from '../lib/data';
 import { parseFile } from '../lib/importHelpers';
 
 export default function Convenios() {
@@ -14,6 +14,8 @@ export default function Convenios() {
   const [convenioRotations, setConvenioRotations] = useState([]);
   const [rotationSaving, setRotationSaving] = useState(false);
   const [rotationForm, setRotationForm] = useState({ name: '', number: '', type: '', program: '' });
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [campuses, setCampuses] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -296,6 +298,7 @@ export default function Convenios() {
     setDetailLoading(true);
     setConvenioRotations([]);
     setRotationForm({ name: '', number: '', type: '', program: '' });
+    setAiSuggestions([]);
     try {
       const [students, professors, rotations] = await Promise.all([
         getStudentsByConvenio(convenio.id),
@@ -354,6 +357,102 @@ export default function Convenios() {
     } catch (error) {
       console.error(error);
       setErrorMessage('No se pudo eliminar la rotación.');
+    }
+  };
+
+  // Sugerencia de rotaciones con Mistral, usando la misma configuración de
+  // Sistema > Configuración API (API key, modelo y temperature de Mistral).
+  const handleGenerateRotationsWithAI = async () => {
+    if (!selectedConvenio) return;
+    setAiLoading(true);
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      const settings = await getSystemSettings();
+      const apiKey = String(settings?.mistral_api_key || '').trim();
+      if (!apiKey) {
+        setErrorMessage('Configura la API key de Mistral en Sistema > Configuración de Mistral AI antes de generar rotaciones.');
+        return;
+      }
+
+      const templateStructure = {
+        rotaciones: [
+          { nombre: 'Cirugía', numero: 1, tipo: 'Asistencial', programa: null }
+        ]
+      };
+
+      const prompt = 'Genera el catálogo de rotaciones de práctica formativa de un sitio de práctica para programas de salud (Medicina, Enfermería, Fisioterapia, Psicología, entre otros).\n\n' +
+        'Devuelve exclusivamente JSON con esta estructura exacta:\n' +
+        JSON.stringify(templateStructure, null, 2) +
+        '\n\nReglas:\n' +
+        '- Entre 6 y 12 rotaciones típicas de ese tipo de sitio, con numero secuencial desde 1.\n' +
+        '- nombre: área, servicio o escenario donde rota el estudiante.\n' +
+        '- tipo: clasificación de la rotación (ej: Asistencial, Comunitaria, Docente-asistencial, Simulación).\n' +
+        '- programa: nombre del programa al que aplica la rotación, o null si aplica a todos.\n' +
+        '- No repitas rotaciones que ya existen en el sitio.\n' +
+        '\nSitio de práctica:\n' +
+        JSON.stringify({
+          nombre: selectedConvenio.name,
+          tipo: selectedConvenio.type,
+          direccion: selectedConvenio.address,
+          campus: selectedConvenio.campus?.name || null,
+          rotacionesExistentes: convenioRotations.map((rotation) => rotation.name)
+        });
+
+      const raw = await runMistralPrompt({
+        apiKey,
+        model: settings?.mistral_model,
+        systemPrompt: settings?.mistral_system_prompt,
+        temperature: Number(settings?.mistral_temperature ?? 0.3),
+        prompt
+      });
+
+      const suggestions = parseRotationSuggestions(raw, convenioRotations);
+      if (!suggestions.length) {
+        setErrorMessage('Mistral no devolvió rotaciones válidas. Intenta de nuevo o agrégalas manualmente.');
+        return;
+      }
+      setAiSuggestions(suggestions.map((item) => ({ ...item, selected: true })));
+      setStatusMessage(`Mistral sugirió ${suggestions.length} rotación(es). Revisa y agrega las que apliquen.`);
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(error?.message || 'No fue posible generar rotaciones con Mistral.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAddSuggestedRotations = async () => {
+    if (!selectedConvenio) return;
+    const selected = aiSuggestions.filter((item) => item.selected);
+    if (!selected.length) {
+      setErrorMessage('Selecciona al menos una rotación sugerida.');
+      return;
+    }
+    setRotationSaving(true);
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      for (const item of selected) {
+        await createRotation({
+          convenio_id: selectedConvenio.id,
+          name: item.name,
+          number: item.number,
+          type: item.type,
+          program: item.program
+        });
+      }
+      const rotations = await getRotationsByConvenio(selectedConvenio.id, { onlyActive: false });
+      setConvenioRotations(rotations);
+      setAiSuggestions([]);
+      setStatusMessage(`Se agregaron ${selected.length} rotación(es) a ${selectedConvenio.name}.`);
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(error?.code === '23505'
+        ? 'Una de las rotaciones sugeridas ya existe en este sitio.'
+        : 'No se pudieron guardar las rotaciones sugeridas.');
+    } finally {
+      setRotationSaving(false);
     }
   };
 
@@ -708,6 +807,49 @@ export default function Convenios() {
                   <Plus size={16} /> {rotationSaving ? 'Guardando…' : 'Agregar rotación'}
                 </button>
               </form>
+
+              <div className="space-y-2.5 border-t border-line pt-3">
+                <button
+                  type="button"
+                  onClick={handleGenerateRotationsWithAI}
+                  disabled={aiLoading}
+                  className="k-btn-secondary disabled:opacity-60 !h-10 w-full"
+                >
+                  <Sparkles size={16} /> {aiLoading ? 'Generando con Mistral…' : 'Generar rotaciones con IA (Mistral)'}
+                </button>
+                <p className="text-xs text-ink-2">
+                  Mistral propone el catálogo de rotaciones según el tipo de sitio. Revisa las sugerencias y agrega las que apliquen.
+                </p>
+                {aiSuggestions.length ? (
+                  <div className="space-y-2">
+                    <p className="k-label">Sugerencias de Mistral</p>
+                    {aiSuggestions.map((item, index) => (
+                      <label key={`${item.name}-${index}`} className="flex items-start gap-2 border border-line-strong rounded-lg px-3 py-2 text-sm cursor-pointer hover:bg-paper/60">
+                        <input
+                          type="checkbox"
+                          checked={!!item.selected}
+                          onChange={(e) => setAiSuggestions((prev) => prev.map((suggestion, i) => i === index ? { ...suggestion, selected: e.target.checked } : suggestion))}
+                          className="mt-0.5 rounded"
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-semibold">{item.name}</span>
+                          <span className="block text-xs text-ink-2">
+                            {[item.number ? `No. ${item.number}` : null, item.type, item.program ? `Programa: ${item.program}` : null].filter(Boolean).join(' · ') || 'Sin clasificación'}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={handleAddSuggestedRotations}
+                      disabled={rotationSaving}
+                      className="k-btn disabled:opacity-60 !h-10 w-full"
+                    >
+                      {rotationSaving ? 'Guardando…' : `Agregar seleccionadas (${aiSuggestions.filter((item) => item.selected).length})`}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div className="space-y-2.5">
@@ -754,6 +896,54 @@ export default function Convenios() {
       </div>
     </div>
   );
+}
+
+// Extrae de forma tolerante la lista de rotaciones que devuelve Mistral
+// (acepta JSON puro, JSON en bloque de código o un array embebido) y descarta
+// las que ya existen en el sitio.
+function parseRotationSuggestions(rawText = '', existingRotations = []) {
+  const text = String(rawText || '').trim();
+  if (!text) return [];
+
+  const fromFence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  let candidate = (fromFence || text).trim();
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    const start = candidate.indexOf('[');
+    const end = candidate.lastIndexOf(']');
+    if (start >= 0 && end > start) {
+      try {
+        parsed = JSON.parse(candidate.slice(start, end + 1));
+      } catch {
+        parsed = null;
+      }
+    }
+  }
+
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.rotaciones)
+    ? parsed.rotaciones
+    : Array.isArray(parsed?.rotations)
+    ? parsed.rotations
+    : [];
+
+  const existingNames = new Set(existingRotations.map((rotation) => String(rotation.name || '').trim().toLowerCase()));
+
+  return list
+    .map((item) => {
+      const numberValue = Number(item?.numero ?? item?.number);
+      return {
+        name: String(item?.nombre || item?.name || '').trim(),
+        number: Number.isFinite(numberValue) && numberValue > 0 ? numberValue : null,
+        type: String(item?.tipo || item?.type || '').trim() || null,
+        program: String(item?.programa || item?.program || '').trim() || null
+      };
+    })
+    .filter((item) => item.name && !existingNames.has(item.name.toLowerCase()));
 }
 
 const IconButton = ({ label, danger, onClick, children }) => (

@@ -10,6 +10,7 @@ import Reportes from './components/Reportes';
 import Estadistica from './components/Estadistica';
 import KometPresenta from './components/KometPresenta';
 import Sistema from './components/Sistema';
+import Periodos from './components/Periodos';
 
 export default function App({ onLogout }) {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -29,7 +30,9 @@ export default function App({ onLogout }) {
       case 'profesores':
         return <Profesores />;
       case 'evaluaciones':
-        return <Evaluaciones />;
+        return <Evaluaciones onNavigate={setActiveTab} />;
+      case 'periodos':
+        return <Periodos onNavigate={setActiveTab} />;
       case 'reportes':
         return <Reportes />;
       case 'estadistica':

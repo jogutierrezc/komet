@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Check, Copy, Eye, Link2, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Check, Copy, Eye, Link2, Loader2, Lock, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { parseDescription, toTree, QUESTION_TYPES } from './surveyModel';
 
 const TARGET_FILTERS = ['Todos', 'Estudiante', 'Profesor', 'Coordinador'];
@@ -15,11 +15,18 @@ const formatDate = (value) => {
   return Number.isNaN(d.getTime()) ? '–' : d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-export default function SurveyList({ surveys, loading, error, notice, campuses, onNew, onEdit, onPreview, onDuplicate, onCopyLink, onDelete }) {
+export default function SurveyList({ surveys, loading, error, notice, campuses, periods = [], onOpenPeriods, onNew, onEdit, onPreview, onDuplicate, onCopyLink, onDelete }) {
   const [query, setQuery] = useState('');
   const [target, setTarget] = useState('Todos');
   const [campus, setCampus] = useState('');
   const [copiedId, setCopiedId] = useState(null);
+  const hasPeriods = periods.length > 0;
+  const openPeriodRow = periods.find((p) => p.status === 'abierto') || null;
+  const [periodId, setPeriodId] = useState('');
+  const [periodTouched, setPeriodTouched] = useState(false);
+  // Por defecto se ven los formularios del período abierto; el histórico se elige a propósito.
+  useEffect(() => { if (!periodTouched) setPeriodId(openPeriodRow ? String(openPeriodRow.id) : ''); }, [openPeriodRow, periodTouched]);
+  const periodOf = (survey) => periods.find((p) => String(p.id) === String(survey.period_id)) || null;
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -31,10 +38,11 @@ export default function SurveyList({ surveys, loading, error, notice, campuses, 
     return surveys.filter((s) => {
       if (target !== 'Todos' && s.target_type !== target) return false;
       if (campus && String(s.campus_id) !== String(campus)) return false;
+      if (hasPeriods && periodId && String(s.period_id) !== periodId) return false;
       if (!q) return true;
       return `${s.title || ''} ${s.description || ''}`.toLowerCase().includes(q);
     });
-  }, [surveys, query, target, campus]);
+  }, [surveys, query, target, campus, periodId, hasPeriods]);
 
   async function copy(survey) {
     const ok = await onCopyLink(survey.id);
@@ -66,12 +74,24 @@ export default function SurveyList({ surveys, loading, error, notice, campuses, 
 
       {notice ? <div role="status" className="rounded-lg bg-score-high-bg text-score-high-fg px-4 py-3 text-sm font-medium">{notice}</div> : null}
       {error ? <div role="alert" className="rounded-lg bg-score-low-bg text-score-low-fg px-4 py-3 text-sm font-medium">{error}</div> : null}
+      {hasPeriods && !openPeriodRow ? (
+        <div role="status" className="rounded-lg bg-score-mid-bg text-score-mid-fg px-4 py-3 text-sm font-medium flex flex-wrap items-center gap-x-4 gap-y-1">
+          No hay un período abierto: los enlaces públicos no reciben respuestas.
+          <button type="button" onClick={onOpenPeriods} className="font-semibold underline underline-offset-2">Abrir un período</button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 h-10 w-full sm:w-72 px-3 rounded-lg border border-line-strong bg-white text-sm text-ink-2 focus-within:border-blue-600">
           <Search size={16} aria-hidden="true" />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nombre" aria-label="Buscar formulario" className="flex-1 min-w-0 bg-transparent outline-none text-ink placeholder:text-ink-2" />
         </label>
+        {hasPeriods ? (
+          <select aria-label="Período" value={periodId} onChange={(e) => { setPeriodTouched(true); setPeriodId(e.target.value); }} className="k-input !h-10 !w-auto !text-sm">
+            <option value="">Todos los períodos</option>
+            {periods.map((p) => <option key={p.id} value={p.id}>{p.code}{p.status === 'abierto' ? ' · abierto' : ''}</option>)}
+          </select>
+        ) : null}
         <select aria-label="Campus" value={campus} onChange={(e) => setCampus(e.target.value)} className="k-input !h-10 !w-auto !text-sm">
           <option value="">Todos los campus</option>
           {campuses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -108,25 +128,27 @@ export default function SurveyList({ surveys, loading, error, notice, campuses, 
               <tbody className="text-sm">
                 {rows.map((s) => {
                   const meta = parseDescription(s.description);
+                  const period = periodOf(s);
+                  const locked = period?.status === 'cerrado';
                   return (
-                    <tr key={s.id} onClick={() => onEdit(s)} className="border-t border-line cursor-pointer hover:bg-paper/60 transition-colors">
+                    <tr key={s.id} onClick={() => (locked ? onPreview(s) : onEdit(s))} className="border-t border-line cursor-pointer hover:bg-paper/60 transition-colors">
                       <td className="px-4 py-3.5">
                         <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(s); }} className="text-left">
-                          <span className="block font-semibold leading-tight">{s.title || 'Sin nombre'}</span>
+                          <span className="block font-semibold leading-tight">{s.title || 'Sin nombre'}{locked ? <Lock size={13} className="inline ml-1.5 -mt-0.5 text-ink-2" aria-label="Período cerrado" /> : null}</span>
                           <span className="block text-xs text-ink-2 mt-0.5">{campusName(s.campus_id)}{meta.escenario && meta.escenario !== 'Todos' ? ` · ${meta.escenario}` : ''}</span>
                         </button>
                       </td>
                       <td className="px-4 py-3.5"><span className="k-pill bg-paper text-ink">{s.target_type}</span></td>
-                      <td className="px-4 py-3.5 text-ink-2 hidden lg:table-cell">{meta.programa || '–'}{meta.periodo ? <span className="font-mono text-xs"> · {meta.periodo}</span> : null}</td>
+                      <td className="px-4 py-3.5 text-ink-2 hidden lg:table-cell">{meta.programa || '–'}{period ? <span className="font-mono text-xs"> · {period.code}</span> : meta.periodo ? <span className="font-mono text-xs"> · {meta.periodo}</span> : null}</td>
                       <td className="px-4 py-3.5 text-right font-mono">{countQuestions(s)}</td>
                       <td className="px-4 py-3.5 text-ink-2 hidden md:table-cell">{formatDate(s.updated_at || s.created_at)}</td>
                       <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end">
-                          <RowBtn label="Editar" onClick={() => onEdit(s)}><Pencil size={16} /></RowBtn>
+                          {locked ? null : <RowBtn label="Editar" onClick={() => onEdit(s)}><Pencil size={16} /></RowBtn>}
                           <RowBtn label="Previsualizar" onClick={() => onPreview(s)}><Eye size={16} /></RowBtn>
                           <RowBtn label={copiedId === s.id ? 'Enlace copiado' : 'Copiar enlace público'} onClick={() => copy(s)}>{copiedId === s.id ? <Check size={16} className="text-score-high-fg" /> : <Link2 size={16} />}</RowBtn>
                           <RowBtn label="Duplicar" onClick={() => onDuplicate(s)}><Copy size={16} /></RowBtn>
-                          <RowBtn label="Eliminar" danger onClick={() => { setDeleteError(''); setToDelete(s); }}><Trash2 size={16} /></RowBtn>
+                          {locked ? null : <RowBtn label="Eliminar" danger onClick={() => { setDeleteError(''); setToDelete(s); }}><Trash2 size={16} /></RowBtn>}
                         </div>
                       </td>
                     </tr>

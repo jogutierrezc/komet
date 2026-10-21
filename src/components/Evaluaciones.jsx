@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { getCampuses, getSurveys, createSurvey, updateSurvey, deleteSurvey } from '../lib/data';
+import { getCampuses, getPeriods, getSurveys, createSurvey, updateSurvey, deleteSurvey } from '../lib/data';
 import EvaluacionesFormPreview from './EvaluacionesFormPreview';
 import SurveyList from './evaluaciones/SurveyList';
 import SurveyEditor from './evaluaciones/SurveyEditor';
 import { cloneItems, draftFromSurvey, emptyDraft, publicLink, surveyPayload } from './evaluaciones/surveyModel';
 
 // Orquesta lista, editor y vista previa. La lógica de formularios vive en ./evaluaciones.
-export default function Evaluaciones() {
+export default function Evaluaciones({ onNavigate }) {
   const [view, setView] = useState('list'); // 'list' | 'editor'
   const [surveys, setSurveys] = useState([]);
   const [campuses, setCampuses] = useState([]);
+  const [periods, setPeriods] = useState([]); // vacío si aún no se aplicó la migración de períodos
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -18,9 +19,10 @@ export default function Evaluaciones() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([getCampuses(), getSurveys()]).then(([c, s]) => {
+    Promise.allSettled([getCampuses(), getSurveys(), getPeriods()]).then(([c, s, p]) => {
       if (cancelled) return;
       if (c.status === 'fulfilled') setCampuses(c.value || []);
+      if (p.status === 'fulfilled' && p.value?.available) setPeriods(p.value.periods || []);
       if (s.status === 'fulfilled') setSurveys(s.value || []);
       else setLoadError('No se pudieron cargar los formularios. Revisa la conexión e intenta de nuevo.');
       setLoading(false);
@@ -36,12 +38,25 @@ export default function Evaluaciones() {
 
   const defaultCampus = campuses[0] ? String(campuses[0].id) : '';
 
+  const openPeriodRow = periods.find((p) => p.status === 'abierto') || null;
+
   const openNew = () => {
+    if (periods.length && !openPeriodRow) {
+      setLoadError('Abre un período antes de crear formularios: no hay ninguno abierto.');
+      return;
+    }
+    setLoadError('');
     setEditing({ surveyId: null, draft: emptyDraft(defaultCampus) });
     setView('editor');
   };
 
+  const isClosed = (survey) => periods.find((p) => String(p.id) === String(survey.period_id))?.status === 'cerrado';
+
   const openEdit = (survey) => {
+    if (isClosed(survey)) {
+      setPreview(survey);
+      return;
+    }
     setEditing({ surveyId: survey.id, draft: draftFromSurvey(survey) });
     setView('editor');
   };
@@ -126,6 +141,8 @@ export default function Evaluaciones() {
       error={loadError}
       notice={notice}
       campuses={campuses}
+      periods={periods}
+      onOpenPeriods={() => onNavigate?.('periodos')}
       onNew={openNew}
       onEdit={openEdit}
       onPreview={(survey) => setPreview(survey)}

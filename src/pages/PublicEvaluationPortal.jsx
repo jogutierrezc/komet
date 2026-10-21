@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, User, UserCheck, GraduationCap, Building2, Calendar, AlertCircle, Fingerprint } from 'lucide-react';
 import KometMark from '../components/shared/KometMark';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
-import { getConveniosByCampus, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail, getRotationsByConvenio } from '../lib/data';
+import { getConveniosByCampus, resolveSharedSurvey, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail, getRotationsByConvenio } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
   const [searchParams] = useSearchParams();
@@ -13,6 +13,8 @@ export default function PublicEvaluationPortal() {
   const [userId, setUserId] = useState('');
   const [userData, setUserData] = useState(null);
   const [sharedSurvey, setSharedSurvey] = useState(null);
+  const [sharedPeriod, setSharedPeriod] = useState(null); // período del formulario que se está respondiendo
+  const [closedPeriod, setClosedPeriod] = useState(null);
   const [publicRespondent, setPublicRespondent] = useState({
     email: '',
     program_level: 'Pregrado',
@@ -93,6 +95,7 @@ export default function PublicEvaluationPortal() {
   };
 
   const getCurrentAcademicPeriod = () => {
+    if (sharedSurveyId && sharedPeriod?.code) return sharedPeriod.code;
     const now = new Date();
     const year = now.getFullYear();
     return `${year}-${now.getMonth() < 6 ? 'A' : 'B'}`;
@@ -108,7 +111,16 @@ export default function PublicEvaluationPortal() {
       setError('');
 
       try {
-        const survey = await getSurveyById(sharedSurveyId);
+        // El enlace sirve siempre a la copia del formulario que está en el período abierto.
+        const resolved = await resolveSharedSurvey(sharedSurveyId);
+        if (resolved.state === 'closed') {
+          if (!cancelled) {
+            setClosedPeriod(resolved.period || {});
+            setView('closed');
+          }
+          return;
+        }
+        const survey = resolved.survey;
         if (!survey) {
           if (!cancelled) {
             setError('El enlace público no corresponde a una evaluación válida o fue desactivado.');
@@ -119,6 +131,7 @@ export default function PublicEvaluationPortal() {
 
         if (!cancelled) {
           setSharedSurvey(survey);
+          setSharedPeriod(resolved.period || null);
           setSelectedSurvey(survey);
           setSurveys([survey]);
           const availableCenters = await loadAvailableCenters(survey.campus_id || null);
@@ -380,6 +393,7 @@ export default function PublicEvaluationPortal() {
               const createdEvaluation = await createEvaluationWithResponses(
                 {
                   survey_id: selectedSurvey.id,
+                  period_id: selectedSurvey.period_id || null,
                   campus_id: selectedSurvey.campus_id || userData?.campus_id || null,
                   center_id: selectedCenterId || userData?.practice_center_id || null,
                   rotation_id: rotation.id && rotation.id !== '__other__' ? rotation.id : null,
@@ -467,6 +481,18 @@ export default function PublicEvaluationPortal() {
           <h1 className="font-display text-3xl font-bold">No hay formulario disponible</h1>
           <p className="text-ink-2">No se encontró ningún formulario activo para el usuario. Regresa e intenta nuevamente.</p>
           <button type="button" onClick={() => setView('ready')} className="k-btn self-start !h-12">Volver</button>
+        </div>
+      </PortalShell>
+    );
+  }
+
+  if (view === 'closed') {
+    return (
+      <PortalShell>
+        <div className="flex-1 flex flex-col justify-center gap-4 py-16">
+          <span className="k-pill bg-paper text-ink self-start">{closedPeriod?.code ? `Período ${closedPeriod.code}` : 'Período cerrado'}</span>
+          <h1 className="font-display text-4xl font-bold leading-tight">Esta evaluación está cerrada</h1>
+          <p className="text-base leading-relaxed text-ink-2">Ya no se reciben respuestas. Cuando se abra un nuevo período, este mismo enlace volverá a funcionar. Si crees que es un error, consulta con quien te lo compartió.</p>
         </div>
       </PortalShell>
     );

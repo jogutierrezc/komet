@@ -25,6 +25,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
   const add = (slide) => slides.push({ include: true, notes: '', bullets: [], ...slide });
 
   const filtersLine = [
+    filters.period && filters.period !== 'Todos' ? `Período ${filters.period}` : 'Todos los períodos',
     filters.campus !== 'Todos' ? filters.campus : 'Todas las sedes',
     filters.level !== 'Todos' ? filters.level : 'Pregrado y posgrado',
     filters.center !== 'Todos' ? filters.center : 'Todos los centros',

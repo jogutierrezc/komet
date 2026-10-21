@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Download, Printer, Eye, Code2, Sparkles } from 'lucide-react';
 import { useBasket, addCapture } from '../lib/presentationBasket';
+import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt, getProgramsByCampus } from '../lib/data';
 import { getRowCenter, normalizeCenterName } from '../utils/dataHelpers';
 import { NIVELES_COMPLEJIDAD } from '../lib/informe/algoritmo0273';
@@ -1022,6 +1023,8 @@ export default function Reportes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rows, setRows] = useState([]);
+  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  useEffect(() => { clearInitialPeriod(); }, []);
   const [settings, setSettings] = useState(null);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
   const [selectedRole, setSelectedRole] = useState('Todos');
@@ -1119,12 +1122,14 @@ export default function Reportes() {
     return [...combined].sort((a, b) => a.localeCompare(b, 'es'));
   }, [levelFilteredDbPrograms, rows, selectedCampus, selectedLevel, validProgramNamesForLevel]);
 
+  const periodOptions = useMemo(() => periodOptionsFrom(rows), [rows]);
   const campusRows = useMemo(() => {
     return rows.filter((row) => {
+      if (!matchesPeriod(row, selectedPeriod)) return false;
       if (selectedCampus !== 'Todos' && normalizeText(row.campus) !== selectedCampus) return false;
       return true;
     });
-  }, [rows, selectedCampus]);
+  }, [rows, selectedPeriod, selectedCampus]);
 
   const roleRows = useMemo(() => {
     return campusRows.filter((row) => {
@@ -1422,7 +1427,7 @@ ${JSON.stringify(compactDataset)}
     );
   }
 
-  const filterSummary = { campus: selectedCampus, rol: selectedRole, nivel: selectedLevel, programa: selectedProgram, centro: selectedCenter, combinarCentros: combineSimilarCenters };
+  const filterSummary = { periodo: selectedPeriod, campus: selectedCampus, rol: selectedRole, nivel: selectedLevel, programa: selectedProgram, centro: selectedCenter, combinarCentros: combineSimilarCenters };
   const sentToPresenta = basket.filter((c) => c.source === 'informe').length;
 
   // Guarda datos del informe (no el HTML) para que Presenta cree tablas y gráficos nativos.
@@ -1511,6 +1516,13 @@ ${JSON.stringify(compactDataset)}
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <aside aria-label="Filtros del informe" className="k-card p-5 space-y-5 w-full lg:w-[272px] lg:shrink-0 lg:sticky lg:top-20">
           <h2 className="font-display text-lg font-bold">Qué incluir</h2>
+
+          <div className="space-y-2">
+            <label htmlFor="inf-period" className="k-label block">Período</label>
+            <select id="inf-period" className="k-input !h-10 !text-sm" value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)}>
+              {periodOptions.map((p) => <option key={p} value={p}>{p === 'Todos' ? 'Todos los períodos' : p}</option>)}
+            </select>
+          </div>
 
           <div className="space-y-2">
             <label htmlFor="inf-campus" className="k-label block">Campus</label>

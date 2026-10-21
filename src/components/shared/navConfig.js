@@ -8,6 +8,7 @@ import {
   LineChart,
   Presentation,
   Settings,
+  CalendarRange,
 } from 'lucide-react';
 
 // Los ids son los mismos que usa App.jsx para elegir el módulo.
@@ -21,7 +22,13 @@ export const NAV_GROUPS = [
       { id: 'profesores', label: 'Profesores', icon: UserCheck },
     ],
   },
-  { label: 'Evaluación', items: [{ id: 'evaluaciones', label: 'Formularios', icon: ClipboardCheck }] },
+  {
+    label: 'Evaluación',
+    items: [
+      { id: 'evaluaciones', label: 'Formularios', icon: ClipboardCheck },
+      { id: 'periodos', label: 'Períodos', icon: CalendarRange },
+    ],
+  },
   {
     label: 'Análisis',
     items: [

@@ -469,6 +469,75 @@ export async function getSurveys() {
   return data || [];
 }
 
+// ── Períodos de evaluación ───────────────────────────────────────────────────
+// Requieren la migración db/evaluation_periods.sql. Si aún no se aplicó, `available` es false y el resto
+// de la app sigue funcionando como antes (sin períodos).
+
+const isMissingPeriodsTable = (error) =>
+  error && (error.code === '42P01' || error.code === 'PGRST205' || /evaluation_period/i.test(error.message || ''));
+
+export async function getPeriods() {
+  const { data, error } = await supabase
+    .from('evaluation_periods')
+    .select('*')
+    .order('starts_on', { ascending: false });
+  if (error) {
+    if (isMissingPeriodsTable(error)) return { available: false, periods: [], stats: {} };
+    throw error;
+  }
+
+  const { data: statsRows } = await supabase.from('evaluation_period_stats').select('*');
+  const stats = Object.fromEntries((statsRows || []).map((row) => [row.period_id, row]));
+  return { available: true, periods: data || [], stats };
+}
+
+export async function openPeriod({ code, startsOn, endsOn, surveyIds, name, notes }) {
+  const { data, error } = await supabase.rpc('open_evaluation_period', {
+    p_code: code,
+    p_starts_on: startsOn || null,
+    p_ends_on: endsOn || null,
+    p_survey_ids: surveyIds || [],
+    p_name: name || null,
+    p_notes: notes || null
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function closePeriod(periodId) {
+  const { data, error } = await supabase.rpc('close_evaluation_period', { p_id: periodId });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Resuelve el formulario de un enlace público al del período abierto.
+ * El enlace de un formulario sigue sirviendo en los períodos siguientes porque las copias comparten `family_id`.
+ * @returns {{ state: 'open' | 'closed' | 'missing', survey: object|null, period: object|null }}
+ */
+export async function resolveSharedSurvey(surveyId) {
+  const survey = await getSurveyById(surveyId);
+  if (!survey) return { state: 'missing', survey: null, period: null };
+  if (!survey.period_id) return { state: 'open', survey, period: null }; // migración sin aplicar
+
+  const { data: period, error } = await supabase.from('evaluation_periods').select('*').eq('id', survey.period_id).maybeSingle();
+  if (error) throw error;
+  if (period?.status === 'abierto') return { state: 'open', survey, period };
+
+  const { data: sibling, error: siblingError } = await supabase
+    .from('surveys')
+    .select('*, period:period_id!inner(*)')
+    .eq('family_id', survey.family_id || survey.id)
+    .eq('period.status', 'abierto')
+    .maybeSingle();
+  if (siblingError) throw siblingError;
+  if (sibling) {
+    const { period: openPeriodRow, ...rest } = sibling;
+    return { state: 'open', survey: rest, period: openPeriodRow };
+  }
+  return { state: 'closed', survey, period };
+}
+
 export async function getSurveyById(surveyId) {
   if (!surveyId) return null;
   const { data, error } = await supabase
@@ -976,7 +1045,7 @@ function mapEvaluationItem(item) {
     status,
     created_at: item.created_at,
     completed_at: item.completed_at,
-    period: item.periodoCorte || 'No definido',
+    period: item.period?.code || item.periodoCorte || 'No definido',
     target: item.dirigidoA || item.tipoPrograma || item.estado || 'Sin definir',
     person,
     questions,
@@ -1093,6 +1162,8 @@ export async function getEvaluationReportMetrics(filters = {}) {
   const pageSize = 500;
   let allRows = [];
   let page = 0;
+  // El período sale de la relación evaluation_periods si la migración ya se aplicó; si no, del texto periodoCorte.
+  let usePeriodRelation = true;
 
   while (true) {
     const from = page * pageSize;
@@ -1107,6 +1178,7 @@ export async function getEvaluationReportMetrics(filters = {}) {
         dirigidoA,
         estado,
         periodoCorte,
+        ${usePeriodRelation ? 'period:period_id(code),' : ''}
         tipoPrograma,
         titulo,
         preguntas,
@@ -1129,6 +1201,10 @@ export async function getEvaluationReportMetrics(filters = {}) {
       .order('created_at', { ascending: false })
       .range(from, to);
 
+    if (error && usePeriodRelation && /period/i.test(`${error.message || ''} ${error.details || ''}`)) {
+      usePeriodRelation = false;
+      continue;
+    }
     if (error) throw error;
     if (!data?.length) break;
 

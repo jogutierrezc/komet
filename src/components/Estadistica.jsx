@@ -7,6 +7,7 @@ import {
   LabelList
 } from 'recharts';
 import { useBasket, toggleCapture } from '../lib/presentationBasket';
+import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download, Table2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt } from '../lib/data';
 import { calculateCenterAnalysis, calculateCrossMatrix } from '../utils/dataHelpers';
@@ -293,6 +294,8 @@ function FilterSelect({ label, value, onChange, children }) {
 export default function Estadistica({ onNavigate }) {
   const basket = useBasket();
   const [rows, setRows] = useState([]);
+  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  useEffect(() => { clearInitialPeriod(); }, []);
   const [loading, setLoading] = useState(true);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
   const [selectedLevel, setSelectedLevel] = useState('Todos');
@@ -323,8 +326,10 @@ export default function Estadistica({ onNavigate }) {
   }, []);
 
   // filtro base (campus y nivel)
+  const periodOptions = useMemo(() => periodOptionsFrom(rows), [rows]);
   const baseFiltered = useMemo(() => {
     return rows.filter((row) => {
+      if (!matchesPeriod(row, selectedPeriod)) return false;
       if (selectedCampus !== 'Todos' && norm(row.campus) !== selectedCampus) return false;
       if (selectedLevel !== 'Todos') {
         const lvl = resolveLevel(row);
@@ -332,7 +337,7 @@ export default function Estadistica({ onNavigate }) {
       }
       return true;
     });
-  }, [rows, selectedCampus, selectedLevel]);
+  }, [rows, selectedPeriod, selectedCampus, selectedLevel]);
 
   // filtro final (centro y programa)
   const filtered = useMemo(() => {
@@ -1370,7 +1375,7 @@ export default function Estadistica({ onNavigate }) {
     setIsExportingCharts(false);
   }
 
-  const filterSummary = { campus: selectedCampus, nivel: selectedLevel, centro: selectedCenter, programa: selectedProgram, combinarCentros: combineSimilarCenters };
+  const filterSummary = { periodo: selectedPeriod, campus: selectedCampus, nivel: selectedLevel, centro: selectedCenter, programa: selectedProgram, combinarCentros: combineSimilarCenters };
   const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
   const cap = (id, kind, categories, series, threshold = 3.7) => ({ id, source: 'estadistica', kind, filters: filterSummary, categories, series, threshold });
 
@@ -1418,6 +1423,9 @@ export default function Estadistica({ onNavigate }) {
 
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2">
+        <FilterSelect label="Período" value={selectedPeriod} onChange={setSelectedPeriod}>
+          {periodOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+        </FilterSelect>
         <FilterSelect label="Campus" value={selectedCampus} onChange={setSelectedCampus}>
           {campusOptions.map((c) => <option key={c} value={c}>{c}</option>)}
         </FilterSelect>

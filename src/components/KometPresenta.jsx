@@ -13,6 +13,7 @@ import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine
 import { norm, avg, stdDev, resolveProgram, resolveLevel, normalizeRoleName, getRowCenter, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
 import { parseAiPayload, buildNarrativeFallback } from '../services/aiService';
 import { useBasket, removeCapture, clearBasket } from '../lib/presentationBasket';
+import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { buildSlidePlan, buildSlideNarrativePrompt, parseSlideNarrative, applySlideNarrative, planFingerprint, LIMITS } from '../services/slidePlan';
 import { downloadDeck } from '../lib/pptDeck';
 
@@ -27,6 +28,8 @@ export default function KometPresenta({ onNavigate }) {
   const [narrativeSource, setNarrativeSource] = useState('none');
   const [templateMode, setTemplateMode] = useState('komet');
   const [rows, setRows] = useState([]);
+  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  useEffect(() => { clearInitialPeriod(); }, []);
   const [loading, setLoading] = useState(true);
   const [generatingAi, setGeneratingAi] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -98,15 +101,17 @@ export default function KometPresenta({ onNavigate }) {
     return ['Todos', ...[...new Set(names.filter(Boolean))]];
   }, [centersMeta, selectedCampus, campusIdMap]);
 
+  const periodOptions = useMemo(() => periodOptionsFrom(rows), [rows]);
   const baseFiltered = useMemo(() => {
     return rows.filter((row) => {
+      if (!matchesPeriod(row, selectedPeriod)) return false;
       if (selectedLevel !== 'Todos') {
         const level = resolveLevel(row);
         if (level && level !== selectedLevel) return false;
       }
       return true;
     });
-  }, [rows, selectedLevel]);
+  }, [rows, selectedPeriod, selectedLevel]);
 
   const programOptions = useMemo(() => {
     const source = selectedCenter === 'Todos'
@@ -228,6 +233,7 @@ export default function KometPresenta({ onNavigate }) {
   }, [filteredRows, effectiveFilteredRows]);
 
   const filters = {
+    period: selectedPeriod,
     campus: selectedCampus,
     level: selectedLevel,
     center: selectedCenter,
@@ -434,6 +440,7 @@ export default function KometPresenta({ onNavigate }) {
         <div className="w-full xl:w-[300px] xl:shrink-0 space-y-6">
           <section className="k-card p-5 space-y-4">
             <h2 className="font-display text-lg font-bold">Datos</h2>
+ <PresentaSelect id="pr-period" label="Período" value={selectedPeriod} onChange={setSelectedPeriod} options={periodOptions} />
             <PresentaSelect id="pr-campus" label="Campus" value={selectedCampus} onChange={(v) => { setSelectedCampus(v); setSelectedCenter('Todos'); }} options={campusOptions} />
             <PresentaSelect id="pr-level" label="Nivel" value={selectedLevel} onChange={setSelectedLevel} options={[['Todos', 'Todos'], ['pregrado', 'Pregrado'], ['posgrado', 'Posgrado']]} />
             <PresentaSelect id="pr-center" label="Centro" value={selectedCenter} onChange={setSelectedCenter} options={centerOptions} />
