@@ -8,7 +8,7 @@ import { NAV_GROUPS, SYSTEM_ITEM, MOBILE_TABS } from './navConfig';
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCollapsed, isMobileMenuOpen, toggleMobileMenu, onLogout }) {
+export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCollapsed, isMobileMenuOpen, toggleMobileMenu, onLogout, onPreload }) {
   const navRef = useRef(null);
   const highlightRef = useRef(null);
   const placedOnce = useRef(false);
@@ -56,7 +56,7 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
               <div key={group.label} className="space-y-1">
                 {!isCollapsed && <p className="px-3 mb-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-[#7F9BAA]">{group.label}</p>}
                 {group.items.map((item) => (
-                  <SidebarItem key={item.id} itemId={item.id} collapsed={isCollapsed} icon={item.icon} label={item.label} active={activeTab === item.id} onClick={select(item.id)} />
+                  <SidebarItem key={item.id} itemId={item.id} collapsed={isCollapsed} icon={item.icon} label={item.label} active={activeTab === item.id} onClick={select(item.id)} onPreload={() => onPreload?.(item.id)} />
                 ))}
               </div>
             ))}
@@ -74,7 +74,7 @@ export default function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCol
 
         <div className="shrink-0 px-4 pb-4 space-y-2">
           <div className="relative">
-            <SidebarItem itemId={SYSTEM_ITEM.id} collapsed={isCollapsed} icon={SYSTEM_ITEM.icon} label={SYSTEM_ITEM.label} active={activeTab === SYSTEM_ITEM.id} onClick={select(SYSTEM_ITEM.id)} solid />
+            <SidebarItem itemId={SYSTEM_ITEM.id} collapsed={isCollapsed} icon={SYSTEM_ITEM.icon} label={SYSTEM_ITEM.label} active={activeTab === SYSTEM_ITEM.id} onClick={select(SYSTEM_ITEM.id)} onPreload={() => onPreload?.(SYSTEM_ITEM.id)} solid />
           </div>
           <button type="button" onClick={onLogout} title={isCollapsed ? 'Salir' : undefined} className={`w-full h-10 flex items-center rounded-lg text-sm text-[#B9CAD2] hover:text-white hover:bg-night-2 transition-colors ${isCollapsed ? 'justify-center' : 'gap-3 px-3'}`}>
             <LogOut size={18} strokeWidth={1.8} />

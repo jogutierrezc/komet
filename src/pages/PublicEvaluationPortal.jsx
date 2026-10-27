@@ -465,8 +465,11 @@ export default function PublicEvaluationPortal() {
               if (error?.code === 'already_evaluated_center' || error?.code === '23505') {
                 setError('Ya registraste una evaluación para este sitio de práctica. Solo se permite una evaluación por sitio y por rol.');
                 setView(sharedSurveyId ? 'public-entry' : 'ready');
+              } else if (error?.code === 'P0001' && /cerrado/i.test(error?.message || '')) {
+                setError('El período de evaluación de este formulario ya está cerrado.');
               } else {
-                setError('No fue posible registrar la evaluación. Intenta nuevamente.');
+                const detail = [error?.code, error?.message].filter(Boolean).join(': ');
+                setError(`No fue posible registrar la evaluación. Intenta nuevamente.${detail ? ` (${detail})` : ''}`);
               }
             } finally {
               setIsSubmitting(false);

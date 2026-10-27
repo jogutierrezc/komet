@@ -1,16 +1,7 @@
-import React, { useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import Sidebar from './components/shared/Sidebar';
 import Topbar from './components/shared/Topbar';
-import Dashboard from './components/Dashboard';
-import Convenios from './components/Convenios';
-import Estudiantes from './components/Estudiantes';
-import Profesores from './components/Profesores';
-import Evaluaciones from './components/Evaluaciones';
-import Reportes from './components/Reportes';
-import Estadistica from './components/Estadistica';
-import KometPresenta from './components/KometPresenta';
-import Sistema from './components/Sistema';
-import Periodos from './components/Periodos';
+import { views, preload, preloadWhenIdle } from './moduleRegistry';
 
 export default function App({ onLogout }) {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -19,31 +10,16 @@ export default function App({ onLogout }) {
 
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
 
+  // Con el primer módulo ya visible, el resto se descarga en segundo plano.
+  useEffect(() => { preloadWhenIdle([activeTab]); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const renderContent = () => {
-    switch(activeTab) {
-      case 'dashboard':
-        return <Dashboard onNavigate={setActiveTab} />;
-      case 'convenios':
-        return <Convenios />;
-      case 'estudiantes':
-        return <Estudiantes />;
-      case 'profesores':
-        return <Profesores />;
-      case 'evaluaciones':
-        return <Evaluaciones onNavigate={setActiveTab} />;
-      case 'periodos':
-        return <Periodos onNavigate={setActiveTab} />;
-      case 'reportes':
-        return <Reportes />;
-      case 'estadistica':
-        return <Estadistica onNavigate={setActiveTab} />;
-      case 'presenta':
-        return <KometPresenta onNavigate={setActiveTab} />;
-      case 'sistema':
-        return <Sistema />;
-      default:
-        return <Dashboard onNavigate={setActiveTab} />;
-    }
+    const View = views[activeTab] || views.dashboard;
+    return (
+      <Suspense fallback={<PageSkeleton />}>
+        <View onNavigate={setActiveTab} />
+      </Suspense>
+    );
   };
 
   return (
@@ -58,6 +34,7 @@ export default function App({ onLogout }) {
         isMobileMenuOpen={isMobileMenuOpen}
         toggleMobileMenu={toggleMobileMenu}
         onLogout={onLogout}
+        onPreload={preload}
       />
 
       {/* MAIN CONTENT AREA */}
@@ -75,6 +52,18 @@ export default function App({ onLogout }) {
           </div>
         </section>
       </main>
+    </div>
+  );
+}
+
+// Marcador mientras llega el código del módulo (normalmente menos de un segundo).
+function PageSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse" role="status" aria-label="Cargando">
+      <div className="h-4 w-32 rounded bg-line" />
+      <div className="h-10 w-72 rounded bg-line" />
+      <div className="h-40 rounded-xl bg-white border border-line" />
+      <div className="h-64 rounded-xl bg-white border border-line" />
     </div>
   );
 }

@@ -1,9 +1,11 @@
-export default function SidebarItem({ icon: Icon, label, active, onClick, collapsed, badge, itemId, solid }) {
+export default function SidebarItem({ icon: Icon, label, active, onClick, collapsed, badge, itemId, solid, onPreload }) {
   return (
     <button
       type="button"
       data-nav-id={itemId}
       onClick={onClick}
+      onPointerEnter={onPreload}
+      onFocus={onPreload}
       aria-current={active ? 'page' : undefined}
       title={collapsed ? label : undefined}
       className={`relative z-10 w-full h-10 flex items-center rounded-lg text-sm font-medium transition-colors duration-150 ${

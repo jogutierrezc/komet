@@ -1,7 +1,6 @@
 // Constructor único del PPTX de Komet Presenta.
 // Estructura: tema (Cambria + Calibri, que PowerPoint ya trae), layouts con título y número de página,
 // secciones, gráficos y tablas nativos, y nota del orador en cada diapositiva.
-import PptxGenJS from 'pptxgenjs';
 import { UMBRAL_ACEPTABLE, fmtUmbral } from './threshold';
 
 export const THEME = {
@@ -136,7 +135,9 @@ function addTableTo(slide, spec, y, scoreCol) {
  * @param {Array} plan diapositivas con include=true (ver slidePlan.js)
  * @param {object} meta { filtersLine, template }
  */
-export function buildDeck(plan, meta = {}) {
+export async function buildDeck(plan, meta = {}) {
+  // pptxgenjs pesa cientos de KB: solo se descarga cuando alguien exporta.
+  const { default: PptxGenJS } = await import('pptxgenjs');
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_WIDE';
   pptx.author = 'Komet';
@@ -249,7 +250,7 @@ export function buildDeck(plan, meta = {}) {
 }
 
 export async function downloadDeck(plan, meta = {}) {
-  const pptx = buildDeck(plan, meta);
+  const pptx = await buildDeck(plan, meta);
   const tag = new Date().toISOString().slice(0, 10);
   await pptx.writeFile({ fileName: `Komet-Presentacion-${tag}.pptx` });
 }

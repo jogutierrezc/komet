@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { cached, invalidate, timed } from './queryCache';
 
 const SYSTEM_SETTINGS_KEY = 'komet_system';
 
@@ -506,12 +507,14 @@ export async function openPeriod({ code, startsOn, endsOn, surveyIds, name, note
     p_name: name || null,
     p_notes: notes || null
   });
+  invalidate('report-rows');
   if (error) throw error;
   return data;
 }
 
 export async function closePeriod(periodId) {
   const { data, error } = await supabase.rpc('close_evaluation_period', { p_id: periodId });
+  invalidate('report-rows');
   if (error) throw error;
   return data;
 }
@@ -627,6 +630,7 @@ export async function createEvaluation(evaluation) {
 }
 
 export async function createEvaluationWithResponses(evaluation, responses = []) {
+  invalidate('report-rows');
   const createdEvaluation = await createEvaluation(evaluation);
   if (!createdEvaluation?.id || !Array.isArray(responses) || responses.length === 0) {
     return createdEvaluation;
@@ -731,6 +735,18 @@ function getSectionScore(section, answers) {
   return Number((total / numericValues.length).toFixed(2));
 }
 
+// Todas las respuestas de un mismo formulario comparten el arreglo de preguntas: se normaliza una vez por formulario.
+const sectionsCache = new WeakMap();
+function getNormalizedSections(questions) {
+  if (!Array.isArray(questions)) return normalizeSurveySections(questions);
+  let sections = sectionsCache.get(questions);
+  if (!sections) {
+    sections = normalizeSurveySections(questions);
+    sectionsCache.set(questions, sections);
+  }
+  return sections;
+}
+
 export function calculateSurveyScoreSummary({ survey = {}, answers = {} }) {
   const questions = Array.isArray(survey.questions)
     ? survey.questions
@@ -738,7 +754,7 @@ export function calculateSurveyScoreSummary({ survey = {}, answers = {} }) {
     ? survey.preguntas
     : [];
 
-  const sections = normalizeSurveySections(questions);
+  const sections = getNormalizedSections(questions);
   const sectionScores = sections.map((section) => ({
     sectionId: section.id,
     title: section.title,
@@ -762,6 +778,7 @@ export function calculateSurveyScoreSummary({ survey = {}, answers = {} }) {
 }
 
 export async function updateEvaluation(id, evaluation) {
+  invalidate('report-rows');
   const { data, error } = await supabase
     .from('evaluations')
     .update(evaluation)
@@ -769,6 +786,48 @@ export async function updateEvaluation(id, evaluation) {
     .select('*');
   if (error) throw error;
   return data;
+}
+
+/**
+ * Evaluaciones recibidas por sitio, separadas por rol, para TODOS los sitios en una sola consulta.
+ * (Antes la lista de sitios hacía una petición por cada sitio.) Usa la vista evaluation_center_summary
+ * de db/performance.sql; si aún no existe, agrupa en el cliente con una consulta paginada en paralelo.
+ * @returns {Record<string, { student: number, professor: number, coordinator: number }>}
+ */
+export async function getEvaluationSummariesByConvenio() {
+  const view = await supabase.from('evaluation_center_summary').select('center_id,student,professor,coordinator');
+  if (!view.error) {
+    return Object.fromEntries((view.data || []).map((row) => [row.center_id, {
+      student: Number(row.student) || 0,
+      professor: Number(row.professor) || 0,
+      coordinator: Number(row.coordinator) || 0
+    }]));
+  }
+
+  const summaries = {};
+  const add = (item) => {
+    const entry = summaries[item.center_id] || { student: 0, professor: 0, coordinator: 0 };
+    if (item.student_id) entry.student += 1;
+    else if (item.tutor_id) entry.professor += 1;
+    else if (normalizeRole(item.dirigidoA || item.estado || item.tipoPrograma) === 'Coordinadores') entry.coordinator += 1;
+    summaries[item.center_id] = entry;
+  };
+  const fetchPage = (page) => supabase
+    .from('evaluations')
+    .select('center_id,student_id,tutor_id,dirigidoA,estado,tipoPrograma', page === 0 ? { count: 'exact' } : undefined)
+    .not('center_id', 'is', null)
+    .order('id')
+    .range(page * 1000, page * 1000 + 999);
+
+  const first = await fetchPage(0);
+  if (first.error) throw first.error;
+  (first.data || []).forEach(add);
+  if ((first.data || []).length === 1000 && first.count != null) {
+    const rest = Array.from({ length: Math.max(0, Math.ceil(first.count / 1000) - 1) }, (_, i) => i + 1);
+    const pages = await mapInBatches(rest, 4, fetchPage);
+    pages.forEach((res) => { if (res.error) throw res.error; (res.data || []).forEach(add); });
+  }
+  return summaries;
 }
 
 export async function getEvaluationSummaryByConvenio(convenioId) {
@@ -973,7 +1032,7 @@ async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
   const uniqueEvaluationIds = Array.from(new Set(evaluationIds.filter(Boolean)));
   if (!uniqueEvaluationIds.length) return {};
 
-  const fetchChunk = async (chunk, chunkSize = 50) => {
+  const fetchChunk = async (chunk, chunkSize) => {
     const { data, error } = await supabase
       .from('evaluation_responses')
       .select('evaluation_id,answers,submitted_at')
@@ -981,25 +1040,22 @@ async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
 
     if (!error) return data || [];
 
+    // URL demasiado larga: se divide el lote y se reintenta.
     if ((error?.status === 400 || error?.status === 414) && chunkSize > 1) {
-      const smallerChunkSize = Math.max(1, Math.floor(chunkSize / 2));
+      const smaller = Math.max(1, Math.floor(chunkSize / 2));
       const rows = [];
-      for (let j = 0; j < chunk.length; j += smallerChunkSize) {
-        rows.push(...(await fetchChunk(chunk.slice(j, j + smallerChunkSize), smallerChunkSize)));
+      for (let j = 0; j < chunk.length; j += smaller) {
+        rows.push(...(await fetchChunk(chunk.slice(j, j + smaller), smaller)));
       }
       return rows;
     }
-
     throw error;
   };
 
-  const chunkSize = 50;
-  const responseRows = [];
-
-  for (let i = 0; i < uniqueEvaluationIds.length; i += chunkSize) {
-    const chunk = uniqueEvaluationIds.slice(i, i + chunkSize);
-    responseRows.push(...(await fetchChunk(chunk, chunkSize)));
-  }
+  const CHUNK = 100;
+  const chunks = [];
+  for (let i = 0; i < uniqueEvaluationIds.length; i += CHUNK) chunks.push(uniqueEvaluationIds.slice(i, i + CHUNK));
+  const responseRows = (await mapInBatches(chunks, 4, (chunk) => fetchChunk(chunk, CHUNK))).flat();
 
   return responseRows.reduce((acc, item) => {
     if (!item?.evaluation_id) return acc;
@@ -1007,6 +1063,118 @@ async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
     acc[item.evaluation_id].push(item);
     return acc;
   }, {});
+}
+
+/** Ejecuta `fn` sobre cada elemento, `size` a la vez, conservando el orden del resultado. */
+async function mapInBatches(items, size, fn) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
+  }
+  return out;
+}
+
+async function fetchSurveysByIds(ids = []) {
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (!unique.length) return {};
+  const chunks = [];
+  for (let i = 0; i < unique.length; i += 100) chunks.push(unique.slice(i, i + 100));
+  const rows = (await mapInBatches(chunks, 4, async (chunk) => {
+    const { data, error } = await supabase.from('surveys').select('id,title,questions,description,target_type').in('id', chunk);
+    if (error) throw error;
+    return data || [];
+  })).flat();
+  return Object.fromEntries(rows.map((row) => [row.id, row]));
+}
+
+async function fetchLegacyAnswers(ids = []) {
+  if (!ids.length) return {};
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
+  const rows = (await mapInBatches(chunks, 4, async (chunk) => {
+    const { data, error } = await supabase.from('evaluations').select('id,preguntas').in('id', chunk);
+    if (error) throw error;
+    return data || [];
+  })).flat();
+  return Object.fromEntries(rows.map((row) => [row.id, row.preguntas]));
+}
+
+// Capacidades del esquema, aprendidas en la primera consulta: si la relación no existe se deja de pedirla.
+const reportCaps = { periodRelation: true, embedResponses: true };
+const REPORT_PAGE = 1000;
+
+/**
+ * Carga las evaluaciones listas para los reportes. Antes cada fila traía una copia completa del formulario
+ * (sus preguntas) y las respuestas se pedían en decenas de peticiones seguidas. Ahora:
+ *  - las respuestas vienen en la misma consulta (relación evaluation_responses);
+ *  - cada formulario se descarga una sola vez y se une aquí;
+ *  - las páginas restantes se piden en paralelo;
+ *  - `preguntas` (copia legada de las respuestas) solo se pide para filas sin respuestas.
+ */
+async function fetchReportRows({ campusId, centerId } = {}) {
+  const select = () => [
+    'id,status,created_at,completed_at,dirigidoA,estado,periodoCorte,tipoPrograma,titulo,survey_id',
+    reportCaps.periodRelation ? 'period:period_id(code)' : '',
+    'campus:campus_id(name)',
+    'center:center_id(name)',
+    'student:student_id(full_name,program)',
+    'tutor:tutor_id(full_name,specialty)',
+    reportCaps.embedResponses ? 'evaluation_responses(answers,submitted_at)' : ''
+  ].filter(Boolean).join(',');
+
+  const fetchPage = async (page, withCount) => {
+    for (;;) {
+      let query = supabase.from('evaluations').select(select(), withCount ? { count: 'exact' } : undefined);
+      if (campusId) query = query.eq('campus_id', campusId);
+      if (centerId) query = query.eq('center_id', centerId);
+      const res = await query
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(page * REPORT_PAGE, page * REPORT_PAGE + REPORT_PAGE - 1);
+
+      if (res.error) {
+        const msg = `${res.error.message || ''} ${res.error.details || ''}`;
+        if (reportCaps.embedResponses && /evaluation_responses|relationship/i.test(msg)) { reportCaps.embedResponses = false; continue; }
+        if (reportCaps.periodRelation && /period/i.test(msg)) { reportCaps.periodRelation = false; continue; }
+        throw res.error;
+      }
+      return res;
+    }
+  };
+
+  // La primera página fija las capacidades del esquema y trae el total; el resto va en paralelo.
+  const first = await fetchPage(0, true);
+  const rows = [...(first.data || [])];
+  if (rows.length === REPORT_PAGE) {
+    if (first.count != null) {
+      const pages = Math.ceil(first.count / REPORT_PAGE);
+      const rest = Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 1);
+      (await mapInBatches(rest, 4, (page) => fetchPage(page, false))).forEach((res) => rows.push(...(res.data || [])));
+    } else {
+      for (let page = 1; ; page += 1) {
+        const res = await fetchPage(page, false);
+        rows.push(...(res.data || []));
+        if ((res.data || []).length < REPORT_PAGE) break;
+      }
+    }
+  }
+
+  const ids = rows.map((row) => row.id).filter(Boolean);
+  const [surveys, responseMap] = await Promise.all([
+    fetchSurveysByIds(rows.map((row) => row.survey_id)),
+    reportCaps.embedResponses ? Promise.resolve(null) : fetchEvaluationResponsesByEvaluationIds(ids)
+  ]);
+
+  rows.forEach((row) => {
+    if (responseMap) row.evaluation_responses = responseMap[row.id] || [];
+    row.survey = surveys[row.survey_id] || null;
+  });
+
+  const withoutResponses = rows.filter((row) => !(row.evaluation_responses || []).length).map((row) => row.id);
+  const legacy = await fetchLegacyAnswers(withoutResponses);
+  rows.forEach((row) => { if (row.id in legacy) row.preguntas = legacy[row.id]; });
+
+  return rows.map(mapEvaluationItem);
 }
 
 function mapEvaluationItem(item) {
@@ -1164,71 +1332,12 @@ function aggregateByKey(items, key, countKey = 'total') {
 }
 
 export async function getEvaluationReportMetrics(filters = {}) {
-  const { role, program, center, campusId, centerId } = filters;
-  const pageSize = 500;
-  let allRows = [];
-  let page = 0;
-  // El período sale de la relación evaluation_periods si la migración ya se aplicó; si no, del texto periodoCorte.
-  let usePeriodRelation = true;
-
-  while (true) {
-    const from = page * pageSize;
-    const to = from + pageSize - 1;
-    let query = supabase
-      .from('evaluations')
-      .select(`
-        id,
-        status,
-        created_at,
-        completed_at,
-        dirigidoA,
-        estado,
-        periodoCorte,
-        ${usePeriodRelation ? 'period:period_id(code),' : ''}
-        tipoPrograma,
-        titulo,
-        preguntas,
-        survey:survey_id(title,questions,description,target_type),
-        campus:campus_id(name),
-        center:center_id(name),
-        student:student_id(full_name,program),
-        tutor:tutor_id(full_name,specialty)
-      `);
-
-    // Filtros server-side — evitan traer datos innecesarios
-    if (campusId) {
-      query = query.eq('campus_id', campusId);
-    }
-    if (centerId) {
-      query = query.eq('center_id', centerId);
-    }
-
-    const { data, error } = await query
-      .order('created_at', { ascending: false })
-      .range(from, to);
-
-    if (error && usePeriodRelation && /period/i.test(`${error.message || ''} ${error.details || ''}`)) {
-      usePeriodRelation = false;
-      continue;
-    }
-    if (error) throw error;
-    if (!data?.length) break;
-
-    allRows = allRows.concat(data);
-    if (data.length < pageSize) break;
-    page += 1;
-  }
-
-  const evaluationIds = allRows.map((item) => item.id).filter(Boolean);
-  if (evaluationIds.length) {
-    const responseMap = await fetchEvaluationResponsesByEvaluationIds(evaluationIds);
-    allRows = allRows.map((item) => ({
-      ...item,
-      evaluation_responses: responseMap[item.id] || []
-    }));
-  }
-
-  const rows = (allRows || []).map(mapEvaluationItem);
+  const { role, program, center, campusId, centerId, force } = filters;
+  const rows = await cached(
+    `report-rows:${campusId || ''}:${centerId || ''}`,
+    () => timed('evaluaciones para reportes', () => fetchReportRows({ campusId, centerId })),
+    { force: !!force }
+  );
   const filteredRows = rows.filter((item) => {
     if (role && role !== 'all' && item.role !== role) return false;
     if (program && program !== 'all' && item.program !== program) return false;

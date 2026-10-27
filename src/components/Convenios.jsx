@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Upload, Download, Pencil, Trash2, Ban, Search, X, ChevronRight, ClipboardCheck, Building2, MapPin, Image as ImageIcon, RotateCw, Sparkles } from 'lucide-react';
-import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getStudentsByConvenio, getProfessorsByConvenio, getRotationsByConvenio, createRotation, deleteRotation, getSystemSettings, runMistralPrompt } from '../lib/data';
+import { getConvenios, getCampuses, createConvenio, importConvenios, updateConvenio, deleteConvenio, getEvaluationSummaryByConvenio, getEvaluationSummariesByConvenio, getStudentsByConvenio, getProfessorsByConvenio, getRotationsByConvenio, createRotation, deleteRotation, getSystemSettings, runMistralPrompt } from '../lib/data';
 import { parseFile } from '../lib/importHelpers';
 
 export default function Convenios() {
@@ -53,13 +53,11 @@ export default function Convenios() {
   const loadConvenios = async () => {
     setLoading(true);
     try {
+      // La lista aparece de inmediato; los conteos por rol llegan después, en una sola consulta.
       const data = await getConvenios();
       setSites(data);
-      const summaries = await Promise.all(data.map(async (convenio) => {
-        const summary = await getEvaluationSummaryByConvenio(convenio.id);
-        return [convenio.id, summary];
-      }));
-      setEvaluationSummaries(Object.fromEntries(summaries));
+      setLoading(false);
+      getEvaluationSummariesByConvenio().then(setEvaluationSummaries).catch((e) => console.warn('No se pudieron cargar los conteos por sitio', e));
     } catch (error) {
       setErrorMessage('No se pudieron cargar los convenios.');
     } finally {

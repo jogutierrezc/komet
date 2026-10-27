@@ -6,7 +6,6 @@
  * shapes agrupados (<p:grpSp>), y reemplazo masivo de texto.
  */
 
-import JSZip from 'jszip';
 
 const NS = {
   p: 'http://schemas.openxmlformats.org/presentationml/2006/main',
@@ -31,6 +30,7 @@ export class PptxTemplateEngine {
     } else {
       throw new Error('La fuente debe ser una URL o un ArrayBuffer');
     }
+    const { default: JSZip } = await import('jszip');
     this.zip = await JSZip.loadAsync(data);
     await this._parseAllSlides();
     return this;
