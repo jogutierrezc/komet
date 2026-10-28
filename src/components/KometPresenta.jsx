@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2, Sparkles, Download, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, Sparkles, Download, X, Wand2 } from 'lucide-react';
 import {
   getCampuses,
   getConvenios,
@@ -13,9 +13,14 @@ import { PptxTemplateEngine, buildTemplateData } from '../lib/pptxTemplateEngine
 import { norm, avg, stdDev, resolveProgram, resolveLevel, normalizeRoleName, getRowCenter, formatPct, formatFilters, rankBy, getMonthKey, shortList, calculateCenterAnalysis, calculateRoleGrid, formatCenterAnalysisForPrompt } from '../utils/dataHelpers';
 import { parseAiPayload, buildNarrativeFallback } from '../services/aiService';
 import { useBasket, removeCapture, clearBasket } from '../lib/presentationBasket';
-import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
+import { readInitialPeriodChoice, latestPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { buildSlidePlan, buildSlideNarrativePrompt, parseSlideNarrative, applySlideNarrative, planFingerprint, LIMITS } from '../services/slidePlan';
 import { downloadDeck } from '../lib/pptDeck';
+import { buildChartCatalog } from '../lib/estadistica/chartCatalog';
+import { DEFAULT_BRIEF } from '../services/presentaBrief';
+import PresentaSelect from './presenta/PresentaSelect';
+import PresentaWizard from './presenta/PresentaWizard';
+import { useReveal } from './presenta/usePresentaMotion';
 
 const NARRATIVE_CACHE_KEY = 'komet.presenta.narrative.v1';
 import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
@@ -28,7 +33,10 @@ export default function KometPresenta({ onNavigate }) {
   const [narrativeSource, setNarrativeSource] = useState('none');
   const [templateMode, setTemplateMode] = useState('komet');
   const [rows, setRows] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  // Mientras nadie elija otro, se usa el período más reciente (igual que Estadística e Informe).
+  const [pickedPeriod, setSelectedPeriod] = useState(readInitialPeriodChoice);
+  const latest = useMemo(() => latestPeriod(rows), [rows]);
+  const selectedPeriod = pickedPeriod ?? latest;
   useEffect(() => { clearInitialPeriod(); }, []);
   const [loading, setLoading] = useState(true);
   const [generatingAi, setGeneratingAi] = useState(false);
@@ -43,6 +51,11 @@ export default function KometPresenta({ onNavigate }) {
   const [selectedCenter, setSelectedCenter] = useState('Todos');
   const [selectedProgram, setSelectedProgram] = useState('Todos');
   const [combineSimilarCenters, setCombineSimilarCenters] = useState(false);
+
+  // Entrevista previa: el asistente se abre solo hasta que el usuario lo termina o lo salta.
+  const [brief, setBrief] = useState(DEFAULT_BRIEF);
+  const [chartIds, setChartIds] = useState([]);
+  const [wizardOpen, setWizardOpen] = useState(true);
 
   // Listas de opciones para los dropdowns — cargadas desde Supabase al montar
   const [campusesMeta, setCampusesMeta] = useState([]);
@@ -232,6 +245,13 @@ export default function KometPresenta({ onNavigate }) {
     };
   }, [filteredRows, effectiveFilteredRows]);
 
+  const catalog = useMemo(() => buildChartCatalog(filteredRows), [filteredRows]);
+  // Se respeta el orden en que el usuario eligió; las que ya no tienen datos con los filtros actuales se descartan.
+  const selectedCharts = useMemo(() => {
+    const byId = new Map(catalog.map((c) => [c.id, c]));
+    return chartIds.map((id) => byId.get(id)).filter(Boolean);
+  }, [catalog, chartIds]);
+
   const filters = {
     period: selectedPeriod,
     campus: selectedCampus,
@@ -244,22 +264,33 @@ export default function KometPresenta({ onNavigate }) {
 
   // Plan sin las diapositivas que dependen de la narrativa: sirve para el prompt y para la huella de caché.
   const corePlan = useMemo(
-    () => buildSlidePlan({ metrics, filters, captures: basket, narrative: null }),
+    () => buildSlidePlan({ metrics, filters, captures: basket, narrative: null, charts: selectedCharts, brief }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [metrics, selectedCampus, selectedLevel, selectedCenter, selectedProgram, basket]
+    [metrics, selectedPeriod, selectedCampus, selectedLevel, selectedCenter, selectedProgram, basket, selectedCharts, brief]
   );
-  const fingerprint = useMemo(() => planFingerprint(corePlan, filters, metrics.kpis), [corePlan, filters, metrics.kpis]);
+  const fingerprint = useMemo(
+    () => planFingerprint(corePlan, filters, metrics.kpis, brief),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [corePlan, selectedPeriod, selectedCampus, selectedLevel, selectedCenter, selectedProgram, metrics.kpis, brief]
+  );
 
   const activeNarrative = aiNarrative || fallbackNarrative;
 
   const plan = useMemo(() => {
-    const base = buildSlidePlan({ metrics, filters, captures: basket, narrative: aiNarrative });
+    const base = buildSlidePlan({ metrics, filters, captures: basket, narrative: aiNarrative, charts: selectedCharts, brief });
     return applySlideNarrative(base, aiSlideTexts).map((s) => (edits[s.id] ? { ...s, ...edits[s.id] } : s));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metrics, selectedCampus, selectedLevel, selectedCenter, selectedProgram, basket, aiNarrative, aiSlideTexts, edits]);
+  }, [metrics, selectedCharts, brief, selectedPeriod, selectedCampus, selectedLevel, selectedCenter, selectedProgram, basket, aiNarrative, aiSlideTexts, edits]);
 
   const includedCount = plan.filter((s) => s.include).length;
   const selectedSlide = plan.find((s) => s.id === selectedSlideId) || plan[0];
+
+  // Movimiento: la lista entra escalonada al aparecer o al cambiar las gráficas; la vista previa, al cambiar de diapositiva.
+  const listRef = useRef(null);
+  const previewRef = useRef(null);
+  const slideKey = plan.map((s) => s.id).join('|');
+  useReveal(listRef, [loading || !metrics.kpis.total, slideKey], { y: 6, stagger: 0.025 });
+  useReveal(previewRef, [selectedSlide?.id], { y: 6, stagger: 0 });
 
   function editSlide(id, patch) {
     setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
@@ -303,7 +334,7 @@ export default function KometPresenta({ onNavigate }) {
         systemPrompt: 'Eres analista de datos senior en calidad educativa y relación docencia-servicio. ' +
           'Escribes textos breves para diapositivas ejecutivas, siempre con cifras tomadas de los datos recibidos. ' +
           'Respondes exclusivamente en JSON válido.',
-        prompt: buildSlideNarrativePrompt(corePlan, { metrics, filters }),
+        prompt: buildSlideNarrativePrompt(corePlan, { metrics, filters, brief }),
         temperature: 0.3
       });
 
@@ -316,6 +347,7 @@ export default function KometPresenta({ onNavigate }) {
         ...(legacy?.hallazgos?.length ? { hallazgos: legacy.hallazgos } : {}),
         ...(legacy?.riesgos?.length ? { riesgos: legacy.riesgos } : {}),
         ...(legacy?.acciones?.length ? { acciones: legacy.acciones } : {}),
+        ...(brief.includeRecommendations ? {} : { acciones: [] }),
       };
       setAiNarrative(legacyNarrative);
       setAiSlideTexts(slides);
@@ -394,6 +426,7 @@ export default function KometPresenta({ onNavigate }) {
 
   const noData = loading || !metrics.kpis.total;
   const steps = [
+    { label: 'Asistente', done: !wizardOpen },
     { label: 'Datos', done: !noData },
     { label: 'Contenido', done: !noData && includedCount > 0 },
     { label: 'Narrativa', done: aiReady },
@@ -412,6 +445,12 @@ export default function KometPresenta({ onNavigate }) {
           <h1 className="font-display text-4xl font-bold leading-tight">Komet Presenta</h1>
           <p className="text-[15px] text-ink-2">Arma la presentación con lo que capturaste y descárgala en PowerPoint.</p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        {!wizardOpen ? (
+          <button type="button" onClick={() => setWizardOpen(true)} className="k-btn-secondary !h-11 !px-4 !text-[15px]">
+            <Wand2 className="w-4 h-4" /> Asistente
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={templateMode === 'udes' ? handleExportWithTemplate : handleDownloadDeck}
@@ -421,6 +460,7 @@ export default function KometPresenta({ onNavigate }) {
           {exporting || exportingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
           Descargar PPTX
         </button>
+        </div>
       </header>
 
       <ol aria-label="Pasos" className="k-card px-4 py-3.5 flex flex-wrap items-center gap-x-8 gap-y-2">
@@ -432,6 +472,27 @@ export default function KometPresenta({ onNavigate }) {
         ))}
         <li className="font-mono text-xs text-ink-2 sm:ml-auto">{includedCount} DIAPOSITIVAS · NARRATIVA {NARRATIVE_LABEL[narrativeSource].toUpperCase()}</li>
       </ol>
+
+      {wizardOpen ? (
+        <PresentaWizard
+          brief={brief}
+          onBrief={setBrief}
+          scope={{
+            period: selectedPeriod, setPeriod: setSelectedPeriod, periodOptions,
+            campus: selectedCampus, setCampus: (v) => { setSelectedCampus(v); setSelectedCenter('Todos'); }, campusOptions,
+            level: selectedLevel, setLevel: setSelectedLevel,
+            program: selectedProgram, setProgram: setSelectedProgram, programOptions,
+          }}
+          catalog={catalog}
+          chartIds={chartIds}
+          onChartIds={setChartIds}
+          sample={loading ? 'Cargando datos…' : `${metrics.kpis.total.toLocaleString('es-CO')} evaluaciones con este alcance`}
+          canGenerate={!noData}
+          generating={generatingAi}
+          onFinish={() => { setWizardOpen(false); handleGenerateAiNarrative(); }}
+          onSkip={() => setWizardOpen(false)}
+        />
+      ) : null}
 
       {error ? <div role="alert" className="rounded-lg bg-score-mid-bg text-score-mid-fg px-4 py-3 text-sm font-medium">{error}</div> : null}
 
@@ -497,11 +558,11 @@ export default function KometPresenta({ onNavigate }) {
           {noData ? (
             <p className="text-sm text-ink-2 py-10 text-center">{loading ? 'Cargando datos…' : 'No hay evaluaciones con estos filtros.'}</p>
           ) : (
-            <ul className="space-y-1">
+            <ul ref={listRef} className="space-y-1">
               {plan.map((s, idx) => {
                 const open = selectedSlide?.id === s.id;
                 return (
-                  <li key={s.id}>
+                  <li key={s.id} data-reveal>
                     <div className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${open ? 'bg-blue-50 border-blue-600' : 'border-transparent hover:bg-paper'} ${s.include ? '' : 'opacity-50'}`}>
                       <input type="checkbox" aria-label={`Incluir diapositiva ${idx + 1}`} checked={s.include} onChange={(e) => editSlide(s.id, { include: e.target.checked })} className="w-[18px] h-[18px] accent-blue-600 shrink-0" />
                       <button type="button" onClick={() => setSelectedSlideId(s.id)} aria-expanded={open} className="flex-1 min-w-0 flex items-center gap-3 text-left">
@@ -542,7 +603,7 @@ export default function KometPresenta({ onNavigate }) {
         <div className="w-full xl:w-[340px] xl:shrink-0 space-y-6">
           <section className="k-card p-5 space-y-3">
             <h2 className="font-display text-lg font-bold">Vista previa</h2>
-            {selectedSlide ? <SlidePreview slide={selectedSlide} /> : null}
+            <div ref={previewRef}>{selectedSlide ? <SlidePreview slide={selectedSlide} /> : null}</div>
             <p className="font-mono text-[11px] text-ink-2">{selectedSlide?.type === 'chart' ? 'GRÁFICO NATIVO, EDITABLE EN POWERPOINT' : 'TEXTO EDITABLE EN POWERPOINT'}</p>
           </section>
 
@@ -577,27 +638,13 @@ export default function KometPresenta({ onNavigate }) {
   );
 }
 
-function PresentaSelect({ id, label, value, onChange, options }) {
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className="k-label block">{label}</label>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="k-input !h-10 !text-sm">
-        {options.map((opt) => {
-          const [val, text] = Array.isArray(opt) ? opt : [opt, opt === 'Todos' ? 'Todos' : opt];
-          return <option key={val} value={val}>{text}</option>;
-        })}
-      </select>
-    </div>
-  );
-}
-
 // Vista previa 16:9 simplificada de la diapositiva elegida (el PPTX real usa gráficos nativos).
 function SlidePreview({ slide }) {
   const dark = slide.type === 'cover';
   const chart = slide.chart;
   const max = chart ? (chart.scoreScale ? 5 : Math.max(...chart.series[0].values, 1)) : 1;
   return (
-    <div className={`w-full aspect-video border p-3 overflow-hidden flex flex-col gap-2 ${dark ? 'bg-night border-night text-white' : 'bg-white border-line-strong'}`} style={{ fontFamily: 'Calibri, Carlito, sans-serif' }}>
+    <div data-reveal className={`w-full aspect-video border p-3 overflow-hidden flex flex-col gap-2 ${dark ? 'bg-night border-night text-white' : 'bg-white border-line-strong'}`} style={{ fontFamily: 'Calibri, Carlito, sans-serif' }}>
       <p className={`font-bold leading-tight text-[13px] ${dark ? 'text-white' : 'text-night'}`} style={{ fontFamily: 'Cambria, Georgia, serif' }}>{slide.title}</p>
       {dark ? <p className="text-[10px] text-[#A9BCC6]">{slide.subtitle}</p> : null}
       {chart ? (
@@ -605,7 +652,7 @@ function SlidePreview({ slide }) {
           {chart.categories.slice(0, 5).map((cat, i) => (
             <div key={cat} className="flex items-center gap-1.5 text-[8px]">
               <span className="w-14 truncate text-ink-2">{cat}</span>
-              <div className="flex-1 h-1.5 bg-paper"><div className="h-1.5 bg-blue-600" style={{ width: `${Math.min(100, (chart.series[0].values[i] / max) * 100)}%` }} /></div>
+              <div className="flex-1 h-1.5 bg-paper"><div data-bar className="h-1.5 bg-blue-600" style={{ width: `${Math.min(100, (chart.series[0].values[i] / max) * 100)}%` }} /></div>
             </div>
           ))}
         </div>

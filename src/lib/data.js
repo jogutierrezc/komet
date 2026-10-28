@@ -1028,6 +1028,30 @@ function getLatestResponseAnswers(item) {
   return sorted[0]?.answers || null;
 }
 
+// Ejecuta `fn` sobre cada elemento con un máximo de `limit` peticiones simultáneas, conservando el orden.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function fetchSurveysById(surveyIds = []) {
+  if (!surveyIds.length) return {};
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('id,title,questions,description,target_type')
+    .in('id', surveyIds);
+  if (error) throw error;
+  return (data || []).reduce((acc, item) => { acc[item.id] = item; return acc; }, {});
+}
+
 async function fetchEvaluationResponsesByEvaluationIds(evaluationIds = []) {
   const uniqueEvaluationIds = Array.from(new Set(evaluationIds.filter(Boolean)));
   if (!uniqueEvaluationIds.length) return {};

@@ -7,11 +7,15 @@ import {
   LabelList
 } from 'recharts';
 import { useBasket, toggleCapture } from '../lib/presentationBasket';
-import { readInitialPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
+import { readInitialPeriodChoice, latestPeriod, clearInitialPeriod, periodOptionsFrom, matchesPeriod } from '../lib/periodFilter';
 import { BarChart3, TrendingUp, Building2, GraduationCap, Users, Activity, Brain, Download, Table2 } from 'lucide-react';
 import { getEvaluationReportMetrics, getSystemSettings, runMistralPrompt } from '../lib/data';
 import { calculateCenterAnalysis, calculateCrossMatrix } from '../utils/dataHelpers';
 import ComparadorCentrosProgramas from './ComparadorCentrosProgramas';
+import {
+  computeKpis, computeByProgram, computeByProgramExtended, computeByCenter, computeTopCentersByVolume,
+  computeProgramComparison, computeCenterComparison, computeByRole, computeHistogram, computeMonthlyTrend, computeFunnel,
+} from '../lib/estadistica/aggregations';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const LEVEL_WORDS = new Set(['pregrado', 'posgrado', 'postgrado']);
@@ -294,7 +298,10 @@ function FilterSelect({ label, value, onChange, children }) {
 export default function Estadistica({ onNavigate }) {
   const basket = useBasket();
   const [rows, setRows] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState(readInitialPeriod);
+  // Mientras nadie elija otro, se muestra el período más reciente en lugar de mezclar todos.
+  const [pickedPeriod, setSelectedPeriod] = useState(readInitialPeriodChoice);
+  const latest = useMemo(() => latestPeriod(rows), [rows]);
+  const selectedPeriod = pickedPeriod ?? latest;
   useEffect(() => { clearInitialPeriod(); }, []);
   const [loading, setLoading] = useState(true);
   const [selectedCampus, setSelectedCampus] = useState('Todos');
@@ -391,118 +398,17 @@ export default function Estadistica({ onNavigate }) {
   }, [centerViewOptions, selectedCenterView]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
-  const kpis = useMemo(() => {
-    const scores = filtered.map((r) => r.scoreSummary?.globalScore).filter((v) => typeof v === 'number');
-    const completed = filtered.filter((r) => r.status === 'Completada').length;
-    const centers = new Set(filtered.map((r) => getRowCenter(r, combineSimilarCenters))).size;
-    const programs = new Set(filtered.map((r) => resolveProgram(r)).filter((p) => p !== 'Sin programa')).size;
-    return {
-      total: filtered.length,
-      globalScore: avg(scores),
-      completionPct: filtered.length ? Number(((completed / filtered.length) * 100).toFixed(1)) : 0,
-      centers,
-      programs,
-    };
-  }, [filtered]);
+  const kpis = useMemo(() => computeKpis(filtered, combineSimilarCenters), [filtered]);
 
   // ── por programa ──────────────────────────────────────────────────────────
-  const byProgram = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((row) => {
-      const key = resolveProgram(row);
-      if (key === 'Sin programa') return;
-      const cur = map.get(key) || { name: key, scores: [], total: 0 };
-      cur.total += 1;
-      const s = row.scoreSummary?.globalScore;
-      if (typeof s === 'number') cur.scores.push(s);
-      map.set(key, cur);
-    });
-    return [...map.values()]
-      .map((d) => ({ name: d.name, score: avg(d.scores), total: d.total }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 12);
-  }, [filtered]);
-
-  const byProgramExtended = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((row) => {
-      const key = resolveProgram(row);
-      if (key === 'Sin programa') return;
-      const cur = map.get(key) || { name: key, total: 0, completed: 0, scores: [], centers: new Set() };
-      cur.total += 1;
-      if (row.status === 'Completada') cur.completed += 1;
-      cur.centers.add(getRowCenter(row, combineSimilarCenters));
-      const s = row.scoreSummary?.globalScore;
-      if (typeof s === 'number') cur.scores.push(s);
-      map.set(key, cur);
-    });
-
-    return [...map.values()]
-      .map((d) => ({
-        name: d.name,
-        total: d.total,
-        score: avg(d.scores),
-        completionPct: d.total ? Number(((d.completed / d.total) * 100).toFixed(1)) : 0,
-        centerCount: d.centers.size,
-      }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 15);
-  }, [filtered]);
+  const byProgram = useMemo(() => computeByProgram(filtered), [filtered]);
+  const byProgramExtended = useMemo(() => computeByProgramExtended(filtered, combineSimilarCenters), [filtered]);
 
   // ── por centro ────────────────────────────────────────────────────────────
-  const byCenter = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((row) => {
-      const key = getRowCenter(row, combineSimilarCenters);
-      const cur = map.get(key) || { name: key, scores: [], total: 0, completed: 0 };
-      cur.total += 1;
-      if (row.status === 'Completada') cur.completed += 1;
-      const s = row.scoreSummary?.globalScore;
-      if (typeof s === 'number') cur.scores.push(s);
-      map.set(key, cur);
-    });
-    return [...map.values()]
-      .map((d) => ({
-        name: d.name,
-        score: avg(d.scores),
-        total: d.total,
-        completionPct: d.total ? Number(((d.completed / d.total) * 100).toFixed(1)) : 0,
-      }))
-      .sort((a, b) => b.score - a.score);
-  }, [filtered]);
-
-  const topCentersByVolume = useMemo(() => {
-    return [...byCenter]
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 12)
-      .map((d, i) => ({ ...d, rank: i + 1 }));
-  }, [byCenter]);
-
-  const programComparison = useMemo(() => {
-    const sorted = [...byProgramExtended].sort((a, b) => b.score - a.score);
-    const total = sorted.length || 1;
-    return sorted.map((row, idx) => ({
-      ...row,
-      rank: idx + 1,
-      percentile: Number((((total - idx) / total) * 100).toFixed(1)),
-      gapToThreshold: Number((row.score - 3.7).toFixed(2)),
-      gapToGlobal: Number((row.score - kpis.globalScore).toFixed(2)),
-      estado0273: row.score >= 4.0 ? 'Fortaleza' : row.score >= 3.7 ? 'Cumple' : row.score >= 3.2 ? 'Vigilancia' : 'Intervencion'
-    }));
-  }, [byProgramExtended, kpis.globalScore]);
-
-  const centerComparison = useMemo(() => {
-    const sorted = [...byCenter].sort((a, b) => b.score - a.score);
-    const total = sorted.length || 1;
-    return sorted.map((row, idx) => ({
-      ...row,
-      rank: idx + 1,
-      percentile: Number((((total - idx) / total) * 100).toFixed(1)),
-      gapToThreshold: Number((row.score - 3.7).toFixed(2)),
-      gapToGlobal: Number((row.score - kpis.globalScore).toFixed(2)),
-      estado0273: row.score >= 4.0 ? 'Fortaleza' : row.score >= 3.7 ? 'Cumple' : row.score >= 3.2 ? 'Vigilancia' : 'Intervencion'
-    }));
-  }, [byCenter, kpis.globalScore]);
+  const byCenter = useMemo(() => computeByCenter(filtered, combineSimilarCenters), [filtered]);
+  const topCentersByVolume = useMemo(() => computeTopCentersByVolume(byCenter), [byCenter]);
+  const programComparison = useMemo(() => computeProgramComparison(byProgramExtended, kpis.globalScore), [byProgramExtended, kpis.globalScore]);
+  const centerComparison = useMemo(() => computeCenterComparison(byCenter, kpis.globalScore), [byCenter, kpis.globalScore]);
 
   const comparativeData = useMemo(() => {
     const globalScore = kpis.globalScore;
@@ -988,26 +894,7 @@ export default function Estadistica({ onNavigate }) {
   }
 
   // ── por rol ───────────────────────────────────────────────────────────────
-  const byRole = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((row) => {
-      const key = norm(row.role || 'Sin rol');
-      const cur = map.get(key) || { name: key, scores: [], total: 0, completed: 0 };
-      cur.total += 1;
-      if (row.status === 'Completada') cur.completed += 1;
-      const s = row.scoreSummary?.globalScore;
-      if (typeof s === 'number') cur.scores.push(s);
-      map.set(key, cur);
-    });
-    return [...map.values()]
-      .map((d) => ({
-        name: d.name,
-        score: avg(d.scores),
-        total: d.total,
-        pct: filtered.length ? Number(((d.total / filtered.length) * 100).toFixed(1)) : 0,
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [filtered]);
+  const byRole = useMemo(() => computeByRole(filtered), [filtered]);
 
   // donut por rol
   const roleDonut = useMemo(() => byRole.map((d) => ({ ...d, pct: d.pct })), [byRole]);
@@ -1081,55 +968,13 @@ export default function Estadistica({ onNavigate }) {
   }, [filtered, byRole]);
 
   // histograma distribución de puntajes 1–5
-  const histogram = useMemo(() => {
-    const counts = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
-    filtered.forEach((row) => {
-      (row.scoreSummary?.sectionScores || []).forEach((sec) => {
-        const r = Math.round(sec.score || 0);
-        if (r >= 1 && r <= 5) counts[String(r)] += 1;
-      });
-    });
-    return Object.entries(counts).map(([score, count]) => ({ score, count }));
-  }, [filtered]);
+  const histogram = useMemo(() => computeHistogram(filtered), [filtered]);
 
   // tendencia temporal por mes
-  const monthlyTrend = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((row) => {
-      const rawDate = row.completed_at || row.created_at;
-      if (!rawDate) return;
-      const dt = new Date(rawDate);
-      if (Number.isNaN(dt.getTime())) return;
-      const monthKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-      const cur = map.get(monthKey) || { monthKey, scores: [], total: 0, completed: 0 };
-      cur.total += 1;
-      if (row.status === 'Completada') cur.completed += 1;
-      const s = row.scoreSummary?.globalScore;
-      if (typeof s === 'number') cur.scores.push(s);
-      map.set(monthKey, cur);
-    });
-
-    return [...map.values()]
-      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
-      .map((d) => ({
-        month: d.monthKey,
-        score: avg(d.scores),
-        total: d.total,
-        completionPct: d.total ? Number(((d.completed / d.total) * 100).toFixed(1)) : 0,
-      }));
-  }, [filtered]);
+  const monthlyTrend = useMemo(() => computeMonthlyTrend(filtered), [filtered]);
 
   // funnel de proceso
-  const funnelData = useMemo(() => {
-    const total = filtered.length;
-    const started = filtered.filter((r) => r.status !== 'Pendiente').length;
-    const completed = filtered.filter((r) => r.status === 'Completada').length;
-    return [
-      { name: 'Asignadas', value: total, fill: '#0F6B68' },
-      { name: 'Iniciadas', value: started, fill: '#14b8a6' },
-      { name: 'Completadas', value: completed, fill: '#2B827C' },
-    ];
-  }, [filtered]);
+  const funnelData = useMemo(() => computeFunnel(filtered), [filtered]);
 
   // pareto por sección (impacto negativo vs umbral 3.7)
   const paretoSections = useMemo(() => {

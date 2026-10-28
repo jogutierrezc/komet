@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, User, UserCheck, GraduationCap, Building2, Calendar, AlertCircle, Fingerprint } from 'lucide-react';
 import KometMark from '../components/shared/KometMark';
 import EvaluacionesFormPreview from '../components/EvaluacionesFormPreview';
+import { parseDescription } from '../components/evaluaciones/surveyModel';
 import { getConveniosByCampus, resolveSharedSurvey, getPortalUserByCode, getPortalActiveSurveysByCode, createEvaluationWithResponses, calculateSurveyScoreSummary, getProgramsByCampus, getSurveyById, sendPublicSurveyConfirmationEmail, getRotationsByConvenio } from '../lib/data';
 
 export default function PublicEvaluationPortal() {
@@ -50,6 +51,18 @@ export default function PublicEvaluationPortal() {
   }, [publicStep, view]);
 
   const selectedCampusId = sharedSurveyId ? sharedSurvey?.campus_id || null : userData?.campus_id || null;
+
+  // El nivel que la evaluación tiene configurado (Pregrado / Posgrado) manda sobre lo que elija quien responde.
+  const lockedLevel = useMemo(() => {
+    const { alcance } = parseDescription(sharedSurvey?.description);
+    return alcance === 'Pregrado' || alcance === 'Posgrado' ? alcance : '';
+  }, [sharedSurvey]);
+
+  useEffect(() => {
+    if (lockedLevel && publicRespondent.program_level !== lockedLevel) {
+      setPublicRespondent((prev) => ({ ...prev, program_level: lockedLevel }));
+    }
+  }, [lockedLevel, publicRespondent.program_level]);
 
   const filteredProgramOptions = programOptions.length ? programOptions : allProgramOptions;
   const filteredCenters = useMemo(() => {
@@ -640,6 +653,11 @@ export default function PublicEvaluationPortal() {
 
               <div className="space-y-2">
                 <span id="pub-level" className="text-sm font-semibold">Nivel de formación</span>
+                {lockedLevel ? (
+                  <p className="h-12 flex items-center px-4 rounded-[10px] border border-line-strong bg-paper text-[15px] font-medium">
+                    {lockedLevel}
+                  </p>
+                ) : (
                 <div className="flex" role="group" aria-labelledby="pub-level">
                   {['Pregrado', 'Posgrado'].map((level, idx) => {
                     const on = publicRespondent.program_level === level;
@@ -656,6 +674,7 @@ export default function PublicEvaluationPortal() {
                     );
                   })}
                 </div>
+                )}
               </div>
 
               <div className="space-y-2">

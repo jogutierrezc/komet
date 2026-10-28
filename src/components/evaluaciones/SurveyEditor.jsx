@@ -6,11 +6,11 @@ import {
 import { getProgramsByCampus, getConveniosByCampus } from '../../lib/data';
 import { useSurveyDraft } from './useSurveyDraft';
 import {
-  PALETTE, QUESTION_TYPES, TARGETS, answerChoices, draftStats, toTree, validateDraft,
+  LEVELS, PALETTE, QUESTION_TYPES, TARGETS, answerChoices, draftStats, toTree, validateDraft,
 } from './surveyModel';
 
 const TYPE_ICONS = { rating: Star, yesno: CheckSquare, multiple: ListTodo, text: Type, number: Hash, date: Calendar, instruction: Info };
-const fieldClass = 'k-input !h-10 !text-sm';
+const fieldClass ='k-input !h-10 !text-sm';
 
 export default function SurveyEditor({ initialDraft, isNew, campuses, onSave, onPreview, onExit }) {
   const ed = useSurveyDraft(initialDraft);
@@ -33,15 +33,24 @@ export default function SurveyEditor({ initialDraft, isNew, campuses, onSave, on
   const stats = useMemo(() => draftStats(draft.items), [draft.items]);
   const selected = draft.items.find((i) => i.id === selectedId) || null;
 
-  // Programas y escenarios dependen del campus elegido.
+  // Los escenarios dependen del campus; los programas, además, del nivel (pregrado / posgrado).
   useEffect(() => {
     let cancelled = false;
-    if (!draft.campusId) { setPrograms([]); setSites([]); return undefined; }
-    Promise.all([getProgramsByCampus(draft.campusId), getConveniosByCampus(draft.campusId)])
-      .then(([p, s]) => { if (!cancelled) { setPrograms(p || []); setSites(s || []); } })
-      .catch(() => { if (!cancelled) { setPrograms([]); setSites([]); } });
+    if (!draft.campusId) { setSites([]); return undefined; }
+    getConveniosByCampus(draft.campusId)
+      .then((s) => { if (!cancelled) setSites(s || []); })
+      .catch(() => { if (!cancelled) setSites([]); });
     return () => { cancelled = true; };
   }, [draft.campusId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!draft.campusId) { setPrograms([]); return undefined; }
+    getProgramsByCampus(draft.campusId, draft.meta.nivel === 'Ambos' ? null : draft.meta.nivel)
+      .then((p) => { if (!cancelled) setPrograms(p || []); })
+      .catch(() => { if (!cancelled) setPrograms([]); });
+    return () => { cancelled = true; };
+  }, [draft.campusId, draft.meta.nivel]);
 
   async function handleSave() {
     if (saving) return;
@@ -81,9 +90,12 @@ export default function SurveyEditor({ initialDraft, isNew, campuses, onSave, on
 
   const tryExit = () => (dirty ? setConfirmExit(true) : onExit());
 
-  const pickProgram = (name) => {
-    const program = programs.find((p) => p.name === name);
-    ed.setMetaField({ programa: name, nivel: program?.level || draft.meta.nivel || 'Pregrado' });
+  const pickProgram = (name) => ed.setMetaField({ programa: name });
+
+  // Al cambiar de nivel, el programa elegido deja de aplicar.
+  const pickLevel = (nivel) => {
+    if (nivel === (draft.meta.nivel || 'Ambos')) return;
+    ed.setMetaField({ nivel, programa: '' });
   };
 
   return (
@@ -158,11 +170,21 @@ export default function SurveyEditor({ initialDraft, isNew, campuses, onSave, on
                   ))}
                 </div>
               </Field>
+              <Field label="Nivel de formación" id="ev-level">
+                <div className="flex" role="group" aria-label="Nivel de formación">
+                  {LEVELS.map((l, i) => (
+                    <button key={l} type="button" aria-pressed={(draft.meta.nivel || 'Ambos') === l} onClick={() => pickLevel(l)}
+                      className={`flex-1 h-10 border text-[13px] font-medium transition-colors ${i === 0 ? 'rounded-l-lg' : `border-l-0 ${i === LEVELS.length - 1 ? 'rounded-r-lg' : ''}`} ${(draft.meta.nivel || 'Ambos') === l ? 'bg-ink border-ink text-white' : 'bg-white border-line-strong text-ink hover:bg-paper'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
               <Field label="Programa académico" id="ev-program">
                 <select id="ev-program" className={fieldClass} value={draft.meta.programa} onChange={(e) => pickProgram(e.target.value)} disabled={!draft.campusId}>
-                  <option value="">{draft.campusId ? 'Elige un programa' : 'Primero elige el campus'}</option>
+                  <option value="">{draft.campusId ? (draft.meta.nivel || 'Ambos') === 'Ambos' ? 'Elige un programa' : `Elige un programa de ${draft.meta.nivel.toLowerCase()}` : 'Primero elige el campus'}</option>
                   {draft.meta.programa && !programs.some((p) => p.name === draft.meta.programa) ? <option value={draft.meta.programa}>{draft.meta.programa}</option> : null}
-                  {programs.map((p) => <option key={p.id} value={p.name}>{p.name} ({p.level || 'Pregrado'})</option>)}
+                  {programs.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
                 </select>
               </Field>
               <Field label="Escenario de práctica" id="ev-site">
@@ -182,9 +204,6 @@ export default function SurveyEditor({ initialDraft, isNew, campuses, onSave, on
                   ))}
                   <span className="ml-3 self-center font-mono text-sm text-ink-2">{new Date().getFullYear()}</span>
                 </div>
-              </Field>
-              <Field label="Nivel" id="ev-level">
-                <p className="h-10 flex items-center text-sm font-medium">{draft.meta.nivel || 'Pregrado'}</p>
               </Field>
             </div>
           </section>

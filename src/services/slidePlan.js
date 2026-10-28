@@ -2,6 +2,7 @@
 // El plan se arma sin IA a partir de las métricas y de las capturas de Estadística e Informe.
 // La IA solo reescribe título, viñetas y nota del orador de cada diapositiva (una llamada, salida validada).
 import { UMBRAL_ACEPTABLE, fmtScore, fmtUmbral } from '../lib/threshold';
+import { briefPromptLines } from './presentaBrief';
 
 export const LIMITS = { title: 90, bullet: 140, bullets: 3, notes: 400 };
 
@@ -18,9 +19,12 @@ const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
  * @param {object} args.filters   { campus, level, center, program }
  * @param {Array}  args.captures  capturas guardadas en la canasta
  * @param {object} args.narrative narrativa heredada { resumen, hallazgos, riesgos, acciones }
+ * @param {Array}  args.charts    gráficas elegidas del catálogo de Estadística; si hay alguna, reemplazan las diapositivas automáticas de gráficos
+ * @param {object} args.brief     respuestas de la entrevista (solo se usa includeRecommendations)
  */
-export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
+export function buildSlidePlan({ metrics, filters, captures = [], narrative, charts = [], brief }) {
   const { kpis, distribution, byCenter, byProgram, byRole, monthly, centerAnalysis } = metrics;
+  const custom = charts.length > 0;
   const slides = [];
   const add = (slide) => slides.push({ include: true, notes: '', bullets: [], ...slide });
 
@@ -58,7 +62,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
 
   const scored = distribution.reduce((s, d) => s + d.count, 0);
   const high = distribution[distribution.length - 1]?.count || 0;
-  add({
+  if (!custom) add({
     id: 'distribucion',
     type: 'chart',
     section: 'Resultados',
@@ -67,7 +71,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
     bullets: distribution.map((d) => `${d.count} respuestas entre ${d.label.replace('-', ' y ')}`).slice(0, 3),
   });
 
-  if (monthly.length > 1) {
+  if (!custom && monthly.length > 1) {
     const first = monthly[0];
     const last = monthly[monthly.length - 1];
     add({
@@ -80,7 +84,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
     });
   }
 
-  if (byCenter.length) {
+  if (!custom && byCenter.length) {
     const top = byCenter.slice(0, 10);
     add({
       id: 'centros',
@@ -97,7 +101,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
     });
   }
 
-  if (centerAnalysis?.length) {
+  if (!custom && centerAnalysis?.length) {
     add({
       id: 'tabla-centros',
       type: 'table',
@@ -118,7 +122,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
     });
   }
 
-  if (byProgram.length) {
+  if (!custom && byProgram.length) {
     const top = byProgram.slice(0, 10);
     add({
       id: 'programas',
@@ -130,7 +134,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
     });
   }
 
-  if (byRole.length) {
+  if (!custom && byRole.length) {
     const scores = byRole.map((r) => r.score);
     add({
       id: 'roles',
@@ -140,6 +144,13 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
       figures: byRole.slice(0, 4).map((r) => ({ label: r.name, value: fmtScore(r.score), note: `${r.total} respuestas` })),
     });
   }
+
+  // Gráficas elegidas en el asistente: una diapositiva por gráfica, con el título-insight automático hasta que la IA lo reescriba.
+  charts.forEach((c) => {
+    const base = { id: `graf-${c.id}`, section: c.groupLabel || 'Gráficas', title: c.autoTitle || c.title, bullets: c.autoBullets || [] };
+    if (c.kind === 'table') add({ ...base, type: 'table', table: c.table });
+    else add({ ...base, type: 'chart', chart: { kind: c.kind, categories: c.categories, series: c.series, threshold: c.threshold, scoreScale: c.scoreScale } });
+  });
 
   // Capturas que el usuario eligió en Estadística o Informe (se omiten las que ya tienen diapositiva automática).
   const AUTO_COVERED = new Set(['dist-calificaciones', 'promedio-centro', 'tendencia-mensual', 'promedio-programa', 'informe-centros', 'informe-programas', 'informe-resumen']);
@@ -163,7 +174,7 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
       ],
     });
   }
-  if (narrative?.acciones?.length) {
+  if (brief?.includeRecommendations !== false && narrative?.acciones?.length) {
     add({
       id: 'acciones',
       type: 'bullets',
@@ -177,14 +188,16 @@ export function buildSlidePlan({ metrics, filters, captures = [], narrative }) {
 }
 
 /** Prompt compacto: pide solo lo que cabe en una diapositiva. */
-export function buildSlideNarrativePrompt(plan, { metrics, filters }) {
+export function buildSlideNarrativePrompt(plan, { metrics, filters, brief }) {
   const slides = plan.filter((s) => s.include && s.type !== 'cover').map((s) => ({
     id: s.id,
     tipo: s.type,
     titulo_actual: s.title,
     datos: s.chart
-      ? s.chart.categories.slice(0, 10).map((c, i) => `${c}: ${s.chart.series[0].values[i]}`)
-      : s.table ? s.table.rows.slice(0, 8).map((r) => r.join(' | '))
+      ? s.chart.categories.slice(0, 12).map((c, i) => (s.chart.series.length > 1
+        ? `${c}: ${s.chart.series.map((se) => `${se.name}=${se.values[i]}`).join(', ')}`
+        : `${c}: ${s.chart.series[0].values[i]}`))
+      : s.table ? s.table.rows.slice(0, 12).map((r) => r.join(' | '))
       : s.figures ? s.figures.map((f) => `${f.label}: ${f.value} (${f.note})`)
       : s.bullets,
   }));
@@ -194,6 +207,8 @@ export function buildSlideNarrativePrompt(plan, { metrics, filters }) {
     `Puntaje global ${fmtScore(metrics.kpis.globalScore)}, ${metrics.kpis.total} evaluaciones.`,
     `Para cada diapositiva devuelve: "title" que diga la conclusión (máx. ${LIMITS.title} caracteres, sin punto final), "bullets" (máx. ${LIMITS.bullets}, cada una de máx. ${LIMITS.bullet} caracteres, con cifras de los datos) y "notes" (nota del orador, máx. ${LIMITS.notes} caracteres).`,
     'No inventes cifras: usa solo las que aparecen en los datos.',
+    'Las diapositivas cuyo id empieza por "graf-" son gráficas que el usuario eligió: el "title" debe decir el hallazgo principal de ESA gráfica, con una cifra, y las viñetas lo respaldan con otros datos de la misma gráfica.',
+    ...(brief ? briefPromptLines(brief) : []),
     'Además devuelve "resumen" (3 líneas), "hallazgos", "riesgos" y "acciones" (hasta 5 frases cortas cada una).',
     'Responde ÚNICAMENTE con JSON: {"slides":[{"id":"","title":"","bullets":[""],"notes":""}],"resumen":"","hallazgos":[""],"riesgos":[""],"acciones":[""]}',
     '',
@@ -250,8 +265,8 @@ export function applySlideNarrative(plan, slideTexts) {
   });
 }
 
-export function planFingerprint(plan, filters, kpis) {
-  const base = JSON.stringify({ filters, total: kpis.total, score: Number(kpis.globalScore.toFixed(3)), ids: plan.filter((s) => s.include).map((s) => s.id) });
+export function planFingerprint(plan, filters, kpis, brief = null) {
+  const base = JSON.stringify({ filters, brief, total: kpis.total, score: Number(kpis.globalScore.toFixed(3)), ids: plan.filter((s) => s.include).map((s) => s.id) });
   let h = 5381;
   for (let i = 0; i < base.length; i += 1) h = ((h << 5) + h + base.charCodeAt(i)) | 0;
   return String(h);
