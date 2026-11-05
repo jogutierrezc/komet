@@ -260,7 +260,7 @@ export function surveyPayload(draft) {
   };
 }
 
-export const publicLink = (surveyId) => `${window.location.origin}/evaluacion-publica?survey=${surveyId}`;
+export const publicLink = (surveyId) => `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, "")}/evaluacion-publica?survey=${surveyId}`;
 
 // ── Revisión antes de guardar ─────────────────────────────────────────────────
 

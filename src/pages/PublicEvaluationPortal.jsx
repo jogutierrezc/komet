@@ -451,7 +451,7 @@ export default function PublicEvaluationPortal() {
                       id_type: 'Correo electrónico',
                       id_value: sharedSurveyId ? publicRespondent.email : userId,
                       survey_title: selectedSurvey.title || 'Encuesta de prácticas formativas',
-                      evaluation_link: `${window.location.origin}/evaluacion-publica?survey=${selectedSurvey.id}`
+                      evaluation_link: `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, "")}/evaluacion-publica?survey=${selectedSurvey.id}`
                     },
                     evaluationId: createdEvaluation?.id || null,
                     surveyId: selectedSurvey?.id || null,
