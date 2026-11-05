@@ -392,7 +392,7 @@ export default function KometPresenta({ onNavigate }) {
     setError('');
 
     try {
-      const templateUrl = '/templates/INFORME AUTOEVALUACIÓN PRACTICAS.pptx';
+      const templateUrl = `${import.meta.env.BASE_URL}templates/INFORME AUTOEVALUACIÓN PRACTICAS.pptx`;
       const engine = new PptxTemplateEngine();
       await engine.load(templateUrl);
 

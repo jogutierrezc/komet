@@ -2,6 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
+  // La app se publica en https://planeacion.udes.edu.co/komet/
+  base: '/komet/',
   plugins: [react()],
   server: {
     port: 3000,

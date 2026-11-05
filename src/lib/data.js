@@ -129,19 +129,12 @@ export async function runMistralPrompt({
     temperature: requestTemperature,
     messages
   };
-  let response;
-  if (isDev) {
-    response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${trimmedKey}` },
-      body: JSON.stringify(request)
-    });
-  } else {
-    response = await fetch('/api/mistral-chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: trimmedKey, ...request })
-    });
-  }
+  // Sin backend serverless (Coolify/nginx estático): se llama a Mistral directamente desde el navegador.
+  const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${trimmedKey}` },
+    body: JSON.stringify(request)
+  });
   if (!response.ok) {
     let detail = '';
     try { const payload = await response.json(); detail = payload?.error?.message || JSON.stringify(payload); }
